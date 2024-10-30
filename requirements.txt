@@ -1,0 +1,12 @@
+torch
+llama-index
+llama-index-embeddings-huggingface
+llama-index-llms-ollama
+langchain-community
+pandas
+pandasai
+docx2txt
+PyPDF2
+fitz
+pytesseract
+pymupdf
