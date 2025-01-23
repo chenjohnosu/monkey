@@ -42,6 +42,7 @@
 #
 import argparse
 import os
+import sys
 import PyPDF2
 import docx2txt
 import textwrap
@@ -84,8 +85,10 @@ Settings.text_splitter = SentenceSplitter(chunk_size=1024, chunk_overlap=200)  #
 # Be verbose but paraphrase and do not copy text directly from the articles; \
 # Do not make up citations; include inline citations but do not include the citations from the article content;\
 # do not include references in the response.")
-GUIDE = ("You are a social science research assistant in marketing that is helping synthesize academic \
-journal articles. Use only sources that exist and do not create new sources.")
+GUIDE = ("You are a research assistant helping analyze a set of interviews using thematic analysis.")
+
+
+# "You are a lifestyle blogger and botanist writing for a website"
 #
 #  END CONFIG
 
@@ -170,7 +173,7 @@ def pmode(filename, model):
 
 def main():
     parser = argparse.ArgumentParser(prog="monkey", description='Usage for monkey business. \
-        Research RAG for pdf, txt, and docx.')
+        Research RAG for pdf, txt, and docx (and data).')
     parser.add_argument('-b', '--biz', type=str, help='Directory of documents: (optional, default: src)')
     parser.add_argument('-d', '--do', type=str, help='Single Query to the documents')
     parser.add_argument('-g', '--grind', action="store_true", help='MODE: Create vector store with documents')
@@ -181,14 +184,25 @@ def main():
     parser.add_argument('-s', '--see', type=str, help='Use LLM Model (optional, default: mistral)')
     parser.add_argument('-t', '--temp', type=float, help='Set LLM temperature (optional, default: 0.7)')
     parser.add_argument('-w', '--wrench', action="store_true", help='MODE: Load vector store to query')
+    parser.add_argument('-i', '--impress', type=str, help='Do impression of (GUIDE)')
     parser.add_argument('-v', '--verbose', action="store_true", help='Show sources and detailed debug information.')
 
     args = parser.parse_args()
+
+    if not len(sys.argv) > 1:
+        print("No arguments.  Exit(0).")
+        exit(0)
 
     # Presets
     temp = args.temp or default_temp
     model = args.see or default_llm
     k = args.knoodles or default_k
+
+    # Re-Edit GUIDE String
+    if args.impress:
+        impress = args.impress
+    else:
+        impress = GUIDE
 
     # Error - Cannot have both grind and wrench at the same time
     if args.grind and args.wrench:
@@ -208,6 +222,7 @@ def main():
         os.mkdir(organ)
 
     # Merge Mode
+    index = None
     if args.merge and args.organ:
         merge = str(args.merge)
         print(f"Merging {merge} into {organ}.  New vdb in {organ}_")
@@ -281,12 +296,12 @@ def main():
         while True:
             if args.do:
                 print("\n>>> Question <<<\n" + args.do)
-                prompt = GUIDE + args.do
+                prompt = impress + args.do
             else:
                 user_input = input("\n>>> Question (type your question below) <<<\n")
                 if user_input.lower() == 'quit':
                     exit(True)
-                prompt = GUIDE + user_input
+                prompt = impress + user_input
 
             start_time = time.time()
             response = query_engine.query(prompt)
@@ -308,4 +323,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+        main()
