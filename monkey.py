@@ -1,4 +1,4 @@
-py# monkey v 0.5 Init
+# monkey v 0.5 Init
 #     Johnny's academic research tool to ingest data/notes/articles and allow interactive query.
 #
 #     "If you give enough monkeys enough typewriters, they will eventually type out the
