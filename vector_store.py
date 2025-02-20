@@ -21,15 +21,19 @@ class VectorStore:
         self.file_processor = FileProcessor(config)
 
     def create_vector_store(self, input_dir: Path, batch_size: int = 10) -> None:
-        """Create vector store directly from documents in batches."""
+        """Create vector store from documents in batches."""
         self.logger.info(f"Creating vector store from {input_dir}")
 
-        # Process all files in directory and get Document objects
-        all_documents = self.file_processor.process_directory(input_dir)
+        # Get Document objects directly
+        documents = self.file_processor.process_directory(input_dir)
+
+        if not documents:
+            self.logger.warning("No documents to process")
+            return
 
         # Process documents in batches
-        for i in range(0, len(all_documents), batch_size):
-            batch = all_documents[i:i + batch_size]
+        for i in range(0, len(documents), batch_size):
+            batch = documents[i:i + batch_size]
             self._process_batch(batch)
             gc.collect()  # Clean up memory after each batch
 

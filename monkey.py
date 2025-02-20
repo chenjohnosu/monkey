@@ -33,6 +33,7 @@
 #     More error checking and code cleanup
 # 0.61 Start Re-dev and streamlining; modular design; topic modeling; guide
 #      command line
+# 0.7 CUDA optimizations, diagnostics, and monitoring
 # NEW: Add all types of text data available for txt, docx, and pdfs; will ingest
 #      .md, .epub, and .mbox but no error checking!
 #
@@ -126,7 +127,7 @@ def display_system_info(config: MonkeyConfig):
 def display_response_diagnostics(result: dict, config: MonkeyConfig):
     """Display diagnostic information for a response."""
     print("\nResponse Diagnostics:")
-    print("-" * 30)
+    print("-" * 50)
     print(f"Model: {config.llm_model}")
     print(f"Temperature: {config.temperature}")
     print(f"Response Time: {result['elapsed_time']:.2f}s")
@@ -136,7 +137,7 @@ def display_response_diagnostics(result: dict, config: MonkeyConfig):
         print("\nSource Details:")
         for source in result['sources']:
             print(f"[{source['id']}] {source['file']} | Score: {source['score']}")
-    print("-" * 30)
+
 
 
 def interactive_chat(query_engine, verbose, config):
