@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 
+
 class CLI:
     def __init__(self):
         self.parser = self._create_parser()
@@ -11,40 +12,48 @@ class CLI:
     def _create_parser(self) -> argparse.ArgumentParser:
         parser = argparse.ArgumentParser(
             prog="monkey",
-            description='Research RAG for pdf, txt, and docx (and data).'
+            description='Research LLM harness for pdf, txt, and docx (and data).'
         )
         parser.add_argument('-b', '--biz', type=str,
-                          help='Directory of documents: (default: src)')
+                            help='Directory of documents: (default: src)')
         parser.add_argument('-d', '--do', type=str,
-                          help='Single Query to the documents')
+                            help='Single Query to the documents')
         parser.add_argument('-g', '--grind', action="store_true",
-                          help='MODE: Create vector store with documents')
+                            help='MODE: Create vector store with documents')
         parser.add_argument('-k', '--knoodles', type=int,
-                          help='Manually configure k-retrieved (default: 5)')
+                            help='Number of sources to retrieve (default: 5)')
         parser.add_argument('-m', '--merge', type=str,
-                          help='MODE: Merge identified vdb to main organ')
+                            help='MODE: Merge identified vdb to main organ')
         parser.add_argument('-o', '--organ', type=str,
-                          help='Vector store name (default: vdb)')
+                            help='Vector store name (default: vdb)')
         parser.add_argument('-s', '--see', type=str,
-                          help='Use LLM Model (default: mistral)')
+                            help='Use LLM Model (default: mistral)')
         parser.add_argument('-t', '--temp', type=float,
-                          help='Set LLM temperature (default: 0.7)')
+                            help='Set LLM temperature (default: 0.7)')
         parser.add_argument('-w', '--wrench', action="store_true",
-                          help='MODE: Load vector store to query')
+                            help='MODE: Load vector store to query')
+        parser.add_argument('--topics', action="store_true",
+                            help='MODE: Perform automatic topic modeling on vector store')
+        parser.add_argument('--topic-words', type=int, default=10,
+                            help='Number of words to show per topic (default: 10)')
         parser.add_argument('-v', '--verbose', action="store_true",
-                          help='Show sources and detailed debug information')
+                            help='Show sources and detailed debug information')
+        parser.add_argument('--guide', type=str,
+                            help='Override default guide prompt for the LLM')
         return parser
 
     def parse_args(self) -> Optional[argparse.Namespace]:
         """Parse command line arguments."""
         args = self.parser.parse_args()
-        
+
         if not len(sys.argv) > 1:
             self.parser.print_help()
             return None
 
-        if args.grind and args.wrench:
-            print("Cannot use both grind and wrench modes simultaneously")
+        # Check for mutually exclusive modes
+        modes = [args.grind, args.wrench, args.merge is not None, args.topics]
+        if sum(modes) > 1:
+            print("Error: Can only use one mode at a time (grind, wrench, merge, or topics)")
             return None
 
         return args

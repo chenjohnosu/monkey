@@ -16,7 +16,7 @@ class MonkeyConfig:
     chunk_size: int = 1024
     chunk_overlap: int = 200
     embedding_model: str = "mixedbread-ai/mxbai-embed-large-v1"
-    guide: str = "You are a research assistant helping analyze a set of interviews using thematic analysis."
+    guide: str = "You are an academic research assistant that will help write lit reviews for an old professor."
 
     @classmethod
     def from_yaml(cls, yaml_path: str) -> 'MonkeyConfig':
