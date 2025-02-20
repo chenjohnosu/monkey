@@ -33,10 +33,46 @@ class CUDAChecker:
 
     def check_embedding_device(self) -> str:
         """Check which device is being used for embeddings."""
-        embed_model = Settings.embed_model
-        if hasattr(embed_model, 'device'):
-            return str(embed_model.device)
-        return "Device information not available"
+        try:
+            embed_model = Settings.embed_model
+
+            # Check if embed_model exists
+            if embed_model is None:
+                return "No embedding model initialized"
+
+            # Check direct device attribute
+            if hasattr(embed_model, 'device'):
+                return str(embed_model.device)
+
+            # Check for client device (HuggingFace models)
+            if hasattr(embed_model, 'client'):
+                if hasattr(embed_model.client, 'device'):
+                    return str(embed_model.client.device)
+                elif hasattr(embed_model.client, 'model') and hasattr(embed_model.client.model, 'device'):
+                    return str(embed_model.client.model.device)
+
+            # Check model parameters for device
+            if hasattr(embed_model, 'model'):
+                # Try to get device from model's first parameter
+                try:
+                    first_param = next(embed_model.model.parameters())
+                    return str(first_param.device)
+                except (StopIteration, AttributeError):
+                    pass
+
+                # Check model's device attribute
+                if hasattr(embed_model.model, 'device'):
+                    return str(embed_model.model.device)
+
+            # If we got here without finding a device, check if CUDA is available
+            if torch.cuda.is_available():
+                return f"CUDA available (device: {torch.cuda.get_device_name(0)})"
+
+            return "CPU (default)"
+
+        except Exception as e:
+            self.logger.warning(f"Error checking embedding device: {str(e)}")
+            return f"Error checking device: {str(e)}"
 
     def print_cuda_status(self, mode: str = None):
         """Print CUDA status information."""
@@ -50,6 +86,8 @@ class CUDAChecker:
             if cuda_info["device_name"]:
                 print(f"Current Device: {cuda_info['device_name']}")
                 print(f"Device Capability: {cuda_info['device_capability']}")
+                print(f"Current Memory Usage: {torch.cuda.memory_allocated() / 1024 ** 2:.2f} MB")
+                print(f"Max Memory Usage: {torch.cuda.max_memory_allocated() / 1024 ** 2:.2f} MB")
         else:
             print("✗ CUDA is not available - using CPU")
 
@@ -59,6 +97,8 @@ class CUDAChecker:
             if mode == "Embedding":
                 embed_device = self.check_embedding_device()
                 print(f"Embedding Device: {embed_device}")
+                if torch.cuda.is_available():
+                    print(f"Current Memory Usage: {torch.cuda.memory_allocated() / 1024 ** 2:.2f} MB")
             elif mode == "LLM":
                 print("LLM Processing: Using Ollama (CPU/GPU depends on Ollama configuration)")
             elif mode == "Topic Modeling":

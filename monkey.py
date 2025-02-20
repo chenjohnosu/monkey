@@ -109,14 +109,35 @@ def setup_logging():
     # Log startup message
     logger.info("Logging system initialized")
 
+
 def display_system_info(config: MonkeyConfig):
     """Display system configuration and diagnostic information."""
+    from cuda_utils import CUDAChecker
+    cuda_checker = CUDAChecker()
+    cuda_info = cuda_checker.check_cuda_availability()
+
     print("\nSystem Configuration:")
     print("=" * 50)
+
+    # Hardware Configuration
+    print("\nHardware Configuration:")
+    print(f"CUDA Available: {'Yes' if cuda_info['cuda_available'] else 'No'}")
+    if cuda_info['cuda_available']:
+        print(f"GPU Device: {cuda_info['device_name']}")
+        print(f"CUDA Version: {cuda_info['cuda_version']}")
+        print(f"GPU Count: {cuda_info['device_count']}")
+    print(f"Embedding Device: {cuda_checker.check_embedding_device()}")
+    print(f"LLM Processing: Using Ollama ({config.llm_model})")
+
+    # Model Configuration
+    print("\nModel Configuration:")
     print(f"Vector Store: {config.vdb_dir}")
     print(f"Language Model: {config.llm_model}")
     print(f"Temperature: {config.temperature}")
     print(f"k-retrieve: {config.k_retrieve}")
+
+    # Processing Configuration
+    print("\nProcessing Configuration:")
     print(f"Chunk Size: {config.chunk_size}")
     print(f"Chunk Overlap: {config.chunk_overlap}")
     print(f"Embedding Model: {config.embedding_model}")
@@ -126,24 +147,43 @@ def display_system_info(config: MonkeyConfig):
 
 def display_response_diagnostics(result: dict, config: MonkeyConfig):
     """Display diagnostic information for a response."""
+    from cuda_utils import CUDAChecker
+    cuda_checker = CUDAChecker()
+
+    # Source Details
+    if result['sources']:
+        print("\nSources:")
+        for source in result['sources']:
+            print(f"Source {source['id']}: {source['file']} (score: {source['score']})")
+
+    # Response Diagnostics
     print("\nResponse Diagnostics:")
     print("-" * 50)
+
+    # Model Information
     print(f"Model: {config.llm_model}")
     print(f"Temperature: {config.temperature}")
     print(f"Response Time: {result['elapsed_time']:.2f}s")
+
+    # Processing Information
     print(f"Sources Retrieved: {len(result['sources'])}")
-
-    if result['sources']:
-        print("\nSource Details:")
-        for source in result['sources']:
-            print(f"[{source['id']}] {source['file']} | Score: {source['score']}")
-
+    #print(f"Embedding Device: {cuda_checker.check_embedding_device()}")
 
 
 def interactive_chat(query_engine, verbose, config):
     """Handle interactive chat mode with diagnostic information."""
+    from cuda_utils import CUDAChecker
+    cuda_checker = CUDAChecker()
+
     print("\nEntering interactive chat mode. Type 'exit' or 'quit' to end the session.")
+
+    # Display initial configuration with CUDA status
     display_system_info(config)
+
+    # Display CUDA-specific status
+    #print("\nCUDA Status:")
+    #cuda_checker.print_cuda_status()
+    print("\nType your questions below:")
 
     while True:
         try:

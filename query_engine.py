@@ -12,15 +12,28 @@ class QueryEngine:
     def __init__(self, config: MonkeyConfig, index: Any):
         self.config = config
         self.index = index
+
+        # Configure Ollama with optimal settings for GPU
         self.llm = LlamaIndexOllama(
             model=config.llm_model,
-            temperature=config.temperature
+            temperature=config.temperature,
+            request_timeout=120.0,
+            context_window=4096,
+            additional_kwargs={
+                "numa": True,
+                "f16": True,
+                "batch_size": 512
+            }
         )
+
+        # Configure query engine with CUDA optimization
         self.base_query_engine = CitationQueryEngine.from_args(
             self.index,
             self.llm,
             similarity_top_k=config.k_retrieve,
-            citation_chunk_size=config.chunk_size
+            citation_chunk_size=config.chunk_size,
+            use_async=True,
+            show_progress=False
         )
 
     def get_node_text(self, node: Any) -> str:
@@ -33,17 +46,27 @@ class QueryEngine:
             return node.text
         return ""
 
-    def get_file_path(self, node: Any) -> str:
-        """Extract file path from node metadata."""
+    def get_file_name(self, node: Any) -> str:
+        """Extract just the filename from node metadata."""
         try:
+            if hasattr(node.node, 'metadata'):
+                metadata = node.node.metadata
+                if 'file_name' in metadata:
+                    return metadata['file_name']
+                elif 'file_path' in metadata:
+                    return Path(metadata['file_path']).name
+
             metadata_str = node.node.get_metadata_str()
-            return str(Path(metadata_str))
+            if 'file_name:' in metadata_str:
+                return metadata_str.split('file_name:')[1].split('\n')[0].strip()
+            return Path(metadata_str).name
         except (AttributeError, TypeError):
             return "unknown_source"
 
     def validate_and_fix_citations(self, text: str, valid_source_count: int) -> str:
-        """Strictly validate citations and fix or remove invalid ones."""
-        citation_pattern = r'Source (\d+)'
+        """Convert 'Source X' citations to '[X]' format and validate them."""
+        # First, handle existing "[X]" format citations
+        citation_pattern = r'Source (\d+)(?:\s*\[(?:\d+)\])?'
         fixed_text = text
         position = 0
 
@@ -56,13 +79,15 @@ class QueryEngine:
             end_idx = position + match.end()
             source_num = int(match.group(1))
 
-            # If citation number is invalid, remove the citation
-            if source_num > valid_source_count:
-                # Find the containing sentence or parenthetical expression
+            if source_num <= valid_source_count:
+                # Replace "Source X" or "Source X [X]" with just "[X]"
+                fixed_text = fixed_text[:start_idx] + f"[{source_num}]" + fixed_text[end_idx:]
+                position = start_idx + len(f"[{source_num}]")
+            else:
+                # Remove invalid citations
                 text_before = fixed_text[:start_idx]
                 text_after = fixed_text[end_idx:]
-
-                # Remove the entire parenthetical if it exists
+                # Check for parenthetical citations
                 paren_match = re.search(r'\([^)]*Source \d+[^)]*\)', fixed_text[max(0, start_idx - 50):end_idx + 50])
                 if paren_match:
                     relative_start = max(0, start_idx - 50) + paren_match.start()
@@ -70,11 +95,8 @@ class QueryEngine:
                     fixed_text = fixed_text[:relative_start] + fixed_text[relative_end:]
                     position = relative_start
                 else:
-                    # If not in parentheses, just remove the "Source X" text
                     fixed_text = text_before + text_after
                     position = start_idx
-            else:
-                position = end_idx
 
         return fixed_text.strip()
 
@@ -88,10 +110,15 @@ class QueryEngine:
         # Process sources first
         sources = []
         for i, source_node in enumerate(response.source_nodes, 1):
+            file_name = self.get_file_name(source_node)
+            score = getattr(source_node, 'score', 0)
+
             source = {
                 'id': i,
-                'file': self.get_file_path(source_node),
-                'score': getattr(source_node, 'score', None)
+                'file': file_name,
+                'file_name': file_name,
+                'display': f"[{i}] {file_name} (score: {score:.3f})",  # Updated display format
+                'score': score
             }
             if verbose:
                 source['text'] = self.get_node_text(source_node.node)
@@ -113,3 +140,27 @@ class QueryEngine:
             'sources': sources,
             'elapsed_time': time.time() - start_time
         }
+
+
+def display_response_diagnostics(result: dict, config: MonkeyConfig):
+    """Display diagnostic information for a response."""
+    from cuda_utils import CUDAChecker
+    cuda_checker = CUDAChecker()
+
+    print("\nResponse Diagnostics:")
+    print("-" * 50)
+
+    # Model Information
+    print(f"Model: {config.llm_model}")
+    print(f"Temperature: {config.temperature}")
+    print(f"Response Time: {result['elapsed_time']:.2f}s")
+
+    # Processing Information
+    print(f"Sources Retrieved: {len(result['sources'])}")
+    print(f"Embedding Device: {cuda_checker.check_embedding_device()}")
+
+    # Source Details
+    if result['sources']:
+        print("\nSources:")
+        for source in result['sources']:
+            print(source['display'])  # Already in [X] format from earlier

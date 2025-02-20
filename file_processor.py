@@ -4,7 +4,7 @@ import logging
 import PyPDF2
 import docx2txt
 from pathlib import Path
-from typing import List, Optional, Set
+from typing import List, Optional, Dict
 from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
 import nltk
@@ -12,6 +12,8 @@ from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 from string import punctuation
 import spacy
+from llama_index.core import Document
+import hashlib
 
 # Import MonkeyConfig
 from config import MonkeyConfig
@@ -31,7 +33,7 @@ class TextPreprocessor:
             logging.error(f"Error initializing TextPreprocessor: {str(e)}")
             raise
 
-    def _get_enhanced_stopwords(self) -> Set[str]:
+    def _get_enhanced_stopwords(self) -> set[str]:
         """Create an enhanced set of stop words combining NLTK, spaCy, and custom words."""
         # Combine stop words from multiple sources
         stop_words = set(stopwords.words('english'))
@@ -48,13 +50,10 @@ class TextPreprocessor:
 
         # Combine all stop words
         all_stops = stop_words.union(spacy_stops).union(custom_stops)
-
         return all_stops
 
     def preprocess_text(self, text: str, remove_citations: bool = True) -> str:
-        """
-        Preprocess text with advanced stop word removal and cleaning.
-        """
+        """Preprocess text with advanced stop word removal and cleaning."""
         try:
             # Convert to lowercase
             text = text.lower()
@@ -119,39 +118,47 @@ class FileProcessor:
         self.config = config
         self.logger = logging.getLogger(__name__)
         self.preprocessor = TextPreprocessor()
+        self.cache_dir = Path('.cache')
+        self.cache_dir.mkdir(exist_ok=True)
 
-    def clean_text(self, text: str) -> str:
-        """Clean up and preprocess extracted text from documents."""
-        # Basic cleaning
-        text = text.replace('\n', ' ')
-        text = re.sub(r'\s+', ' ', text)
+    def _generate_cache_path(self, file_path: Path) -> Path:
+        """Generate a unique cache file path based on the input file."""
+        # Create a hash of the file path and last modified time
+        file_stat = file_path.stat()
+        hash_input = f"{file_path.absolute()}{file_stat.st_mtime}"
+        file_hash = hashlib.md5(hash_input.encode()).hexdigest()
 
-        # Remove boilerplate
-        text = self.preprocessor.remove_boilerplate(text)
+        # Create cache file path
+        return self.cache_dir / f"{file_hash}.txt"
 
-        # Advanced preprocessing including stop word removal
-        text = self.preprocessor.preprocess_text(text)
+    def _check_cache(self, file_path: Path) -> Optional[str]:
+        """Check if a cached version exists and is valid."""
+        cache_path = self._generate_cache_path(file_path)
+        if cache_path.exists():
+            try:
+                with open(cache_path, 'r', encoding='utf-8') as f:
+                    return f.read()
+            except Exception as e:
+                self.logger.warning(f"Error reading cache file {cache_path}: {str(e)}")
+                return None
+        return None
 
-        return text.strip()
-
-    def convert_single_file(self, file_path: Path) -> Optional[Path]:
-        """Convert a single file to text format."""
+    def _save_to_cache(self, file_path: Path, content: str) -> None:
+        """Save processed content to cache."""
+        cache_path = self._generate_cache_path(file_path)
         try:
-            if file_path.suffix == '.pdf':
-                return self._convert_pdf(file_path)
-            elif file_path.suffix == '.docx':
-                return self._convert_docx(file_path)
-            return None
+            with open(cache_path, 'w', encoding='utf-8') as f:
+                f.write(content)
         except Exception as e:
-            self.logger.error(f"Error converting {file_path}: {str(e)}")
-            return None
+            self.logger.warning(f"Error writing cache file {cache_path}: {str(e)}")
 
-    def _convert_pdf(self, file_path: Path) -> Optional[Path]:
-        """Convert PDF to text."""
-        output_path = file_path.with_suffix('.txt')
-        if output_path.exists():
-            self.logger.info(f"Skipping {output_path}, already exists")
-            return output_path
+    def extract_pdf_content(self, file_path: Path) -> Optional[str]:
+        """Extract text content from PDF with caching."""
+        # Check cache first
+        cached_content = self._check_cache(file_path)
+        if cached_content is not None:
+            self.logger.info(f"Using cached version of {file_path}")
+            return cached_content
 
         try:
             with open(file_path, 'rb') as pdf_file:
@@ -160,45 +167,100 @@ class FileProcessor:
                 for page in reader.pages:
                     text += page.extract_text()
 
-            text = self.clean_text(text)
-            with open(output_path, 'w', encoding='utf-8') as text_file:
-                text_file.write(text)
-            return output_path
+                text = self.preprocessor.remove_boilerplate(text)
+                text = self.preprocessor.preprocess_text(text)
+
+                # Save to cache
+                self._save_to_cache(file_path, text)
+                return text
         except Exception as e:
-            self.logger.error(f"Error converting PDF {file_path}: {str(e)}")
+            self.logger.error(f"Error extracting PDF content from {file_path}: {str(e)}")
             return None
 
-    def _convert_docx(self, file_path: Path) -> Optional[Path]:
-        """Convert DOCX to text."""
-        output_path = file_path.with_suffix('.txt')
-        if output_path.exists():
-            self.logger.info(f"Skipping {output_path}, already exists")
-            return output_path
+    def extract_docx_content(self, file_path: Path) -> Optional[str]:
+        """Extract text content from DOCX with caching."""
+        # Check cache first
+        cached_content = self._check_cache(file_path)
+        if cached_content is not None:
+            self.logger.info(f"Using cached version of {file_path}")
+            return cached_content
 
         try:
             text = docx2txt.process(file_path)
-            text = self.clean_text(text)
-            with open(output_path, 'w', encoding='utf-8') as text_file:
-                text_file.write(text)
-            return output_path
+            text = self.preprocessor.remove_boilerplate(text)
+            text = self.preprocessor.preprocess_text(text)
+
+            # Save to cache
+            self._save_to_cache(file_path, text)
+            return text
         except Exception as e:
-            self.logger.error(f"Error converting DOCX {file_path}: {str(e)}")
+            self.logger.error(f"Error extracting DOCX content from {file_path}: {str(e)}")
             return None
 
-    def process_directory(self, directory: Path) -> List[Path]:
-        """Process all files in directory and convert to text."""
+    def create_document(self, file_path: Path) -> Optional[Document]:
+        """Create a Document object from a file with caching."""
+        try:
+            # Extract content based on file type
+            if file_path.suffix.lower() == '.pdf':
+                content = self.extract_pdf_content(file_path)
+            elif file_path.suffix.lower() == '.docx':
+                content = self.extract_docx_content(file_path)
+            else:
+                self.logger.warning(f"Unsupported file type: {file_path}")
+                return None
+
+            if content:
+                document = Document(
+                    text=content,
+                    metadata={
+                        'file_name': file_path.name,
+                        'file_path': str(file_path),
+                        'file_type': file_path.suffix.lower()[1:],  # Remove the dot
+                        'cache_path': str(self._generate_cache_path(file_path))
+                    }
+                )
+                return document
+            return None
+
+        except Exception as e:
+            self.logger.error(f"Error creating document from {file_path}: {str(e)}")
+            return None
+
+    def process_directory(self, directory: Path) -> List[Document]:
+        """Process all files in directory and create Document objects."""
         self.logger.info(f"Processing directory: {directory}")
-        files_to_convert = []
+
+        # Collect all PDF and DOCX files
+        files_to_process = []
         for file_path in directory.rglob('*'):
             if file_path.suffix.lower() in ['.pdf', '.docx']:
-                files_to_convert.append(file_path)
+                files_to_process.append(file_path)
 
-        converted_files = []
+        if not files_to_process:
+            self.logger.warning(f"No PDF or DOCX files found in {directory}")
+            return []
+
+        # Create Document objects directly from files
+        documents = []
         with ThreadPoolExecutor() as executor:
-            futures = [executor.submit(self.convert_single_file, f) for f in files_to_convert]
-            for future in tqdm(futures, desc="Converting files"):
+            futures = [
+                executor.submit(self.create_document, f)
+                for f in files_to_process
+            ]
+
+            for future in tqdm(futures, desc="Processing documents"):
                 result = future.result()
                 if result:
-                    converted_files.append(result)
+                    documents.append(result)
 
-        return converted_files
+        self.logger.info(f"Successfully processed {len(documents)} documents")
+        return documents
+
+    def clear_cache(self) -> None:
+        """Clear all cached files."""
+        try:
+            for cache_file in self.cache_dir.glob('*.txt'):
+                cache_file.unlink()
+            self.logger.info("Cache cleared successfully")
+        except Exception as e:
+            self.logger.error(f"Error clearing cache: {str(e)}")

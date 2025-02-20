@@ -1,9 +1,11 @@
 from dataclasses import dataclass
 import yaml
 import torch
+import warnings
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.core import Settings
 from llama_index.core.node_parser import SentenceSplitter
+
 
 @dataclass
 class MonkeyConfig:
@@ -18,6 +20,10 @@ class MonkeyConfig:
     embedding_model: str = "mixedbread-ai/mxbai-embed-large-v1"
     guide: str = "You are an academic research assistant that will help write lit reviews for an old professor."
 
+    def __post_init__(self):
+        # Suppress specific PyTorch flash attention warning
+        warnings.filterwarnings("ignore", message=".*Torch was not compiled with flash attention.*")
+
     @classmethod
     def from_yaml(cls, yaml_path: str) -> 'MonkeyConfig':
         try:
@@ -31,11 +37,44 @@ class MonkeyConfig:
             return cls()
 
     def initialize_settings(self):
+        """Initialize settings with explicit CUDA configuration."""
+        # Force CUDA initialization if available
+        if torch.cuda.is_available():
+            torch.cuda.init()
+            device = "cuda"
+            # Clear CUDA cache
+            torch.cuda.empty_cache()
+        else:
+            device = "cpu"
+
+        # Initialize the embedding model with forced device and model kwargs
         Settings.embed_model = HuggingFaceEmbedding(
             model_name=self.embedding_model,
-            device='cuda' if torch.cuda.is_available() else 'cpu'
+            device=device,  # Use simple 'cuda' or 'cpu'
+            model_kwargs={
+                "device_map": "auto",  # Let the model handle device mapping
+                "torch_dtype": torch.float16 if torch.cuda.is_available() else torch.float32,
+                "trust_remote_code": True
+            }
         )
+
+        # Initialize text splitter
         Settings.text_splitter = SentenceSplitter(
             chunk_size=self.chunk_size,
             chunk_overlap=self.chunk_overlap
         )
+
+        # Verify and log GPU configuration
+        if torch.cuda.is_available():
+            print(f"\nGPU Configuration:")
+            print(f"Device: {device}")
+            print(f"GPU Name: {torch.cuda.get_device_name(0)}")
+            print(f"Initial GPU Memory: {torch.cuda.memory_allocated(0) / 1024 ** 2:.2f} MB")
+            # Generate a test embedding to verify GPU usage
+            try:
+                test_text = "GPU test embedding"
+                _ = Settings.embed_model.get_text_embedding(test_text)
+                print(f"GPU Memory After Test: {torch.cuda.memory_allocated(0) / 1024 ** 2:.2f} MB")
+                print("✓ GPU successfully initialized and tested")
+            except Exception as e:
+                print(f"Error testing GPU: {str(e)}")
