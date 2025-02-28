@@ -1,4 +1,4 @@
-# monkey v 0.7 Redev
+# monkey v 0.8 Redev
 #     Johnny's academic research tool to ingest data/notes/articles and allow interactive query.
 #
 #     "If you give enough monkeys enough typewriters, they will eventually type out the
@@ -13,7 +13,7 @@
 #     Oregon State University
 #     Center for Marketing & Consumer Insights
 #     chenjohn@oregonstate.edu
-#     10/28/2024
+#     02/28/2025
 #
 # INSTALLATION: Requires local Ollama
 #
@@ -38,11 +38,9 @@
 #      command line
 # 0.7 CUDA optimizations, diagnostics, and monitoring
 #     Added --unique source file retrieval option
-# NEW: Add all types of text data available for txt, docx, and pdfs; will ingest
-#      .md, .epub, and .mbox but no error checking!
-#
-#
-#
+# 0.8 Fixed FAISS dimension compatibility issues
+#     Added explicit embedding dimension configuration
+#     Improved vector store creation and error handling
 
 
 import logging
@@ -50,6 +48,7 @@ from pathlib import Path
 import sys
 import os
 import traceback
+import torch
 
 # Add the parent directory to sys.path to enable imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -144,6 +143,7 @@ def display_system_info(config: MonkeyConfig):
     print(f"Chunk Size: {config.chunk_size}")
     print(f"Chunk Overlap: {config.chunk_overlap}")
     print(f"Embedding Model: {config.embedding_model}")
+    print(f"Embedding Dimension: {config.embedding_dimension}")
     print(f"Guide: {config.guide}")
     print("=" * 50)
 
@@ -157,7 +157,7 @@ def display_response_diagnostics(result: dict, config: MonkeyConfig):
     if result['sources']:
         print("\nSources:")
         for source in result['sources']:
-            print(f"Source {source['id']}: {source['file']} (score: {source['score']})")
+            print(f"Source {source['id']}: {source['file']} (score: {source['score']:.4f})")
 
     # Response Diagnostics
     print("\nResponse Diagnostics:")
@@ -170,7 +170,7 @@ def display_response_diagnostics(result: dict, config: MonkeyConfig):
 
     # Processing Information
     print(f"Sources Retrieved: {len(result['sources'])}")
-    # print(f"Embedding Device: {cuda_checker.check_embedding_device()}")
+    print(f"Embedding Dimension: {config.embedding_dimension}")
 
 
 def interactive_chat(query_engine, verbose, config, unique_sources):
@@ -235,6 +235,8 @@ def main():
 
     try:
         logger.info("Starting monkey application")
+        print("\nMonkey Research Tool v0.8")
+        print("=" * 50)
 
         # Parse command line arguments
         cli = CLI()
@@ -273,16 +275,43 @@ def main():
         config.initialize_settings()
         logger.info("Initialized settings")
 
+        # Check FAISS availability
+        try:
+            import faiss
+            print("FAISS library is available")
+            if torch.cuda.is_available():
+                print("Checking GPU FAISS support...")
+                try:
+                    # Test if FAISS can use GPU
+                    res = faiss.StandardGpuResources()
+                    test_index = faiss.IndexFlatL2(config.embedding_dimension)
+                    gpu_index = faiss.index_cpu_to_gpu(res, 0, test_index)
+                    print("✓ FAISS with GPU support is ready")
+                except Exception as e:
+                    print(f"× FAISS GPU support issue: {str(e)}")
+                    print("Will use CPU for FAISS operations")
+        except ImportError:
+            logger.error("FAISS library not installed!")
+            print("ERROR: FAISS library not installed! Please install it with:")
+            print("pip install faiss-cpu  # For CPU-only")
+            print("pip install faiss-gpu  # For GPU support (needs CUDA)")
+            return
+
         # Process files if in grind mode
         if args.grind:
             logger.info("Starting grind mode")
             src_path = Path(config.src_dir)
             if not src_path.exists():
                 logger.error(f"Source directory {src_path} does not exist")
+                print(f"ERROR: Source directory {src_path} does not exist")
                 return
 
             processor = FileProcessor(config)
-            processor.process_directory(src_path)
+            docs = processor.process_directory(src_path)
+            if not docs:
+                logger.error("No documents found or processed")
+                print("ERROR: No documents were successfully processed")
+                return
 
             vector_store = VectorStore(config)
             vector_store.create_vector_store(src_path)
@@ -320,6 +349,8 @@ def main():
             index = vector_store.load_vector_store()
             if not index:
                 logger.error("Failed to load vector store")
+                print(f"ERROR: Failed to load vector store from {config.vdb_dir}")
+                print("You may need to rebuild the vector store with --grind if there's a dimension mismatch")
                 return
 
             query_engine = QueryEngine(config, index)
@@ -343,7 +374,8 @@ def main():
     except Exception as e:
         logger.error(f"Error in main: {str(e)}")
         logger.error(f"Traceback: {traceback.format_exc()}")
-        raise  # Re-raise the exception after logging it
+        print(f"ERROR: {str(e)}")
+        print("Check monkey.log for details")
 
 
 if __name__ == "__main__":

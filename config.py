@@ -18,6 +18,7 @@ class MonkeyConfig:
     chunk_size: int = 1024
     chunk_overlap: int = 200
     embedding_model: str = "mixedbread-ai/mxbai-embed-large-v1"
+    embedding_dimension: int = 1024  # Explicitly define embedding dimension
     guide: str = "You are a very intelligent text wrangler and researcher."
 
     def __post_init__(self):
@@ -37,7 +38,7 @@ class MonkeyConfig:
             return cls()
 
     def initialize_settings(self):
-        """Initialize settings with optimized CUDA configuration."""
+        """Initialize settings with optimized CUDA configuration and FAISS dimension settings."""
         # Force CUDA initialization if available
         if torch.cuda.is_available():
             print("\nOptimizing GPU settings for maximum performance...")
@@ -59,7 +60,6 @@ class MonkeyConfig:
             device = "cpu"
 
         # Initialize the embedding model with optimized settings
-        # Removed deprecated parameters: pooling, cache_folder, embed_batch_size
         Settings.embed_model = HuggingFaceEmbedding(
             model_name=self.embedding_model,
             device=device,
@@ -86,8 +86,13 @@ class MonkeyConfig:
             # Generate a test embedding to verify GPU usage
             try:
                 test_text = "GPU test embedding"
-                _ = Settings.embed_model.get_text_embedding(test_text)
+                test_embedding = Settings.embed_model.get_text_embedding(test_text)
+                print(f"Test embedding dimension: {len(test_embedding)}")
                 print(f"GPU Memory After Test: {torch.cuda.memory_allocated(0) / 1024 ** 2:.2f} MB")
                 print("✓ GPU successfully initialized and tested")
+
+                # Update dimension if needed based on actual output
+                self.embedding_dimension = len(test_embedding)
+                print(f"Confirmed embedding dimension: {self.embedding_dimension}")
             except Exception as e:
                 print(f"Error testing GPU: {str(e)}")
