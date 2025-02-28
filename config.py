@@ -37,23 +37,34 @@ class MonkeyConfig:
             return cls()
 
     def initialize_settings(self):
-
-        """Initialize settings with explicit CUDA configuration."""
+        """Initialize settings with optimized CUDA configuration."""
         # Force CUDA initialization if available
         if torch.cuda.is_available():
+            print("\nOptimizing GPU settings for maximum performance...")
             torch.cuda.init()
-            device = "cuda"
-            # Clear CUDA cache
+
+            # More aggressive GPU memory optimization
             torch.cuda.empty_cache()
+
+            # Set optimal tensor math settings
+            torch.backends.cudnn.benchmark = True
+            torch.backends.cudnn.deterministic = False
+            if hasattr(torch.backends.cuda, 'matmul') and hasattr(torch.backends.cuda.matmul, 'allow_tf32'):
+                torch.backends.cuda.matmul.allow_tf32 = True
+            if hasattr(torch.backends.cudnn, 'allow_tf32'):
+                torch.backends.cudnn.allow_tf32 = True
+
+            device = "cuda"
         else:
             device = "cpu"
 
-        # Initialize the embedding model with forced device and model kwargs
+        # Initialize the embedding model with optimized settings
+        # Removed deprecated parameters: pooling, cache_folder, embed_batch_size
         Settings.embed_model = HuggingFaceEmbedding(
             model_name=self.embedding_model,
-            device=device,  # Use simple 'cuda' or 'cpu'
+            device=device,
             model_kwargs={
-                "device_map": "auto",  # Let the model handle device mapping
+                "device_map": "auto",
                 "torch_dtype": torch.float16 if torch.cuda.is_available() else torch.float32,
                 "trust_remote_code": True
             }
@@ -71,6 +82,7 @@ class MonkeyConfig:
             print(f"Device: {device}")
             print(f"GPU Name: {torch.cuda.get_device_name(0)}")
             print(f"Initial GPU Memory: {torch.cuda.memory_allocated(0) / 1024 ** 2:.2f} MB")
+
             # Generate a test embedding to verify GPU usage
             try:
                 test_text = "GPU test embedding"

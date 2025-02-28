@@ -30,6 +30,8 @@ class CLI:
                             help='Use LLM Model (default: mistral)')
         parser.add_argument('-t', '--temp', type=float,
                             help='Set LLM temperature (default: 0.7)')
+        parser.add_argument('-u', '--unique', action="store_true",
+                            help='Retrieve k unique source files instead of potentially overlapping chunks')
         parser.add_argument('-w', '--wrench', action="store_true",
                             help='MODE: Load vector store to query')
         parser.add_argument('--topics', action="store_true",

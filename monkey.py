@@ -1,4 +1,4 @@
-# monkey v 0.6 Redev
+# monkey v 0.7 Redev
 #     Johnny's academic research tool to ingest data/notes/articles and allow interactive query.
 #
 #     "If you give enough monkeys enough typewriters, they will eventually type out the
@@ -26,6 +26,9 @@
 # --merge               Expand vdb by merging new source to target vdb store
 # --topics              Untrained Topic Modeling
 #
+# Options
+# --unique              Retrieve k unique source files instead of potentially overlapping chunks
+#
 #
 # Dev Log:
 # 0.4 Moved index as query engine to CitationQueryEngine; configured "--kn"
@@ -34,12 +37,12 @@
 # 0.61 Start Re-dev and streamlining; modular design; topic modeling; guide
 #      command line
 # 0.7 CUDA optimizations, diagnostics, and monitoring
+#     Added --unique source file retrieval option
 # NEW: Add all types of text data available for txt, docx, and pdfs; will ingest
 #      .md, .epub, and .mbox but no error checking!
 #
 #
 #
-
 
 
 import logging
@@ -78,7 +81,7 @@ def setup_logging():
     file_handler = RotatingFileHandler(
         log_file,
         maxBytes=1024 * 1024,  # 1MB per file
-        backupCount=5,         # Keep 5 backup files
+        backupCount=5,  # Keep 5 backup files
         encoding='utf-8'
     )
     file_handler.setLevel(logging.DEBUG)
@@ -167,10 +170,10 @@ def display_response_diagnostics(result: dict, config: MonkeyConfig):
 
     # Processing Information
     print(f"Sources Retrieved: {len(result['sources'])}")
-    #print(f"Embedding Device: {cuda_checker.check_embedding_device()}")
+    # print(f"Embedding Device: {cuda_checker.check_embedding_device()}")
 
 
-def interactive_chat(query_engine, verbose, config):
+def interactive_chat(query_engine, verbose, config, unique_sources):
     """Handle interactive chat mode with diagnostic information."""
     from cuda_utils import CUDAChecker
     cuda_checker = CUDAChecker()
@@ -181,9 +184,13 @@ def interactive_chat(query_engine, verbose, config):
     display_system_info(config)
 
     # Display CUDA-specific status
-    #print("\nCUDA Status:")
-    #cuda_checker.print_cuda_status()
+    # print("\nCUDA Status:")
+    # cuda_checker.print_cuda_status()
     print("\nType your questions below:")
+
+    # Display unique source mode if active
+    if unique_sources:
+        print("\nUnique Sources Mode: ON - Retrieving diverse sources across documents")
 
     while True:
         try:
@@ -196,7 +203,7 @@ def interactive_chat(query_engine, verbose, config):
             if not query:
                 continue
 
-            result = query_engine.process_query(query, verbose=verbose)
+            result = query_engine.process_query(query, verbose=verbose, unique_sources=unique_sources)
 
             print("\nResponse:")
             print("=" * 50)
@@ -293,9 +300,22 @@ def main():
             logger.info("Vector stores merged successfully")
             return
 
+        # Handle topic modeling mode
+        if args.topics:
+            logger.info("Starting topic modeling mode")
+            from topic_modeling import TopicModeler
+            modeler = TopicModeler(config)
+            analysis = modeler.analyze_topics(num_words=args.topic_words)
+            modeler.print_analysis(analysis)
+            return
+
         # Handle query mode
         if args.wrench or args.do:
             logger.info("Starting query mode")
+            # Log unique source flag
+            if args.unique:
+                logger.info("Unique sources mode enabled")
+
             vector_store = VectorStore(config)
             index = vector_store.load_vector_store()
             if not index:
@@ -307,7 +327,7 @@ def main():
             if args.do:
                 # Single query mode
                 logger.info(f"Processing single query: {args.do}")
-                result = query_engine.process_query(args.do, verbose=args.verbose)
+                result = query_engine.process_query(args.do, verbose=args.verbose, unique_sources=args.unique)
                 print("\n".join(result['response']))
                 display_response_diagnostics(result, config)
                 if args.verbose and result['sources']:
@@ -318,7 +338,7 @@ def main():
                             print(source['text'])
             else:
                 # Interactive chat mode
-                interactive_chat(query_engine, args.verbose, config)
+                interactive_chat(query_engine, args.verbose, config, args.unique)
 
     except Exception as e:
         logger.error(f"Error in main: {str(e)}")
