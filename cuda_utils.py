@@ -78,31 +78,31 @@ class CUDAChecker:
         """Print CUDA status information."""
         cuda_info = self.check_cuda_availability()
 
-        print("\n=== CUDA Status ===")
+        self.logger.info("\n=== CUDA Status ===")
         if cuda_info["cuda_available"]:
-            print("✓ CUDA is available")
-            print(f"CUDA Version: {cuda_info['cuda_version']}")
-            print(f"GPU Devices: {cuda_info['device_count']}")
+            self.logger.info("✓ CUDA is available")
+            self.logger.info(f"CUDA Version: {cuda_info['cuda_version']}")
+            self.logger.info(f"GPU Devices: {cuda_info['device_count']}")
             if cuda_info["device_name"]:
-                print(f"Current Device: {cuda_info['device_name']}")
-                print(f"Device Capability: {cuda_info['device_capability']}")
-                print(f"Current Memory Usage: {torch.cuda.memory_allocated() / 1024 ** 2:.2f} MB")
-                print(f"Max Memory Usage: {torch.cuda.max_memory_allocated() / 1024 ** 2:.2f} MB")
+                self.logger.info(f"Current Device: {cuda_info['device_name']}")
+                self.logger.info(f"Device Capability: {cuda_info['device_capability']}")
+                self.logger.info(f"Current Memory Usage: {torch.cuda.memory_allocated() / 1024 ** 2:.2f} MB")
+                self.logger.info(f"Max Memory Usage: {torch.cuda.max_memory_allocated() / 1024 ** 2:.2f} MB")
         else:
             print("✗ CUDA is not available - using CPU")
 
         # Mode-specific information
         if mode:
-            print(f"\n=== {mode} Mode CUDA Usage ===")
+            self.logger.info(f"\n=== {mode} Mode CUDA Usage ===")
             if mode == "Embedding":
                 embed_device = self.check_embedding_device()
-                print(f"Embedding Device: {embed_device}")
+                self.logger.info(f"Embedding Device: {embed_device}")
                 if torch.cuda.is_available():
-                    print(f"Current Memory Usage: {torch.cuda.memory_allocated() / 1024 ** 2:.2f} MB")
+                    self.logger.info(f"Current Memory Usage: {torch.cuda.memory_allocated() / 1024 ** 2:.2f} MB")
             elif mode == "LLM":
-                print("LLM Processing: Using Ollama (CPU/GPU depends on Ollama configuration)")
+                self.logger.info("LLM Processing: Using Ollama (CPU/GPU depends on Ollama configuration)")
             elif mode == "Topic Modeling":
                 device = "cuda" if cuda_info["cuda_available"] else "cpu"
-                print(f"Topic Modeling Device: {device}")
+                self.logger.info(f"Topic Modeling Device: {device}")
 
-        print("=" * 50)
+            self.logger.info("=" * 50)

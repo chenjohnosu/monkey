@@ -18,7 +18,7 @@ class MonkeyConfig:
     chunk_size: int = 1024
     chunk_overlap: int = 200
     embedding_model: str = "mixedbread-ai/mxbai-embed-large-v1"
-    guide: str = "You are an academic research assistant that will help write lit reviews for an old professor."
+    guide: str = "You are a very intelligent text wrangler and researcher."
 
     def __post_init__(self):
         # Suppress specific PyTorch flash attention warning
@@ -37,6 +37,7 @@ class MonkeyConfig:
             return cls()
 
     def initialize_settings(self):
+
         """Initialize settings with explicit CUDA configuration."""
         # Force CUDA initialization if available
         if torch.cuda.is_available():
