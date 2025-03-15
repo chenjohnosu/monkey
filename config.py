@@ -17,9 +17,9 @@ class MonkeyConfig:
     line_width: int = 80
     chunk_size: int = 1024
     chunk_overlap: int = 200
-    embedding_model: str = "mixedbread-ai/mxbai-embed-large-v1"
-    embedding_dimension: int = 1024  # Explicitly define embedding dimension
-    guide: str = "You are a very intelligent text wrangler and researcher."
+    embedding_model: str = "mixedbread-ai/mxbai-embed-large-v1"  # Changed from embedding_model_name to embedding_model
+    # ORIG guide: str = "You are a very intelligent text wrangler and researcher."
+    guide: str = "I am a qualitative academic researcher helping with analyzing a series of interviews and completing thematic analysis. The text will be in chinese and the analysis should be done in chinese then translated into english; keep original text with english translations. There will be lots of repetitive questions that will be asked to each respondent: ignore these"
 
     def __post_init__(self):
         # Suppress specific PyTorch flash attention warning
@@ -30,6 +30,20 @@ class MonkeyConfig:
         try:
             with open(yaml_path, 'r') as f:
                 config_dict = yaml.safe_load(f)
+
+            # Create a default instance first to get default values
+            default_config = cls()
+
+            # If config_dict is None (empty YAML file), use empty dict
+            if config_dict is None:
+                config_dict = {}
+
+            # Make sure embedding_model is included
+            if 'embedding_model' not in config_dict:
+                config_dict['embedding_model'] = default_config.embedding_model
+                print(f"Adding missing 'embedding_model' with default: {default_config.embedding_model}")
+
+            # Create new instance with the merged configuration
             return cls(**config_dict)
         except FileNotFoundError:
             return cls()
@@ -38,7 +52,7 @@ class MonkeyConfig:
             return cls()
 
     def initialize_settings(self):
-        """Initialize settings with optimized CUDA configuration and FAISS dimension settings."""
+        """Initialize settings with optimized CUDA configuration."""
         # Force CUDA initialization if available
         if torch.cuda.is_available():
             print("\nOptimizing GPU settings for maximum performance...")
@@ -60,8 +74,9 @@ class MonkeyConfig:
             device = "cpu"
 
         # Initialize the embedding model with optimized settings
+        # Removed deprecated parameters: pooling, cache_folder, embed_batch_size
         Settings.embed_model = HuggingFaceEmbedding(
-            model_name=self.embedding_model,
+            model_name=self.embedding_model,  # This line matches the attribute name
             device=device,
             model_kwargs={
                 "device_map": "auto",
@@ -86,13 +101,8 @@ class MonkeyConfig:
             # Generate a test embedding to verify GPU usage
             try:
                 test_text = "GPU test embedding"
-                test_embedding = Settings.embed_model.get_text_embedding(test_text)
-                print(f"Test embedding dimension: {len(test_embedding)}")
+                _ = Settings.embed_model.get_text_embedding(test_text)
                 print(f"GPU Memory After Test: {torch.cuda.memory_allocated(0) / 1024 ** 2:.2f} MB")
                 print("✓ GPU successfully initialized and tested")
-
-                # Update dimension if needed based on actual output
-                self.embedding_dimension = len(test_embedding)
-                print(f"Confirmed embedding dimension: {self.embedding_dimension}")
             except Exception as e:
                 print(f"Error testing GPU: {str(e)}")

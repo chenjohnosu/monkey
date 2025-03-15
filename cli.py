@@ -38,6 +38,19 @@ class CLI:
                             help='MODE: Perform automatic topic modeling on vector store')
         parser.add_argument('--topic-words', type=int, default=10,
                             help='Number of words to show per topic (default: 10)')
+
+        # New arguments for thematic analysis
+        parser.add_argument('--themes', action="store_true",
+                            help='MODE: Perform comprehensive thematic analysis across all documents')
+        parser.add_argument('--theme-method', type=str, choices=['all', 'nmf', 'network', 'phrases'],
+                            default='all', help='Thematic analysis method to use (default: all)')
+        parser.add_argument('--min-occurrence', type=int, default=3,
+                            help='Minimum occurrence threshold for concepts (default: 3)')
+        parser.add_argument('--output-format', type=str, choices=['txt', 'json'],
+                            default='txt', help='Output format for thematic analysis (default: txt)')
+        parser.add_argument('--save-results', action="store_true",
+                            help='Save thematic analysis results to files')
+
         parser.add_argument('-v', '--verbose', action="store_true",
                             help='Show sources and detailed debug information')
         parser.add_argument('--guide', type=str,
@@ -53,9 +66,9 @@ class CLI:
             return None
 
         # Check for mutually exclusive modes
-        modes = [args.grind, args.wrench, args.merge is not None, args.topics]
+        modes = [args.grind, args.wrench, args.merge is not None, args.topics, args.themes]
         if sum(modes) > 1:
-            print("Error: Can only use one mode at a time (grind, wrench, merge, or topics)")
+            print("Error: Can only use one mode at a time (grind, wrench, merge, topics, or themes)")
             return None
 
         return args

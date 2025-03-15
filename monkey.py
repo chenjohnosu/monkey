@@ -13,11 +13,11 @@
 #     Oregon State University
 #     Center for Marketing & Consumer Insights
 #     chenjohn@oregonstate.edu
-#     02/28/2025
+#     10/28/2024
 #
 # INSTALLATION: Requires local Ollama
 #
-# 5 Modes
+# 6 Modes
 # --grind               Generate embeddings/vector DB (first pass; required)
 # --wrench              Query Vector Database
 #       --do            Single question on Command line
@@ -25,9 +25,11 @@
 # --pmode               Experimental: SmartDataFrame / Interactive pandasai
 # --merge               Expand vdb by merging new source to target vdb store
 # --topics              Untrained Topic Modeling
+# --themes              Comprehensive thematic analysis across all documents
 #
 # Options
 # --unique              Retrieve k unique source files instead of potentially overlapping chunks
+# --save-results        Save thematic analysis results to files
 #
 #
 # Dev Log:
@@ -38,9 +40,13 @@
 #      command line
 # 0.7 CUDA optimizations, diagnostics, and monitoring
 #     Added --unique source file retrieval option
-# 0.8 Fixed FAISS dimension compatibility issues
-#     Added explicit embedding dimension configuration
-#     Improved vector store creation and error handling
+# 0.8 Added thematic analysis with multiple methods
+#     Advanced cross-document analysis features
+# NEW: Add all types of text data available for txt, docx, and pdfs; will ingest
+#      .md, .epub, and .mbox but no error checking!
+#
+#
+#
 
 
 import logging
@@ -48,7 +54,6 @@ from pathlib import Path
 import sys
 import os
 import traceback
-import torch
 
 # Add the parent directory to sys.path to enable imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -143,7 +148,6 @@ def display_system_info(config: MonkeyConfig):
     print(f"Chunk Size: {config.chunk_size}")
     print(f"Chunk Overlap: {config.chunk_overlap}")
     print(f"Embedding Model: {config.embedding_model}")
-    print(f"Embedding Dimension: {config.embedding_dimension}")
     print(f"Guide: {config.guide}")
     print("=" * 50)
 
@@ -157,7 +161,7 @@ def display_response_diagnostics(result: dict, config: MonkeyConfig):
     if result['sources']:
         print("\nSources:")
         for source in result['sources']:
-            print(f"Source {source['id']}: {source['file']} (score: {source['score']:.4f})")
+            print(f"Source {source['id']}: {source['file']} (score: {source['score']})")
 
     # Response Diagnostics
     print("\nResponse Diagnostics:")
@@ -170,7 +174,7 @@ def display_response_diagnostics(result: dict, config: MonkeyConfig):
 
     # Processing Information
     print(f"Sources Retrieved: {len(result['sources'])}")
-    print(f"Embedding Dimension: {config.embedding_dimension}")
+    # print(f"Embedding Device: {cuda_checker.check_embedding_device()}")
 
 
 def interactive_chat(query_engine, verbose, config, unique_sources):
@@ -235,8 +239,6 @@ def main():
 
     try:
         logger.info("Starting monkey application")
-        print("\nMonkey Research Tool v0.8")
-        print("=" * 50)
 
         # Parse command line arguments
         cli = CLI()
@@ -275,43 +277,16 @@ def main():
         config.initialize_settings()
         logger.info("Initialized settings")
 
-        # Check FAISS availability
-        try:
-            import faiss
-            print("FAISS library is available")
-            if torch.cuda.is_available():
-                print("Checking GPU FAISS support...")
-                try:
-                    # Test if FAISS can use GPU
-                    res = faiss.StandardGpuResources()
-                    test_index = faiss.IndexFlatL2(config.embedding_dimension)
-                    gpu_index = faiss.index_cpu_to_gpu(res, 0, test_index)
-                    print("✓ FAISS with GPU support is ready")
-                except Exception as e:
-                    print(f"× FAISS GPU support issue: {str(e)}")
-                    print("Will use CPU for FAISS operations")
-        except ImportError:
-            logger.error("FAISS library not installed!")
-            print("ERROR: FAISS library not installed! Please install it with:")
-            print("pip install faiss-cpu  # For CPU-only")
-            print("pip install faiss-gpu  # For GPU support (needs CUDA)")
-            return
-
         # Process files if in grind mode
         if args.grind:
             logger.info("Starting grind mode")
             src_path = Path(config.src_dir)
             if not src_path.exists():
                 logger.error(f"Source directory {src_path} does not exist")
-                print(f"ERROR: Source directory {src_path} does not exist")
                 return
 
             processor = FileProcessor(config)
-            docs = processor.process_directory(src_path)
-            if not docs:
-                logger.error("No documents found or processed")
-                print("ERROR: No documents were successfully processed")
-                return
+            processor.process_directory(src_path)
 
             vector_store = VectorStore(config)
             vector_store.create_vector_store(src_path)
@@ -338,6 +313,69 @@ def main():
             modeler.print_analysis(analysis)
             return
 
+        # Handle thematic analysis mode (NEW)
+        if args.themes:
+            logger.info("Starting thematic analysis mode")
+            from thematic_analysis import ThematicAnalyzer
+
+            print("\nPerforming comprehensive thematic analysis across all documents...")
+            analyzer = ThematicAnalyzer(config)
+
+            if args.theme_method == 'all':
+                results = analyzer.analyze_all_themes()
+                analyzer.print_analysis_results(results)
+
+                # Save results if requested
+                if hasattr(args, 'save_results') and args.save_results:
+                    output_format = getattr(args, 'output_format', 'txt')
+                    output_path = analyzer.save_analysis_results(results, output_format)
+                    print(
+                        f"\nAnalysis results saved. You can find the key terms with their numeric values in: {output_path}")
+
+            elif args.theme_method == 'nmf':
+                results = analyzer.identify_themes_with_nmf()
+                print("\n--- Thematic Topics ---")
+                for theme_name, theme_data in results['themes'].items():
+                    print(f"\n{theme_name}")
+                    print(f"Key terms: {', '.join(theme_data['terms'][:5])}")
+                    print(f"Prevalence: {theme_data['prevalence']:.1%}")
+
+                # Save results if requested
+                if hasattr(args, 'save_results') and args.save_results:
+                    output_format = getattr(args, 'output_format', 'txt')
+                    output_path = analyzer.save_analysis_results({'nmf_themes': results}, output_format)
+                    print(f"\nAnalysis results saved to: {output_path}")
+
+            elif args.theme_method == 'network':
+                min_occurrence = getattr(args, 'min_occurrence', 3)
+                results = analyzer.identify_concept_network(min_co_occurrence=min_occurrence)
+                print("\n--- Concept Network Analysis ---")
+                print("\nTop Concepts by Centrality:")
+                for concept in results['top_concepts'][:15]:
+                    print(f"  - {concept['concept']} (centrality: {concept['centrality']:.3f})")
+
+                # Save results if requested
+                if hasattr(args, 'save_results') and args.save_results:
+                    output_format = getattr(args, 'output_format', 'txt')
+                    output_path = analyzer.save_analysis_results({'concept_network': results}, output_format)
+                    print(f"\nAnalysis results saved to: {output_path}")
+
+            elif args.theme_method == 'phrases':
+                min_occurrence = getattr(args, 'min_occurrence', 2)
+                results = analyzer.extract_common_keyphrases(min_doc_frequency=min_occurrence)
+                print("\n--- Common Key Phrases ---")
+                for phrase in results['common_phrases'][:20]:
+                    print(
+                        f"  - '{phrase['phrase']}' (in {phrase['doc_count']} docs, {phrase['coverage_percentage']:.1f}%)")
+
+                # Save results if requested
+                if hasattr(args, 'save_results') and args.save_results:
+                    output_format = getattr(args, 'output_format', 'txt')
+                    output_path = analyzer.save_analysis_results({'key_phrases': results}, output_format)
+                    print(f"\nAnalysis results saved to: {output_path}")
+
+            return
+
         # Handle query mode
         if args.wrench or args.do:
             logger.info("Starting query mode")
@@ -349,8 +387,6 @@ def main():
             index = vector_store.load_vector_store()
             if not index:
                 logger.error("Failed to load vector store")
-                print(f"ERROR: Failed to load vector store from {config.vdb_dir}")
-                print("You may need to rebuild the vector store with --grind if there's a dimension mismatch")
                 return
 
             query_engine = QueryEngine(config, index)
@@ -374,8 +410,7 @@ def main():
     except Exception as e:
         logger.error(f"Error in main: {str(e)}")
         logger.error(f"Traceback: {traceback.format_exc()}")
-        print(f"ERROR: {str(e)}")
-        print("Check monkey.log for details")
+        raise  # Re-raise the exception after logging it
 
 
 if __name__ == "__main__":

@@ -10,3 +10,9 @@ PyPDF2
 fitz
 pytesseract
 pymupdf
+networkx
+scikit-learn
+python-louvain
+spacy
+gensim
+accelerate
