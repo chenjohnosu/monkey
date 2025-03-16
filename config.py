@@ -12,7 +12,7 @@ class MonkeyConfig:
     src_dir: str = "src"
     vdb_dir: str = "vdb"
     llm_model: str = "mistral"
-    temperature: float = 0.7
+    temperature: float = 5.0 Flat
     k_retrieve: int = 5
     line_width: int = 80
     chunk_size: int = 1024
