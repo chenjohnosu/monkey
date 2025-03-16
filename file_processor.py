@@ -34,24 +34,61 @@ except ImportError:
     OCR_AVAILABLE = False
     print("OCR libraries not installed. PDF OCR functionality will be limited.")
 
+# For Chinese text processing
+try:
+    import jieba
+    import langdetect
+
+    CHINESE_SUPPORT = True
+except ImportError:
+    CHINESE_SUPPORT = False
+    print("Chinese support libraries (jieba, langdetect) not installed. Chinese processing will be limited.")
+
+
+
 
 class TextPreprocessor:
     """Handles advanced text preprocessing including stop word removal."""
-
     def __init__(self):
-        """Initialize the text preprocessor with necessary NLTK downloads and spaCy model."""
+        """Initialize the text preprocessor with necessary models and stop words."""
         try:
+            # Initialize English NLP tools
+            import nltk
             nltk.download('punkt', quiet=True)
             nltk.download('stopwords', quiet=True)
             self.nlp = spacy.load('en_core_web_sm')
+
+            # Initialize stop words
             self.stop_words = self._get_enhanced_stopwords()
+            self.chinese_stop_words = self._load_chinese_stopwords()
+
+            # Try to load Chinese NLP model if available
+            try:
+                self.zh_nlp = spacy.load('zh_core_web_sm')
+            except (OSError, IOError):
+                self.zh_nlp = None
+                logging.info("Chinese spaCy model not available. Using jieba for Chinese processing.")
+
+                # Initialize language detector
+                if self.config.detect_language:
+                    self.language_detector = LanguageDetector(self.config.src_dir)
+                else:
+                    self.language_detector = None
+
+                # Update OCR to support Chinese
+                if OCR_AVAILABLE:
+                    self.ocr_extractor = PDFTextExtractor(
+                        ocr_languages='eng+chi_sim+chi_tra',  # Add Chinese OCR support
+                        min_confidence=60.0
+                    )
+
         except Exception as e:
             logging.error(f"Error initializing TextPreprocessor: {str(e)}")
             raise
 
-    def _get_enhanced_stopwords(self) -> set[str]:
-        """Create an enhanced set of stop words combining NLTK, spaCy, and custom words."""
-        # Combine stop words from multiple sources
+    def _get_enhanced_stopwords(self) -> set:
+        """Create an enhanced set of stop words for English text."""
+        # Get stopwords from NLTK and spaCy
         stop_words = set(stopwords.words('english'))
         spacy_stops = set(self.nlp.Defaults.stop_words)
 
@@ -68,8 +105,129 @@ class TextPreprocessor:
         all_stops = stop_words.union(spacy_stops).union(custom_stops)
         return all_stops
 
-    def preprocess_text(self, text: str, remove_citations: bool = True) -> str:
-        """Preprocess text with advanced stop word removal and cleaning."""
+    def _load_chinese_stopwords(self) -> set:
+        """Load Chinese stop words from a predefined list."""
+        # Common Chinese stop words
+        chinese_stops = {
+            # Basic particles and functional words
+            '的', '了', '和', '是', '就', '都', '而', '及', '與', '著', '或', '一個', '沒有',
+            '我們', '你們', '他們', '她們', '這個', '那個', '這些', '那些', '不', '在',
+            '人', '我', '來', '他', '上', '個', '到', '說', '們', '為', '子', '你',
+            '有', '那', '這', '就', '以', '等', '著', '把', '才', '地', '得', '於',
+
+            # Pronouns
+            '您', '妳', '我', '我們', '你', '你們', '他', '她', '它', '他們', '她們', '它們',
+            '咱們', '誰', '哪個', '這', '那', '這些', '那些', '誰們', '啥',
+
+            # Numbers and measure words
+            '一', '二', '三', '幾', '多少', '個', '些', '只', '條', '種', '樣', '件',
+
+            # Adverbs
+            '很', '非常', '太', '更', '比較', '越來越', '稍', '略', '幾乎', '基本',
+            '相當', '稍微', '極其', '極端', '最', '最為', '多麼', '大約', '不太',
+
+            # Conjunctions
+            '和', '跟', '與', '以及', '並且', '而且', '況且', '但是', '然而', '不過',
+            '可是', '雖然', '盡管', '因為', '由於', '所以', '因此', '是故', '於是',
+
+            # Prepositions
+            '在', '把', '將', '對於', '關於', '向', '往', '依', '靠', '按照', '根據',
+
+            # Time words
+            '現在', '當時', '曾經', '剛才', '過去', '將來', '終於', '最終', '始終',
+            '已經', '剛剛', '後來', '從來', '以前', '之前', '當初', '將近', '昨天',
+
+            # Auxiliary words
+            '的', '地', '得', '所', '似的', '般', '樣', '一般', '似', '如同', '這樣',
+            '那樣', '如此', '之', '者', '所', '等', '等等',
+
+            # Modal particles
+            '吧', '呢', '啊', '嗎', '呀', '哇', '哦', '喔', '喲', '哎', '誒', '欸',
+            '嘿', '嗨', '嘛', '哼', '哈', '啦', '咧', '嘮', '囉', '唷',
+
+            # Common verbs often acting as function words
+            '是', '有', '要', '會', '能', '可以', '應該', '可能', '應當', '須', '得',
+            '該', '需要', '值得', '敢', '肯', '愿意', '想', '想要',
+
+            # Academic-specific
+            '研究', '論文', '分析', '調查', '實驗', '數據', '結果', '方法', '表明',
+            '表示', '顯示', '認為', '指出', '發現', '證實', '對比', '比較', '總結',
+
+            # Measurements and units
+            '公分', '厘米', '千米', '公里', '米', '毫米', '微米', '釐米', '吋', '英寸',
+            '英尺', '呎', '碼', '公斤', '千克', '克', '毫克', '微克', '噸', '盎司',
+            '磅', '秒', '分鐘', '小時', '刻', '天', '週', '月', '年', '世紀',
+
+            # Miscellaneous common words
+            '例如', '比如', '像', '假如', '要是', '如果', '若', '如何', '怎麼', '怎樣',
+            '多久', '哪里', '哪裡', '何處', '何時', '何人', '何物', '何事', '何故',
+            '為何', '為什麼', '怎麼樣', '多長時間', '多遠', '多大', '多重', '多少'
+        }
+
+        # Try to load from external file if available
+        try:
+            stopwords_file = Path('chinese_stopwords.txt')
+            if stopwords_file.exists():
+                with open(stopwords_file, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        word = line.strip()
+                        if word:
+                            chinese_stops.add(word)
+        except Exception as e:
+            logging.warning(f"Error loading Chinese stopwords file: {e}")
+
+        return chinese_stops
+
+    def detect_language(self, text: str) -> str:
+        """Detect the language of the text."""
+        if not CHINESE_SUPPORT:
+            return "en"  # Default to English if langdetect is not available
+
+        try:
+            # Use a sample of the text for faster detection
+            sample = text[:min(len(text), 1000)]
+            lang = langdetect.detect(sample)
+
+            # Normalize Chinese language codes
+            if lang in ['zh-cn', 'zh-tw', 'zh']:
+                return 'zh'
+            return lang
+        except:
+            # Default to English if detection fails
+            return "en"
+
+    def preprocess_text(self, text: str, remove_citations: bool = True, language: str = None) -> str:
+        """
+        Preprocess text with language detection and appropriate cleaning.
+
+        Args:
+            text (str): The text to preprocess
+            remove_citations (bool): Whether to remove citation patterns
+            language (str): Language code ('en', 'zh') or None for auto-detection
+
+        Returns:
+            str: Preprocessed text
+        """
+        try:
+            if not text or not text.strip():
+                return ""
+
+            # Auto-detect language if not specified
+            if language is None:
+                language = self.detect_language(text)
+
+            # Choose preprocessing method based on language
+            if language == 'zh':
+                return self._preprocess_chinese_text(text, remove_citations)
+            else:
+                return self._preprocess_english_text(text, remove_citations)
+
+        except Exception as e:
+            logging.error(f"Error in text preprocessing: {str(e)}")
+            return text  # Return original text if preprocessing fails
+
+    def _preprocess_english_text(self, text: str, remove_citations: bool = True) -> str:
+        """Preprocess English text with stop word removal and cleaning."""
         try:
             # Convert to lowercase
             text = text.lower()
@@ -80,7 +238,7 @@ class TextPreprocessor:
                 text = re.sub(r'\([A-Za-z]+,?\s+\d{4}\)', '', text)
                 text = re.sub(r'\[\d+\]', '', text)
 
-            # Tokenize text
+            # Tokenize text with spaCy
             doc = self.nlp(text)
 
             # Remove stop words, punctuation, and numbers while preserving sentence structure
@@ -95,7 +253,7 @@ class TextPreprocessor:
                 ):
                     processed_tokens.append(str(token))
 
-            # Reconstruct text while preserving some structure
+            # Reconstruct text
             processed_text = ' '.join(processed_tokens)
 
             # Clean up extra whitespace
@@ -104,25 +262,70 @@ class TextPreprocessor:
             return processed_text
 
         except Exception as e:
-            logging.error(f"Error in text preprocessing: {str(e)}")
-            return text  # Return original text if preprocessing fails
+            logging.error(f"Error in English text preprocessing: {str(e)}")
+            return text
 
-    def remove_boilerplate(self, text: str) -> str:
-        """Remove common academic document boilerplate text."""
-        # Patterns for common boilerplate text
-        boilerplate_patterns = [
-            r'all rights reserved',
-            r'©.*?\d{4}',
-            r'please cite as',
-            r'this is a preprint',
-            r'manuscript draft',
-            r'do not distribute',
-            r'confidential document',
-            r'accepted for publication',
-            r'under review',
-            r'to appear in',
-        ]
+    def _preprocess_chinese_text(self, text: str, remove_citations: bool = True) -> str:
+        """
+        Specialized preprocessing for Chinese text.
 
+        This method handles Chinese text preprocessing with jieba segmentation
+        and removes Chinese stop words.
+        """
+        if not CHINESE_SUPPORT:
+            logging.warning("Chinese support not available. Returning original text.")
+            return text
+
+        try:
+            # Remove citation patterns if requested
+            if remove_citations:
+                # Remove common citation patterns
+                text = re.sub(r'（[^）]+，\d{4}）', '', text)  # Chinese (Author, Year)
+                text = re.sub(r'\([^)]+，\d{4}\)', '', text)  # Mixed (Author, Year)
+                text = re.sub(r'［\d+］', '', text)  # Chinese [1]
+                text = re.sub(r'\[\d+\]', '', text)  # Latin [1]
+
+            # Use jieba for Chinese word segmentation
+            words = jieba.lcut(text)
+
+            # Remove stop words and empty strings
+            filtered_words = [
+                word for word in words
+                if word not in self.chinese_stop_words
+                   and not re.match(r'^[\s\d]+$', word)  # Remove spaces and numbers
+                   and len(word.strip()) > 0
+            ]
+
+            # For Chinese, we join without spaces to maintain proper formatting
+            processed_text = ''.join(filtered_words)
+
+            return processed_text
+
+        except Exception as e:
+            logging.error(f"Error in Chinese text preprocessing: {str(e)}")
+            return text
+
+    def remove_boilerplate(self, text: str, language: str = None) -> str:
+        """
+        Remove common document boilerplate text.
+
+        Args:
+            text (str): The text to clean
+            language (str): Language code ('en', 'zh') or None for auto-detection
+
+        Returns:
+            str: Text with boilerplate removed
+        """
+        if language is None:
+            language = self.detect_language(text)
+
+        # Get appropriate patterns based on language
+        if language == 'zh':
+            boilerplate_patterns = self._get_chinese_boilerplate_patterns()
+        else:
+            boilerplate_patterns = self._get_english_boilerplate_patterns()
+
+        # Remove boilerplate patterns
         for pattern in boilerplate_patterns:
             text = re.sub(pattern, '', text, flags=re.IGNORECASE)
 

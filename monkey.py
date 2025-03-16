@@ -1,4 +1,4 @@
-# monkey v 0.8 Redev
+# monkey v 0.7 Redev
 #     Johnny's academic research tool to ingest data/notes/articles and allow interactive query.
 #
 #     "If you give enough monkeys enough typewriters, they will eventually type out the
@@ -15,9 +15,9 @@
 #     chenjohn@oregonstate.edu
 #     10/28/2024
 #
-# INSTALLATION: Requires local Ollama
+# INSTALLATION: Requires LLama Index
 #
-# 6 Modes
+# 5 Modes
 # --grind               Generate embeddings/vector DB (first pass; required)
 # --wrench              Query Vector Database
 #       --do            Single question on Command line
@@ -25,11 +25,9 @@
 # --pmode               Experimental: SmartDataFrame / Interactive pandasai
 # --merge               Expand vdb by merging new source to target vdb store
 # --topics              Untrained Topic Modeling
-# --themes              Comprehensive thematic analysis across all documents
 #
 # Options
 # --unique              Retrieve k unique source files instead of potentially overlapping chunks
-# --save-results        Save thematic analysis results to files
 #
 #
 # Dev Log:
@@ -40,8 +38,6 @@
 #      command line
 # 0.7 CUDA optimizations, diagnostics, and monitoring
 #     Added --unique source file retrieval option
-# 0.8 Added thematic analysis with multiple methods
-#     Advanced cross-document analysis features
 # NEW: Add all types of text data available for txt, docx, and pdfs; will ingest
 #      .md, .epub, and .mbox but no error checking!
 #
@@ -134,12 +130,12 @@ def display_system_info(config: MonkeyConfig):
         print(f"CUDA Version: {cuda_info['cuda_version']}")
         print(f"GPU Count: {cuda_info['device_count']}")
     print(f"Embedding Device: {cuda_checker.check_embedding_device()}")
-    print(f"LLM Processing: Using Ollama ({config.llm_model})")
 
     # Model Configuration
     print("\nModel Configuration:")
     print(f"Vector Store: {config.vdb_dir}")
     print(f"Language Model: {config.llm_model}")
+    print(f"Embedding Model: {config.embedding_model}")
     print(f"Temperature: {config.temperature}")
     print(f"k-retrieve: {config.k_retrieve}")
 
@@ -147,7 +143,6 @@ def display_system_info(config: MonkeyConfig):
     print("\nProcessing Configuration:")
     print(f"Chunk Size: {config.chunk_size}")
     print(f"Chunk Overlap: {config.chunk_overlap}")
-    print(f"Embedding Model: {config.embedding_model}")
     print(f"Guide: {config.guide}")
     print("=" * 50)
 
@@ -304,75 +299,27 @@ def main():
             logger.info("Vector stores merged successfully")
             return
 
-        # Handle topic modeling mode
-        if args.topics:
-            logger.info("Starting topic modeling mode")
-            from topic_modeling import TopicModeler
-            modeler = TopicModeler(config)
-            analysis = modeler.analyze_topics(num_words=args.topic_words)
-            modeler.print_analysis(analysis)
-            return
-
-        # Handle thematic analysis mode (NEW)
+        # Handle thematic analysis mode
         if args.themes:
             logger.info("Starting thematic analysis mode")
             from thematic_analysis import ThematicAnalyzer
-
-            print("\nPerforming comprehensive thematic analysis across all documents...")
             analyzer = ThematicAnalyzer(config)
 
             if args.theme_method == 'all':
                 results = analyzer.analyze_all_themes()
-                analyzer.print_analysis_results(results)
-
-                # Save results if requested
-                if hasattr(args, 'save_results') and args.save_results:
-                    output_format = getattr(args, 'output_format', 'txt')
-                    output_path = analyzer.save_analysis_results(results, output_format)
-                    print(
-                        f"\nAnalysis results saved. You can find the key terms with their numeric values in: {output_path}")
-
             elif args.theme_method == 'nmf':
                 results = analyzer.identify_themes_with_nmf()
-                print("\n--- Thematic Topics ---")
-                for theme_name, theme_data in results['themes'].items():
-                    print(f"\n{theme_name}")
-                    print(f"Key terms: {', '.join(theme_data['terms'][:5])}")
-                    print(f"Prevalence: {theme_data['prevalence']:.1%}")
-
-                # Save results if requested
-                if hasattr(args, 'save_results') and args.save_results:
-                    output_format = getattr(args, 'output_format', 'txt')
-                    output_path = analyzer.save_analysis_results({'nmf_themes': results}, output_format)
-                    print(f"\nAnalysis results saved to: {output_path}")
-
             elif args.theme_method == 'network':
-                min_occurrence = getattr(args, 'min_occurrence', 3)
-                results = analyzer.identify_concept_network(min_co_occurrence=min_occurrence)
-                print("\n--- Concept Network Analysis ---")
-                print("\nTop Concepts by Centrality:")
-                for concept in results['top_concepts'][:15]:
-                    print(f"  - {concept['concept']} (centrality: {concept['centrality']:.3f})")
-
-                # Save results if requested
-                if hasattr(args, 'save_results') and args.save_results:
-                    output_format = getattr(args, 'output_format', 'txt')
-                    output_path = analyzer.save_analysis_results({'concept_network': results}, output_format)
-                    print(f"\nAnalysis results saved to: {output_path}")
-
+                results = analyzer.identify_concept_network(min_co_occurrence=args.min_occurrence)
             elif args.theme_method == 'phrases':
-                min_occurrence = getattr(args, 'min_occurrence', 2)
-                results = analyzer.extract_common_keyphrases(min_doc_frequency=min_occurrence)
-                print("\n--- Common Key Phrases ---")
-                for phrase in results['common_phrases'][:20]:
-                    print(
-                        f"  - '{phrase['phrase']}' (in {phrase['doc_count']} docs, {phrase['coverage_percentage']:.1f}%)")
+                results = analyzer.extract_common_keyphrases(min_doc_frequency=args.min_occurrence)
 
-                # Save results if requested
-                if hasattr(args, 'save_results') and args.save_results:
-                    output_format = getattr(args, 'output_format', 'txt')
-                    output_path = analyzer.save_analysis_results({'key_phrases': results}, output_format)
-                    print(f"\nAnalysis results saved to: {output_path}")
+            analyzer.print_analysis_results(results)
+
+            if args.save_results:
+                # Save results to files based on output format
+                # Implement saving logic here
+                pass
 
             return
 

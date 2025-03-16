@@ -2,13 +2,20 @@ from dataclasses import dataclass
 import yaml
 import torch
 import warnings
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.core import Settings
 from llama_index.core.node_parser import SentenceSplitter
 
 
+try:
+    from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+    print("Successfully imported HuggingFaceEmbedding")
+except ImportError as e:
+    print(f"Error importing HuggingFaceEmbedding: {e}")
+    raise
+
 @dataclass
 class MonkeyConfig:
+    language: str = "auto"
     src_dir: str = "src"
     vdb_dir: str = "vdb"
     llm_model: str = "mistral"
@@ -17,7 +24,8 @@ class MonkeyConfig:
     line_width: int = 80
     chunk_size: int = 1024
     chunk_overlap: int = 200
-    embedding_model: str = "mixedbread-ai/mxbai-embed-large-v1"  # Changed from embedding_model_name to embedding_model
+    embed_model: str = "mixedbread-ai/mxbai-embed-large-v1"
+    embedding_model: str = "mixedbread-ai/mxbai-embed-large-v1"
     # ORIG guide: str = "You are a very intelligent text wrangler and researcher."
     guide: str = "I am a qualitative academic researcher helping with analyzing a series of interviews and completing thematic analysis. The text will be in chinese and the analysis should be done in chinese then translated into english; keep original text with english translations. There will be lots of repetitive questions that will be asked to each respondent: ignore these"
 

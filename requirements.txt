@@ -16,3 +16,5 @@ python-louvain
 spacy
 gensim
 accelerate
+jieba
+zhconv

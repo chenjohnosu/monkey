@@ -1,9 +1,6 @@
 import argparse
 import sys
-import logging
-from pathlib import Path
 from typing import Optional
-
 
 class CLI:
     def __init__(self):
@@ -34,10 +31,6 @@ class CLI:
                             help='Retrieve k unique source files instead of potentially overlapping chunks')
         parser.add_argument('-w', '--wrench', action="store_true",
                             help='MODE: Load vector store to query')
-        parser.add_argument('--topics', action="store_true",
-                            help='MODE: Perform automatic topic modeling on vector store')
-        parser.add_argument('--topic-words', type=int, default=10,
-                            help='Number of words to show per topic (default: 10)')
 
         # New arguments for thematic analysis
         parser.add_argument('--themes', action="store_true",
@@ -50,11 +43,17 @@ class CLI:
                             default='txt', help='Output format for thematic analysis (default: txt)')
         parser.add_argument('--save-results', action="store_true",
                             help='Save thematic analysis results to files')
-
+        parser.add_argument('--cuda', action="store_true",
+                            help='Check CUDA availability and device information')
         parser.add_argument('-v', '--verbose', action="store_true",
                             help='Show sources and detailed debug information')
         parser.add_argument('--guide', type=str,
                             help='Override default guide prompt for the LLM')
+        parser.add_argument('--language', type=str, choices=['auto', 'en', 'zh'],
+                            default='auto', help='Set document language (auto, en, zh)')
+        parser.add_argument('--no-language-detect', action="store_true",
+                            help='Disable automatic language detection')
+
         return parser
 
     def parse_args(self) -> Optional[argparse.Namespace]:
@@ -66,7 +65,7 @@ class CLI:
             return None
 
         # Check for mutually exclusive modes
-        modes = [args.grind, args.wrench, args.merge is not None, args.topics, args.themes]
+        modes = [args.grind, args.wrench, args.merge is not None, args.themes]
         if sum(modes) > 1:
             print("Error: Can only use one mode at a time (grind, wrench, merge, topics, or themes)")
             return None
