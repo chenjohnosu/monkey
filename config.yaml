@@ -1,0 +1,33 @@
+embedding:
+  default_model: multilingual-e5
+hardware:
+  device: auto
+  use_cuda: auto
+  use_mps: auto
+haystack:
+  document_store: memory
+  retriever:
+    top_k: 5
+language:
+  default: en
+  supported:
+  - en
+  - zh
+llama_index:
+  service_context:
+    chunk_overlap: 20
+    chunk_size: 1024
+llm:
+  default_model: mistral:latest
+  ollama_host: http://localhost
+  ollama_port: 11434
+  source: ollama
+query:
+  k_value: 5
+storage:
+  vector_store: llama_index
+system:
+  debug: true
+  output_format: txt
+workspace:
+  default: default
