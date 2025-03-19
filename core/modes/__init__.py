@@ -1,0 +1,3 @@
+"""
+Modes module initialization
+"""

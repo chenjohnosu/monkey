@@ -1,0 +1,3 @@
+"""
+Language module initialization
+"""
