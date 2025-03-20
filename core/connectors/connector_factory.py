@@ -151,9 +151,15 @@ class ConnectorFactory:
                 model_path = "mixedbread-ai/mxbai-embed-large-v1"
             elif model_name == "bge":
                 model_path = "BAAI/bge-m3"
+            elif model_name == "jina-zh":
+                model_path = "jinaai/jina-embeddings-v2-base-zh"
             else:
                 # Fallback to a reliable multilingual model
                 model_path = "intfloat/multilingual-e5-large"
+
+            if model_name == "jina-zh" and not os.path.exists(os.path.expanduser("~/.cache/huggingface/hub/models--jinaai--jina-embeddings-v2-base-zh")):
+                print("First time using jina-embeddings-v2-base-zh. Downloading model (approx. 450MB)...")
+                print("This may take a few minutes depending on your internet connection.")
 
             # Create and return local embedding model
             return HuggingFaceEmbedding(model_name_or_path=model_path)

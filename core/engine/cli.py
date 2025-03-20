@@ -224,6 +224,13 @@ Aliases:
             self._show_files()
         elif subcommand == 'guide' or subcommand == 'guides':
             self._show_guides()
+        elif subcommand == 'embed':
+            if len(args) < 2:
+                print(f"Current embedding model: {self.config.get('embedding.default_model')}")
+                print("Available models: multilingual-e5, mixbread, bge, jina-zh")
+                return
+            self.config.set('embedding.default_model', args[1])
+            print(f"Embedding model set to: {args[1]}")
         else:
             print(f"Unknown show subcommand: {subcommand}")
 
@@ -564,6 +571,12 @@ Aliases:
                 print("Migration completed successfully.")
             else:
                 print("Migration not needed or failed. Check logs for details.")
+        elif subcommand == 'reembed':
+            workspace = args[1] if len(args) > 1 else self.current_workspace
+            model = args[2] if len(args) > 2 else 'jina-zh'
+            print(f"Rebuilding vector store for workspace '{workspace}' using '{model}' embedding model...")
+            self.config.set('embedding.default_model', model)
+            self.vector_store_inspector.rebuild_vector_store(workspace)
         else:
             print(f"Unknown inspect subcommand: {subcommand}")
 

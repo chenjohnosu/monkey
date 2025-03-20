@@ -32,3 +32,6 @@ Include specific citations to relevant documents and explain your reasoning.
 If information is not available in the provided context, clearly state this 
 limitation rather than making assumptions.
 </query_guidance>
+
+<passthru> 
+</passthru>

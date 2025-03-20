@@ -285,17 +285,30 @@ class FileProcessor:
         # Preprocess text
         processed = self.text_processor.preprocess(content)
 
+        # Select language-appropriate embedding model
+        if processed['language'] == 'zh':
+            embedding_model = self.config.get('embedding.chinese_model', 'jina-zh')
+            print(f"🇨🇳 Chinese content detected. Using {embedding_model} embedding model for: {rel_path}")
+        else:
+            embedding_model = self.config.get('embedding.default_model', 'multilingual-e5')
+
         # Create document metadata
         metadata = {
             'source': rel_path,
             'workspace': workspace,
             'language': processed['language'],
+            'embedding_model': embedding_model,  # Store which model was used
             'tokens': processed['tokens'],
             'content_hash': content_hash,
             'last_modified': os.path.getmtime(filepath),
             'file_size': os.path.getsize(filepath),
             'processed_date': datetime.now().isoformat()
         }
+
+        # Add special indicator for Chinese documents using Jina model
+        if processed['language'] == 'zh' and embedding_model == 'jina-zh':
+            metadata['using_specialized_chinese_model'] = True
+            debug_print(self.config, f"Using specialized jina-zh model for Chinese document: {rel_path}")
 
         # Add to storage
         self.storage_manager.add_document(workspace, rel_path, content, processed['processed'], metadata)
@@ -304,6 +317,7 @@ class FileProcessor:
         return {
             'path': rel_path,
             'language': processed['language'],
+            'embedding_model': embedding_model,
             'tokens': processed['tokens'],
             'hash': content_hash
         }

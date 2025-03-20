@@ -48,6 +48,8 @@ class HaystackConnector:
                 model_name = "intfloat/multilingual-e5-large"
             elif embedding_model_name == "mixbread":
                 model_name = "mixedbread-ai/mxbai-embed-large-v1"
+            elif embedding_model_name == "jina-zh":
+                model_name = "jinaai/jina-embeddings-v2-base-zh"
             else:
                 # Default to a good multilingual model
                 model_name = "intfloat/multilingual-e5-large"

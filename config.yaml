@@ -1,7 +1,8 @@
 embedding:
-  default_model: multilingual-e5
+  chinese_model: jina-zh
+  default_model: jina-zh
 hardware:
-  device: auto
+  device: mps
   use_cuda: auto
   use_mps: auto
 haystack:
@@ -27,7 +28,7 @@ query:
 storage:
   vector_store: llama_index
 system:
-  debug: true
-  output_format: txt
+  debug: false
+  output_format: md
 workspace:
   default: default
