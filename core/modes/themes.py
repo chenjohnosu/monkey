@@ -10,10 +10,11 @@ import networkx as nx
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.decomposition import TruncatedSVD
 from sklearn.cluster import KMeans
-from core.engine.utils import debug_print, ensure_dir
+from core.engine.logging import debug_print
 from core.engine.storage import StorageManager
 from core.engine.output import OutputManager
 from core.language.processor import TextProcessor
+from core.language.tokenizer import ChineseTokenizer, JIEBA_AVAILABLE
 
 # Import jieba for Chinese text segmentation if available
 try:
@@ -24,24 +25,6 @@ except ImportError:
     JIEBA_AVAILABLE = False
     print("jieba not available, falling back to character-based tokenization for Chinese")
 
-
-class ChineseTokenizer:
-    """Tokenizer for Chinese text using jieba if available"""
-
-    def __init__(self):
-        self.use_jieba = JIEBA_AVAILABLE
-
-    def __call__(self, text):
-        """Tokenize Chinese text"""
-        if not text:
-            return []
-
-        if self.use_jieba:
-            # Use jieba for word segmentation
-            return list(jieba.cut(text))
-        else:
-            # Fallback to character-based tokenization
-            return [char for char in text if '\u4e00' <= char <= '\u9fff']
 
 class ThemeAnalyzer:
     """Analyzes document themes with a focus on content semantics"""
@@ -74,10 +57,16 @@ class ThemeAnalyzer:
         # Initialize keyword document mappings
         self.keyword_doc_mapping = {}
 
+        #  Define lexicon directory
+        lexicon_dir = 'lexicon'
+        if not os.path.exists(lexicon_dir):
+                os.makedirs(lexicon_dir)
+                debug_print(self.config, f"Created lexicon directory: {lexicon_dir}")
+
         # Load Chinese stopwords if available
         self.chinese_stopwords = set()
         try:
-            with open('stopwords_zh.txt', 'r', encoding='utf-8') as file:
+            with open(os.path.join(lexicon_dir, 'stopwords_zh.txt'), 'r', encoding='utf-8') as file:
                 self.chinese_stopwords = set(line.strip() for line in file if line.strip())
             debug_print(config, f"Loaded {len(self.chinese_stopwords)} Chinese stopwords")
         except FileNotFoundError:
@@ -86,7 +75,7 @@ class ThemeAnalyzer:
         # Load English stopwords if available
         self.english_stopwords = set()
         try:
-            with open('stopwords_en.txt', 'r', encoding='utf-8') as file:
+            with open(os.path.join(lexicon_dir, 'stopwords_en.txt'), 'r', encoding='utf-8') as file:
                 self.english_stopwords = set(line.strip() for line in file if line.strip())
             debug_print(config, f"Loaded {len(self.english_stopwords)} English stopwords")
         except FileNotFoundError:

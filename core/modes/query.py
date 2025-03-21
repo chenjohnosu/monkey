@@ -3,7 +3,8 @@ Query mode module with LlamaIndex and Ollama integration
 """
 
 import os
-from core.engine.utils import debug_print
+
+from core.engine.logging import debug_print
 from core.engine.storage import StorageManager
 from core.engine.output import OutputManager
 from core.language.processor import TextProcessor

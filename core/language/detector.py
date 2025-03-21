@@ -2,8 +2,7 @@
 Language detection module
 """
 
-from core.engine.utils import debug_print
-
+from core.engine.logging import debug_print
 
 class LanguageDetector:
     """Detects the language of text"""

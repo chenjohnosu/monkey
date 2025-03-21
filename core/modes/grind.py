@@ -5,10 +5,12 @@ File processing module for scanning directories and creating vector databases
 import os
 import time
 import hashlib
-from datetime import datetime
-from core.engine.utils import debug_print, is_supported_file, get_file_content, ensure_dir
+import json
+from core.engine.utils import is_supported_file, get_file_content, ensure_dir
+from core.engine.logging import debug_print
 from core.engine.storage import StorageManager
 from core.language.processor import TextProcessor
+
 
 class FileProcessor:
     """Processes files for document analysis"""
@@ -20,16 +22,14 @@ class FileProcessor:
         self.text_processor = text_processor or TextProcessor(config)
         debug_print(config, "File processor initialized")
 
-    def process_workspace(self, workspace, scan_only=False, force=False):
+    def process_workspace(self, workspace):
         """
-        Process all files in a workspace
+        Process all files in a workspace to create initial database
 
         Args:
             workspace (str): The workspace to process
-            scan_only (bool): If True, only scan for new files without processing them
-            force (bool): If True, process all files regardless of their change status
         """
-        debug_print(self.config, f"Processing workspace: {workspace}" + (" (force mode)" if force else ""))
+        debug_print(self.config, f"Processing workspace: {workspace}")
 
         # Ensure workspace directories exist
         data_dir = os.path.join("data", workspace)
@@ -39,68 +39,87 @@ class FileProcessor:
             print(f"Document directory does not exist: {body_dir}")
             return
 
+        # Check if vector store already exists
+        vector_store_dir = os.path.join(data_dir, "vector_store")
+        if os.path.exists(vector_store_dir):
+            print(f"Vector store already exists for workspace '{workspace}'.")
+            print("To add new files or update existing ones, please use the /run update command.")
+            return
+
         # Create data directory if it doesn't exist
         if not os.path.exists(data_dir):
             os.makedirs(data_dir)
 
-        # If force is True, get all files in the workspace
-        if force:
-            files_to_process = self._get_all_files(workspace)
-            print(f"Force mode: Processing all {len(files_to_process)} files in workspace '{workspace}'")
-        else:
-            # Scan for new or updated files
-            files_to_process = self.scan_workspace(workspace, detailed=True, return_files=True)
-
-            if not files_to_process:
-                print(f"No new or updated files found in workspace '{workspace}'")
-                return
-
-        if scan_only:
-            # If scan_only, we've already displayed the results in scan_workspace
-            return
-
-        print(f"Processing {len(files_to_process)} files in workspace '{workspace}'")
-
-        # Initialize counters
-        new_count = 0
-        updated_count = 0
-        skipped_count = 0
-        failed_count = 0
+        # Get all files in the workspace
+        files_to_process = self._get_all_files(workspace)
+        print(f"Creating initial database with {len(files_to_process)} files in workspace '{workspace}'")
 
         # Process each file
         for file_info in files_to_process:
             rel_path = file_info['rel_path']
             filepath = file_info['abs_path']
-            status = file_info.get('status', "Force" if force else "Unknown")
 
             try:
                 # Process the file
                 self._process_file(workspace, rel_path, filepath)
+                print(f"Added: {rel_path}")
+
+            except Exception as e:
+                print(f"Failed to process {rel_path}: {str(e)}")
+
+        # Create vector store
+        print("\nCreating vector store...")
+        success = self.storage_manager.create_vector_store(workspace)
+
+        if success:
+            print(f"Initial database created successfully for workspace '{workspace}'")
+
+    def update_workspace(self, workspace):
+        """
+        Update workspace with new or modified files
+
+        Args:
+            workspace (str): The workspace to update
+        """
+        debug_print(self.config, f"Updating workspace: {workspace}")
+
+        # Scan for new or updated files
+        files_to_update = self.scan_workspace(workspace, detailed=True, return_files=True)
+
+        if not files_to_update:
+            print(f"No new or updated files found in workspace '{workspace}'")
+            return
+
+        print(f"Updating {len(files_to_update)} files in workspace '{workspace}'")
+
+        # Process each file
+        for file_info in files_to_update:
+            rel_path = file_info['rel_path']
+            filepath = file_info['abs_path']
+            status = file_info.get('status', "Unknown")
+
+            try:
+                # Remove existing entries for updated files
+                if status == "Modified":
+                    self.storage_manager.remove_document(workspace, rel_path)
+
+                # Process the file
+                self._process_file(workspace, rel_path, filepath)
 
                 if status == "New":
-                    new_count += 1
                     print(f"Added: {rel_path}")
-                elif status == "Force":
-                    updated_count += 1
-                    print(f"Forced update: {rel_path}")
                 else:
-                    updated_count += 1
                     print(f"Updated: {rel_path}")
 
             except Exception as e:
                 print(f"Failed to process {rel_path}: {str(e)}")
-                failed_count += 1
 
-        # Print summary
-        print(f"\nProcessing complete:")
-        print(f"  New files: {new_count}")
-        print(f"  Updated files: {updated_count}")
-        print(f"  Skipped files: {skipped_count}")
-        print(f"  Failed files: {failed_count}")
+        # Update vector store
+        print("\nUpdating vector store...")
+        success = self.storage_manager.update_vector_store(workspace)
 
-        # Create or update vector store
-        if new_count > 0 or updated_count > 0:
-            self.storage_manager.create_vector_store(workspace)
+        if success:
+            print(f"Workspace '{workspace}' updated successfully")
 
     def scan_workspace(self, workspace, detailed=True, return_files=False):
         """

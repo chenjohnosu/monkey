@@ -2,7 +2,7 @@
 Language-specific tokenization with enhanced Chinese support
 """
 
-from core.engine.utils import debug_print
+from core.engine.logging import debug_print
 
 # Import jieba for Chinese word segmentation if available
 try:
@@ -101,3 +101,53 @@ class Tokenizer:
             list: N-grams
         """
         return [tuple(tokens[i:i+n]) for i in range(len(tokens)-n+1)]
+
+
+class ChineseTokenizer:
+    """Tokenizer for Chinese text using jieba if available"""
+
+    def __init__(self, stopwords=None):
+        """
+        Initialize the tokenizer
+
+        Args:
+            stopwords (set, optional): Set of stopwords to filter
+        """
+        self.use_jieba = JIEBA_AVAILABLE
+        self.stopwords = stopwords or set()
+
+        # Always treat spaces as stopwords regardless of what's passed in
+        self.space_chars = {" ", "　", "\u00A0", "\t", "\n", "\r", "\f", "\v"}
+        if self.stopwords:
+            self.stopwords.update(self.space_chars)
+        else:
+            self.stopwords = self.space_chars.copy()
+
+    def __call__(self, text):
+        """
+        Tokenize Chinese text and filter stopwords
+
+        Args:
+            text (str): Text to tokenize
+
+        Returns:
+            list: List of tokens
+        """
+        if not text:
+            return []
+
+        # Tokenize based on available libraries
+        if self.use_jieba:
+            tokens = list(jieba.cut(text))
+        else:
+            # Character-based fallback
+            tokens = [char for char in text if '\u4e00' <= char <= '\u9fff']
+
+        # Filter out stopwords and any whitespace tokens
+        # Double filtering to ensure spaces are always removed
+        tokens = [token for token in tokens
+                  if token not in self.stopwords
+                  and token.strip()
+                  and token not in self.space_chars]
+
+        return tokens

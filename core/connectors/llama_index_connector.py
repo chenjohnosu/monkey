@@ -7,8 +7,10 @@ import os
 import datetime
 import json
 from typing import List, Dict, Any, Optional
-from core.engine.utils import debug_print, ensure_dir
+from core.engine.utils import ensure_dir
+from core.engine.logging import debug_print
 import shutil
+from datetime import datetime
 
 class LlamaIndexConnector:
     """Provides integration with LlamaIndex for document processing and retrieval"""
@@ -234,11 +236,17 @@ class LlamaIndexConnector:
             llama_docs = []
             print(f"Converting {len(documents)} documents to LlamaIndex format")
 
+            # Track source paths for deduplication
+            document_sources = {}
+
             for i, doc in enumerate(documents):
                 # Extract content and metadata - EXPLICITLY USE PROCESSED CONTENT WITH FALLBACK
                 content = doc.get("processed_content", doc.get("content", ""))
                 metadata = doc.get("metadata", {}).copy()
                 source = metadata.get("source", f"doc_{i}")
+
+                # Track the source path
+                document_sources[source] = i
 
                 # Sanitize metadata (exclude non-serializable values)
                 for key in list(metadata.keys()):
@@ -259,10 +267,6 @@ class LlamaIndexConnector:
 
             print(f"Created {len(llama_docs)} LlamaIndex documents")
 
-            # Create a fresh index with consistent vector store naming
-            vector_store = SimpleVectorStore(collection_name="vector_store")
-            storage_context = StorageContext.from_defaults(vector_store=vector_store)
-
             # Print document count before adding
             doc_count_before = 0
             if self.index and hasattr(self.index, 'docstore') and self.index.docstore:
@@ -270,12 +274,55 @@ class LlamaIndexConnector:
 
             print(f"Documents in index before adding: {doc_count_before}")
 
-            # Create new index with all documents
-            print("Creating new index with all documents")
-            self.index = VectorStoreIndex.from_documents(
-                llama_docs,
-                storage_context=storage_context
-            )
+            # Check if we have a valid index with documents
+            if (self.index and hasattr(self.index, 'docstore') and
+                    self.index.docstore and self.index.docstore.docs and doc_count_before > 0):
+                print(f"Adding documents to existing index with {doc_count_before} documents")
+
+                # Check for duplicate documents by source path
+                existing_sources = set()
+                for doc_id, doc in self.index.docstore.docs.items():
+                    if hasattr(doc, 'metadata') and doc.metadata and 'source' in doc.metadata:
+                        existing_sources.add(doc.metadata['source'])
+
+                # Filter out documents that already exist in the index
+                new_docs_to_add = []
+                for doc in llama_docs:
+                    if doc.metadata.get('source') not in existing_sources:
+                        new_docs_to_add.append(doc)
+                    else:
+                        print(f"Skipping duplicate document: {doc.metadata.get('source')}")
+
+                print(f"Found {len(new_docs_to_add)} new documents out of {len(llama_docs)} total")
+
+                # Add only new documents to existing index
+                if new_docs_to_add:
+                    for doc in new_docs_to_add:
+                        self.index.insert(doc)
+                else:
+                    print("No new documents to add")
+
+                # Get storage context from existing index
+                if hasattr(self.index, 'storage_context'):
+                    storage_context = self.index.storage_context
+                else:
+                    # Create a new storage context for persistence
+                    print("Creating storage context from existing vector store")
+                    storage_context = self.storage_context
+            else:
+                print("Creating new index for documents")
+                # Create a new index with consistent vector store naming
+                vector_store = SimpleVectorStore(collection_name="vector_store")
+                storage_context = StorageContext.from_defaults(vector_store=vector_store)
+
+                # Create new index with all documents
+                self.index = VectorStoreIndex.from_documents(
+                    llama_docs,
+                    storage_context=storage_context
+                )
+
+                # Update storage context reference
+                self.storage_context = storage_context
 
             # Check document count after adding
             doc_count_after = len(self.index.docstore.docs) if self.index.docstore.docs else 0
@@ -284,12 +331,20 @@ class LlamaIndexConnector:
             # Verify documents were added correctly
             if doc_count_after == 0:
                 print("ERROR: No documents in index after adding!")
-            elif doc_count_after < len(llama_docs):
-                print(f"WARNING: Only {doc_count_after} documents added out of {len(llama_docs)}")
+                return False
+            elif doc_count_after < doc_count_before + len(
+                    new_docs_to_add if 'new_docs_to_add' in locals() else llama_docs):
+                expected_count = doc_count_before + len(
+                    new_docs_to_add if 'new_docs_to_add' in locals() else llama_docs)
+                print(f"WARNING: Document count mismatch. Expected {expected_count}, got {doc_count_after}")
 
             # Persist the updated index
             print("Persisting index to disk")
-            storage_context.persist(persist_dir=vector_dir)
+            if storage_context:
+                storage_context.persist(persist_dir=vector_dir)
+            else:
+                print("ERROR: No storage context available for persistence!")
+                return False
 
             # Verify files were created
             docstore_path = os.path.join(vector_dir, "docstore.json")
@@ -304,17 +359,44 @@ class LlamaIndexConnector:
             print(
                 f"  - vector_store.json: {os.path.exists(vector_store_path)} - Size: {os.path.getsize(vector_store_path) if os.path.exists(vector_store_path) else 0} bytes")
 
+            # Check for any prefixed vector store files and migrate if needed
+            prefixed_files = [f for f in os.listdir(vector_dir) if f.endswith('__vector_store.json')]
+            if prefixed_files and not os.path.exists(vector_store_path):
+                print(f"Found prefixed vector store files but no vector_store.json. Copying largest file...")
+                largest_file = None
+                largest_size = 0
+                for file in prefixed_files:
+                    file_path = os.path.join(vector_dir, file)
+                    file_size = os.path.getsize(file_path)
+                    if file_size > largest_size:
+                        largest_size = file_size
+                        largest_file = file
+
+                if largest_file:
+                    print(f"Copying {largest_file} to vector_store.json")
+                    import shutil
+                    shutil.copy2(
+                        os.path.join(vector_dir, largest_file),
+                        vector_store_path
+                    )
+
             # Save additional metadata for debugging
             metadata_path = os.path.join(vector_dir, "custom_metadata.json")
             with open(metadata_path, 'w', encoding='utf-8') as f:
+                import datetime
+                import json
                 json.dump({
                     "created": datetime.datetime.now().isoformat(),
                     "document_count": len(documents),
                     "embedding_model": self.config.get('embedding.default_model'),
-                    "documents_added": doc_count_after
+                    "documents_added": doc_count_after,
+                    "documents_before": doc_count_before,
+                    "delta": doc_count_after - doc_count_before,
+                    "new_documents": len(new_docs_to_add if 'new_docs_to_add' in locals() else llama_docs),
+                    "deduplication_applied": 'new_docs_to_add' in locals()
                 }, f, indent=2)
 
-            print(f"Successfully added {doc_count_after} documents to index")
+            print(f"Successfully added documents to index")
             return True
 
         except Exception as e:
@@ -384,3 +466,115 @@ class LlamaIndexConnector:
             import traceback
             print(traceback.format_exc())
             return []
+
+    def inspect_index_store(self, workspace):
+        """
+        Thoroughly inspect the LlamaIndex index store for a given workspace
+
+        Args:
+            workspace (str): Target workspace to inspect
+
+        Returns:
+            Dict: Detailed information about the index store
+        """
+        print(f"\nInspecting LlamaIndex Index Store for Workspace: {workspace}")
+
+        # Define paths for key LlamaIndex files
+        vector_dir = os.path.join("data", workspace, "vector_store")
+        index_store_path = os.path.join(vector_dir, "index_store.json")
+        docstore_path = os.path.join(vector_dir, "docstore.json")
+        vector_store_path = os.path.join(vector_dir, "vector_store.json")
+
+        # Debug print paths
+        print("\nVector Store Paths:")
+        print(f"  Directory: {vector_dir}")
+        print(f"  Index Store: {index_store_path}")
+        print(f"  Docstore: {docstore_path}")
+        print(f"  Vector Store: {vector_store_path}")
+
+        # Verify directory contents
+        print("\nDirectory Contents:")
+        try:
+            files = os.listdir(vector_dir)
+            for file in files:
+                print(f"  {file}")
+        except Exception as e:
+            print(f"Error listing directory: {str(e)}")
+
+        # Check file contents comprehensively
+        files_to_check = {
+            "index_store.json": index_store_path,
+            "docstore.json": docstore_path,
+            "vector_store.json": vector_store_path
+        }
+
+        # Comprehensive file analysis
+        for file_name, file_path in files_to_check.items():
+            if os.path.exists(file_path):
+                print(f"\nAnalyzing {file_name}:")
+                print(f"  File Size: {os.path.getsize(file_path)} bytes")
+
+                try:
+                    with open(file_path, 'r') as f:
+                        try:
+                            file_data = json.load(f)
+
+                            # Comprehensive key investigation
+                            print("  Full JSON Structure:")
+                            for key, value in file_data.items():
+                                if isinstance(value, dict):
+                                    print(f"    {key}: {len(value)} entries")
+                                    # Print first few keys if not too many
+                                    if len(value) > 0:
+                                        print("      Sample keys:", list(value.keys())[:5])
+                                elif isinstance(value, list):
+                                    print(f"    {key}: {len(value)} items")
+                                else:
+                                    print(f"    {key}: {type(value).__name__}")
+
+                        except json.JSONDecodeError as json_err:
+                            print(f"  JSON Parsing Error: {json_err}")
+
+                except Exception as e:
+                    print(f"  Error reading file: {str(e)}")
+            else:
+                print(f"{file_name} not found")
+
+        # Try to load index and get details
+        print("\nAttempting to Load Index:")
+        try:
+            from llama_index.core import load_index_from_storage, StorageContext
+
+            # Create storage context
+            storage_context = StorageContext.from_defaults(persist_dir=vector_dir)
+
+            # Load index
+            index = load_index_from_storage(storage_context)
+
+            # Check index details
+            print("  Index Loaded Successfully!")
+
+            # Check document store
+            if hasattr(index, 'docstore'):
+                print("  Docstore Details:")
+                try:
+                    docs = index.docstore.docs
+                    print(f"    Total Documents: {len(docs)}")
+
+                    # Print sample document details
+                    if docs:
+                        sample_doc_id = list(docs.keys())[0]
+                        sample_doc = docs[sample_doc_id]
+                        print("    Sample Document:")
+                        print(f"      Keys: {list(sample_doc.__dict__.keys())}")
+                        if hasattr(sample_doc, 'text'):
+                            print(f"      Text Preview: {sample_doc.text[:200]}...")
+                except Exception as e:
+                    print(f"    Error accessing docstore: {str(e)}")
+
+        except Exception as e:
+            print(f"  Error loading index: {str(e)}")
+            import traceback
+            traceback.print_exc()
+
+        return None  # Placeholder return

@@ -6,7 +6,7 @@ import os
 import json
 import requests
 from typing import List, Dict, Any, Optional
-from core.engine.utils import debug_print
+from core.engine.logging import debug_print
 
 class OllamaConnector:
     """Provides integration with Ollama for local LLM inference"""

@@ -6,6 +6,9 @@ import os
 import time
 import datetime
 from typing import Dict, List, Union, Any
+from core.language.tokenizer import ChineseTokenizer, JIEBA_AVAILABLE
+from core.engine.logging import debug_print
+
 
 # Import jieba for Chinese word segmentation if available
 try:
@@ -14,12 +17,6 @@ try:
 except ImportError:
     JIEBA_AVAILABLE = False
     print("jieba not available, falling back to character-based tokenization for Chinese")
-
-def debug_print(config, message):
-    """Print a debug message if debug mode is enabled"""
-    if not config or config.get('system.debug'):
-        timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        print(f"[DEBUG {timestamp}] {message}")
 
 def ensure_dir(directory):
     """Ensure a directory exists, creating it if necessary"""
@@ -138,24 +135,6 @@ def measure_execution_time(func):
         return result
     return wrapper
 
-class ChineseTokenizer:
-    """Tokenizer for Chinese text using jieba if available"""
-
-    def __init__(self):
-        self.use_jieba = JIEBA_AVAILABLE
-
-    def __call__(self, text):
-        """Tokenize Chinese text"""
-        if not text:
-            return []
-
-        if self.use_jieba:
-            # Use jieba for word segmentation
-            return list(jieba.cut(text))
-        else:
-            # Fallback to character-based tokenization
-            return [char for char in text if '\u4e00' <= char <= '\u9fff']
-
 def configure_vectorizer(config, doc_count, language=None, chinese_stopwords=None):
     """
     Create a TF-IDF vectorizer with parameters appropriate for corpus size and language
@@ -210,6 +189,7 @@ def configure_vectorizer(config, doc_count, language=None, chinese_stopwords=Non
             min_df=min_df,
             max_df=max_df,
             stop_words=None,
+            token_pattern=r"(?u)\b\S+\b",  # Only match non-whitespace sequences
             tokenizer=tokenizer
         )
     else:
@@ -313,13 +293,6 @@ def format_debug(message: str) -> str:
     """Format debug message with timestamp and gray color"""
     timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     return f"{Colors.GRAY}[DEBUG {timestamp}] {message}{Colors.RESET}"
-
-
-def debug_print(config, message: str) -> None:
-    """Print a debug message if debug mode is enabled"""
-    if not config or config.get('system.debug'):
-        print(format_debug(message))
-
 
 def format_header(title: str) -> str:
     """Format a section header with bold magenta"""

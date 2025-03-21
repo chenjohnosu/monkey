@@ -29,6 +29,6 @@ storage:
   vector_store: llama_index
 system:
   debug: false
-  output_format: md
+  output_format: txt
 workspace:
   default: default

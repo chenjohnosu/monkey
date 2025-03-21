@@ -3,7 +3,7 @@ Vector store merging module
 """
 
 import os
-from core.engine.utils import debug_print
+from core.engine.logging import debug_print
 from core.engine.storage import StorageManager
 
 class VectorStoreMerger:

@@ -3,7 +3,7 @@ Factory for creating and managing connectors
 """
 
 from typing import Dict, Any, Optional
-from core.engine.utils import debug_print
+from core.engine.logging import debug_print
 
 class ConnectorFactory:
     """Factory class for creating and managing connectors"""

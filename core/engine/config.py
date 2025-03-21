@@ -4,7 +4,7 @@ Configuration management for the document analysis toolkit
 
 import os
 import yaml
-from core.engine.utils import debug_print
+from core.engine.logging import debug_print
 
 class Config:
     """Configuration management class"""

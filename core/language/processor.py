@@ -2,9 +2,9 @@
 Text preprocessing module with enhanced Chinese language support
 """
 
-
+import os
 import re
-from core.engine.utils import debug_print
+from core.engine.logging import debug_print
 from core.language.detector import LanguageDetector
 
 # Import jieba for Chinese word segmentation if available
@@ -30,9 +30,15 @@ class TextProcessor:
         """Load stopwords for supported languages"""
         stopwords = {}
 
+        # Define lexicon directory
+        lexicon_dir = 'lexicon'
+        if not os.path.exists(lexicon_dir):
+            os.makedirs(lexicon_dir)
+            debug_print(self.config, f"Created lexicon directory: {lexicon_dir}")
+
         # Load English stopwords
         try:
-            with open('stopwords_en.txt', 'r', encoding='utf-8') as file:
+            with open(os.path.join(lexicon_dir, 'stopwords_en.txt'), 'r', encoding='utf-8') as file:
                 stopwords['en'] = set(line.strip() for line in file if line.strip())
             debug_print(self.config, f"Loaded {len(stopwords['en'])} English stopwords")
         except FileNotFoundError:
@@ -41,7 +47,7 @@ class TextProcessor:
 
         # Load Chinese stopwords
         try:
-            with open('stopwords_zh.txt', 'r', encoding='utf-8') as file:
+            with open(os.path.join(lexicon_dir, 'stopwords_zh.txt'), 'r', encoding='utf-8') as file:
                 stopwords['zh'] = set(line.strip() for line in file if line.strip())
             debug_print(self.config, f"Loaded {len(stopwords['zh'])} Chinese stopwords")
         except FileNotFoundError:

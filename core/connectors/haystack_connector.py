@@ -4,7 +4,8 @@ Haystack integration for pipeline-based document processing
 
 import os
 from typing import List, Dict, Any, Optional
-from core.engine.utils import debug_print, ensure_dir
+from core.engine.utils import ensure_dir
+from core.engine.logging import debug_print
 
 class HaystackConnector:
     """Provides integration with Haystack for pipeline-based document processing"""

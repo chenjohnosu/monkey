@@ -2,16 +2,18 @@
 Command line interface for the document analysis toolkit
 """
 
-import sys
+# import sys
+# from core.engine.config import Config
+# from core.engine.utils import debug_print
+# from core.modes.themes import ThemeAnalyzer
+# from core.modes.query import QueryEngine
+# from core.modes.grind import FileProcessor
+# from core.modes.merge import VectorStoreMerger
 import shlex
-from core.engine.config import Config
-from core.engine.utils import debug_print
-from core.modes.themes import ThemeAnalyzer
-from core.modes.query import QueryEngine
-from core.modes.grind import FileProcessor
-from core.modes.merge import VectorStoreMerger
+from core.engine.logging import debug_print
 from core.engine.storage import StorageManager, VectorStoreInspector
 from core.engine.output import OutputManager
+from datetime import datetime
 
 class CommandProcessor:
     """Command line interface processor"""
@@ -35,11 +37,18 @@ class CommandProcessor:
         from core.modes.query import QueryEngine
         from core.modes.grind import FileProcessor
         from core.modes.merge import VectorStoreMerger
+        from core.modes.sentiment import SentimentAnalyzer
+        from core.modes.topic import TopicModeler
 
         self.theme_analyzer = ThemeAnalyzer(config, self.storage_manager, self.output_manager, self.text_processor)
         self.query_engine = QueryEngine(config, self.storage_manager, self.output_manager, self.text_processor)
         self.file_processor = FileProcessor(config, self.storage_manager, self.text_processor)
         self.vector_store_merger = VectorStoreMerger(config, self.storage_manager)
+
+        self.sentiment_analyzer = SentimentAnalyzer(config, self.storage_manager, self.output_manager,
+                                                    self.text_processor)
+        self.topic_modeler = TopicModeler(config, self.storage_manager, self.output_manager, self.text_processor)
+
 
         # Initialize the vector store inspector
         self.vector_store_inspector = VectorStoreInspector(config, self.storage_manager)
@@ -133,47 +142,51 @@ class CommandProcessor:
 
         if not args:
             print("""
-Available Commands:
-  System:
-    /quit, /exit              - Exit the application
-    /help [topic]             - Display help information
-    /show [status|cuda]       - Show system information
-    /show [guide|config]      - Show configurable information
-    /show [ws|files]          - Show data sources
-    
-  Run Modes:
-    /run themes [all|nfm|net|key|lsa|cluster] - Run theme analysis
-    /run query                 - Enter interactive query mode
-    /run grind <ws>            - Process files in workspace (scans for new/updated files)
-    /run merge <src> <dst>     - Merge workspaces
-    
-  File Operations:
-    /load <workspace>          - Load workspace
-    
-  Output:
-    /save start                - Start saving session
-    /save stop                 - Stop saving session
-    /save buffer               - Save last command output
-    
-  Configuration:
-    /config llm <model>        - Set LLM model
-    /config embed <model>      - Set embedding model
-    /config storage <backend>  - Set storage backend (llama_index, haystack, or chroma)
-    /config kval <n>           - Set k value for retrieval
-    /config debug [on|off]     - Set debug mode
-    /config output [txt|md|json] - Set output format
-    /config guide <guide>      - Set guide from guides.txt
-    
-  Inspection:
-    /inspect workspace [ws]    - Inspect workspace metadata and files
-    /inspect documents [ws]    - Dump document content
-    /inspect vectorstore [ws]  - Dump vector store metadata
-    /inspect query [ws] [q]    - Test query pipeline
-    /inspect rebuild [ws]      - Rebuild vector store
-    
-Aliases:
-  /q - /quit, /c - /config, /l - /load, /r - /run, /s - /save, /h - /help, /i - /inspect
-""")
+    Available Commands:
+      System:
+        /quit, /exit              - Exit the application
+        /help [topic]             - Display help information
+        /show [status|cuda]       - Show system information
+        /show [guide|config]      - Show configurable information
+        /show [ws|files]          - Show data sources
+
+      Run Modes:
+        /run themes [all|nfm|net|key|lsa|cluster] - Run theme analysis
+        /run query                 - Enter interactive query mode
+        /run grind <ws>            - Process files in workspace to create initial database
+        /run update <ws>           - Update workspace with new or modified files
+        /run scan <ws>             - Scan workspace for new or updated files
+        /run merge <src> <dst>     - Merge workspaces
+        /run sentiment [all|basic|advanced] - Run sentiment analysis
+        /run topic [all|lda|nmf|cluster]    - Run topic modeling
+
+      File Operations:
+        /load <workspace>          - Load workspace
+
+      Output:
+        /save start                - Start saving session
+        /save stop                 - Stop saving session
+        /save buffer               - Save last command output
+
+      Configuration:
+        /config llm <model>        - Set LLM model
+        /config embed <model>      - Set embedding model
+        /config storage <backend>  - Set storage backend (llama_index, haystack, or chroma)
+        /config kval <n>           - Set k value for retrieval
+        /config debug [on|off]     - Set debug mode
+        /config output [txt|md|json] - Set output format
+        /config guide <guide>      - Set guide from guides.txt
+
+      Inspection:
+        /inspect workspace [ws]    - Inspect workspace metadata and files
+        /inspect documents [ws]    - Dump document content
+        /inspect vectorstore [ws]  - Dump vector store metadata
+        /inspect query [ws] [q]    - Test query pipeline
+        /inspect rebuild [ws]      - Rebuild vector store
+
+    Aliases:
+      /q - /quit, /c - /config, /l - /load, /r - /run, /s - /save, /h - /help, /i - /inspect
+    """)
         elif args[0] in ['run', 'load', 'config', 'save', 'show', 'inspect']:
             self._show_specific_help(args[0])
         else:
@@ -257,7 +270,7 @@ Aliases:
         debug_print(self.config, f"Run command with args: {args}")
 
         if not args:
-            print("Usage: /run [themes|query|grind|merge] [options]")
+            print("Usage: /run [themes|query|grind|update|scan|merge|sentiment|topic] [options]")
             return
 
         subcommand = args[0].lower()
@@ -265,34 +278,45 @@ Aliases:
         if subcommand == 'themes':
             method = args[1] if len(args) > 1 else 'all'
             self.theme_analyzer.analyze(self.current_workspace, method)
+
         elif subcommand == 'query':
             self.query_engine.activate(self.current_workspace)
             print("Query mode activated. Type queries directly or use / commands.")
+
         elif subcommand == 'grind':
-            # Support both 'workspace' and 'ws' in arguments
             workspace = self.current_workspace
             if len(args) > 1:
-                if args[1] != 'ws' and args[1] != 'workspace':
-                    workspace = args[1]
-                elif len(args) > 2:
-                    workspace = args[2]
+                workspace = args[1]
+            self.file_processor.process_workspace(workspace)
 
-            # Check for options
-            scan_only = False
-            force = False
+        elif subcommand == 'update':
+            workspace = self.current_workspace
+            if len(args) > 1:
+                workspace = args[1]
+            self.file_processor.update_workspace(workspace)
 
-            for arg in args[1:]:
-                if arg.lower() == 'scan':
-                    scan_only = True
-                elif arg.lower() == 'force':
-                    force = True
+        elif subcommand == 'scan':
+            workspace = self.current_workspace
+            if len(args) > 1:
+                workspace = args[1]
+            self.file_processor.scan_workspace(workspace, detailed=True)
 
-            self.file_processor.process_workspace(workspace, scan_only=scan_only, force=force)
         elif subcommand == 'merge':
             if len(args) < 3:
                 print("Usage: /run merge <source_workspace> <destination_workspace>")
                 return
             self.vector_store_merger.merge(args[1], args[2])
+
+        elif subcommand == 'sentiment':
+            method = args[1] if len(args) > 1 and args[1] in ['all', 'basic', 'advanced'] else 'all'
+            print(f"Running sentiment analysis with method: {method}")
+            self.sentiment_analyzer.analyze(self.current_workspace, method)
+
+        elif subcommand == 'topic':
+            method = args[1] if len(args) > 1 and args[1] in ['all', 'lda', 'nmf', 'cluster'] else 'all'
+            print(f"Running topic modeling with method: {method}")
+            self.topic_modeler.analyze(self.current_workspace, method)
+
         else:
             print(f"Unknown run subcommand: {subcommand}")
 
@@ -363,10 +387,6 @@ Aliases:
         if self.current_workspace != workspace:
             self.current_workspace = workspace
             print(f"Switched active workspace to '{workspace}'")
-
-        # Automatically scan for files
-        print("Scanning workspace for files...")
-        self.file_processor.process_workspace(workspace, scan_only=True)
 
     def _load_guide(self, guide_name):
         """Load a guide from guides.txt"""
@@ -547,6 +567,14 @@ Aliases:
         elif subcommand == 'vectorstore':
             workspace = args[1] if len(args) > 1 else self.current_workspace
             self.vector_store_inspector.dump_vector_store(workspace)
+            # NEW: Add LlamaIndex specific inspection
+            if self.config.get('storage.vector_store') == 'llama_index':
+                try:
+                    from core.connectors.llama_index_connector import LlamaIndexConnector
+                    llama_connector = LlamaIndexConnector(self.config)
+                    llama_connector.inspect_index_store(workspace)
+                except Exception as e:
+                    print(f"Error inspecting LlamaIndex store: {str(e)}")
         elif subcommand == 'query':
             workspace = args[1] if len(args) > 1 else self.current_workspace
             query = args[2] if len(args) > 2 else "test"

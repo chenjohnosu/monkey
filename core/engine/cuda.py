@@ -2,7 +2,7 @@
 CUDA utilities for the document analysis toolkit
 """
 
-from core.engine.utils import debug_print
+from core.engine.logging import debug_print
 
 def check_cuda_status(config):
     """Check for CUDA availability and configuration"""

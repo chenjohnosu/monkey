@@ -12,7 +12,7 @@ from core.engine.config import Config
 
 def setup_directories():
     """Create necessary directories if they don't exist"""
-    dirs = ['data', 'body', 'logs']
+    dirs = ['data', 'body', 'logs', 'lexicon']
     for dir_name in dirs:
         if not os.path.exists(dir_name):
             os.makedirs(dir_name)

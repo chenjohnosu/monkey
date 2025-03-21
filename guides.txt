@@ -33,5 +33,19 @@ If information is not available in the provided context, clearly state this
 limitation rather than making assumptions.
 </query_guidance>
 
+<sentiment_analysis>
+You are analyzing sentiment in documents. Focus on identifying emotional tone,
+key sentiments, and important aspects that may affect sentiment. Pay particular
+attention to positive and negative expressions, emotional language, and context
+that modifies sentiment.
+</sentiment_analysis>
+
+<topic_modeling>
+You are identifying topics across documents. Focus on discovering thematic
+patterns, recurring concepts, and semantic relationships between documents.
+Pay attention to significant keywords that might indicate distinct topics and
+how documents cluster around similar themes.
+</topic_modeling>
+
 <passthru> 
 </passthru>

@@ -7,7 +7,8 @@ import json
 import hashlib
 import datetime
 import shutil
-from core.engine.utils import debug_print, ensure_dir
+from core.engine.utils import ensure_dir
+from core.engine.logging import debug_print
 from core.connectors.connector_factory import ConnectorFactory
 from pprint import pprint
 from typing import List, Dict, Any
@@ -147,24 +148,69 @@ class StorageManager:
         """
         debug_print(self.config, f"Getting documents from workspace: {workspace}")
 
-        documents = []
-        workspace_dir = os.path.join("data", workspace, "documents")
+        # Verify data and documents directory exists
+        import os
+        workspace_dir = os.path.join("data", workspace)
+        documents_dir = os.path.join(workspace_dir, "documents")
 
+        # Detailed diagnostics
+        print(f"Workspace Document Retrieval:")
+        print(f"  Workspace Directory: {workspace_dir}")
+        print(f"  Documents Directory: {documents_dir}")
+
+        # Check directory existence
         if not os.path.exists(workspace_dir):
-            return documents
+            print(f"ERROR: Workspace directory does not exist: {workspace_dir}")
+            return []
+
+        if not os.path.exists(documents_dir):
+            print(f"ERROR: Documents directory does not exist: {documents_dir}")
+            # Attempt to create the directory
+            try:
+                os.makedirs(documents_dir)
+                print(f"Created documents directory: {documents_dir}")
+            except Exception as e:
+                print(f"Failed to create documents directory: {str(e)}")
+                return []
+
+        documents = []
+
+        # List files in the documents directory
+        try:
+            document_files = [f for f in os.listdir(documents_dir) if f.endswith('.json')]
+            print(f"  JSON Files in Documents Directory: {len(document_files)}")
+
+            # If no files, provide more context
+            if not document_files:
+                print("  Warning: No JSON document files found")
+                # List all files in the directory to understand why
+                all_files = os.listdir(documents_dir)
+                if all_files:
+                    print("  All files in documents directory:")
+                    for file in all_files:
+                        print(f"    - {file}")
+                else:
+                    print("  No files found in documents directory")
+        except Exception as e:
+            print(f"  Error listing document files: {str(e)}")
+            return []
 
         # Load documents from files
-        for filename in os.listdir(workspace_dir):
-            if filename.endswith('.json'):
-                try:
-                    with open(os.path.join(workspace_dir, filename), 'r', encoding='utf-8') as file:
-                        document = json.load(file)
-                        documents.append(document)
-                except Exception as e:
-                    debug_print(self.config, f"Error loading document {filename}: {str(e)}")
+        for filename in document_files:
+            try:
+                with open(os.path.join(documents_dir, filename), 'r', encoding='utf-8') as file:
+                    document = json.load(file)
+                    documents.append(document)
+            except Exception as e:
+                print(f"Error loading document {filename}: {str(e)}")
+
+        print(f"  Total Documents Loaded: {len(documents)}")
+
+        # If no documents, provide context
+        if not documents:
+            print("WARNING: No documents could be loaded from the workspace")
 
         return documents
-
 
     def query_documents(self, workspace, query, k=5):
         """
@@ -988,32 +1034,6 @@ class VectorStoreInspector:
         if len(docs) > limit:
             print(f"\n... and {len(docs) - limit} more documents")
 
-    def dump_vector_store(self, workspace):
-        """
-        Dump vector store metadata for a workspace
-
-        Args:
-            workspace (str): Workspace to inspect
-        """
-        debug_print(self.config, f"Dumping vector store for workspace: {workspace}")
-
-        vector_store_type = self.config.get('storage.vector_store')
-        vector_dir = os.path.join("data", workspace, "vector_store")
-
-        if not os.path.exists(vector_dir):
-            print(f"No vector store directory found for workspace '{workspace}'")
-            return
-
-        print(f"\nDumping vector store for workspace: {workspace}")
-        print(f"Vector store type: {vector_store_type}")
-
-        if vector_store_type == 'llama_index':
-            self._dump_llama_index_metadata(workspace)
-        elif vector_store_type == 'haystack':
-            self._dump_haystack_metadata(workspace)
-        else:
-            self._dump_default_metadata(workspace)
-
     def _dump_llama_index_metadata(self, workspace):
         """Dump LlamaIndex metadata"""
         vector_dir = os.path.join("data", workspace, "vector_store")
@@ -1222,13 +1242,11 @@ class VectorStoreInspector:
 
     def rebuild_vector_store(self, workspace):
         """
-        Rebuild the vector store for a workspace
+        Completely rebuild the vector store for a workspace from scratch
 
         Args:
             workspace (str): Workspace to rebuild
         """
-        debug_print(self.config, f"Rebuilding vector store for workspace: {workspace}")
-
         print(f"\nRebuilding vector store for workspace: {workspace}")
 
         # Get documents
@@ -1245,18 +1263,50 @@ class VectorStoreInspector:
         if os.path.exists(vector_dir):
             backup_dir = f"{vector_dir}_backup_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
             print(f"Backing up existing vector store to {backup_dir}")
-            os.rename(vector_dir, backup_dir)
 
+            # Create backup directory
+            if not os.path.exists(backup_dir):
+                os.makedirs(backup_dir)
+
+            # Copy files to backup instead of renaming
+            import shutil
+            for file in os.listdir(vector_dir):
+                src_path = os.path.join(vector_dir, file)
+                dst_path = os.path.join(backup_dir, file)
+                if os.path.isfile(src_path):
+                    shutil.copy2(src_path, dst_path)
+
+            # Remove the original directory
+            shutil.rmtree(vector_dir)
+
+        # Create new empty directory
         ensure_dir(vector_dir)
 
+        # Determine the vector store type
+        vector_store_type = self.config.get('storage.vector_store')
+        print(f"Using vector store type: {vector_store_type}")
+
         # Build vector store
-        print("Building vector store...")
+        print("Building fresh vector store...")
+
+        # Force reinitialize the connector for clean start
+        if hasattr(self.storage_manager, 'connector'):
+            # Clear any cached state in the connector
+            self.storage_manager.connector = self.storage_manager.factory.get_vector_store_connector()
+            print("Created fresh connector instance")
+
+        # Build vector store from scratch
         success = self.storage_manager.create_vector_store(workspace)
 
         if success:
             print("Vector store rebuilt successfully")
+
+            # Verify the rebuild
+            self.verify_vector_store(workspace)
         else:
             print("Failed to rebuild vector store")
+
+        return success
 
     def _format_size(self, size_bytes):
         """Format file size in a human-readable format"""
@@ -1347,3 +1397,187 @@ class VectorStoreInspector:
         except Exception as e:
             print(f"Error migrating vector store: {str(e)}")
             return False
+
+    def _get_total_document_count(self, workspace):
+        """
+        Get the total number of documents in the vector store
+
+        Args:
+            workspace (str): Target workspace
+
+        Returns:
+            int: Total number of documents
+        """
+        try:
+            # Use StorageManager to get documents
+            docs = self.storage_manager.get_documents(workspace)
+            return len(docs)
+        except Exception as e:
+            debug_print(self.config, f"Error getting document count: {str(e)}")
+            return 0
+
+    def _dump_llama_index_details(self, workspace):
+        """
+        Dump detailed LlamaIndex vector store information
+
+        Args:
+            workspace (str): Target workspace
+        """
+        vector_dir = os.path.join("data", workspace, "vector_store")
+
+        # Paths for key files
+        index_store_path = os.path.join(vector_dir, "index_store.json")
+        docstore_path = os.path.join(vector_dir, "docstore.json")
+        vector_store_path = os.path.join(vector_dir, "vector_store.json")
+
+        # Track document count and details
+        doc_count = 0
+        embedding_dim = None
+        language_distribution = {}
+
+        try:
+            # Attempt to load documents via StorageManager
+            docs = self.storage_manager.get_documents(workspace)
+            doc_count = len(docs)
+
+            # Analyze language distribution
+            for doc in docs:
+                lang = doc.get('metadata', {}).get('language', 'unknown')
+                language_distribution[lang] = language_distribution.get(lang, 0) + 1
+
+            print("\nDocument Overview:")
+            print(f"  Total Documents: {doc_count}")
+
+            # Language Distribution
+            print("\n  Language Distribution:")
+            for lang, count in language_distribution.items():
+                percentage = (count / doc_count) * 100 if doc_count > 0 else 0
+                print(f"    {lang}: {count} documents ({percentage:.1f}%)")
+
+            # Index Store Analysis
+            if os.path.exists(index_store_path):
+                print("\nIndex Store Details:")
+                try:
+                    with open(index_store_path, 'r') as f:
+                        index_data = json.load(f)
+
+                    indices = index_data.get('indices', {})
+                    print(f"  Number of Indices: {len(indices)}")
+
+                    if indices:
+                        for idx, details in indices.items():
+                            print(f"  Index {idx}:")
+                            print(f"    Type: {details.get('type', 'Unknown')}")
+                            print(f"    Summary: {details.get('summary', 'No summary')}")
+                except Exception as e:
+                    print(f"  Error reading index store: {str(e)}")
+
+            # Document Store Analysis
+            if os.path.exists(docstore_path):
+                print("\nDocument Store Details:")
+                try:
+                    with open(docstore_path, 'r') as f:
+                        docstore_data = json.load(f)
+
+                    docs = docstore_data.get("docstore/docs", {})
+                    print(f"  Stored Documents: {len(docs)}")
+
+                    # Sample document metadata
+                    if docs:
+                        sample_docs = list(docs.items())[:3]
+                        print("  Sample Documents:")
+                        for doc_id, doc_data in sample_docs:
+                            print(f"    Document ID: {doc_id}")
+
+                            # Check for embedding
+                            if "embedding" in doc_data:
+                                embedding = doc_data["embedding"]
+                                embedding_dim = len(embedding)
+                                print(f"    Embedding Dimensions: {embedding_dim}")
+                except Exception as e:
+                    print(f"  Error reading document store: {str(e)}")
+
+            # Vector Store Analysis
+            if os.path.exists(vector_store_path):
+                print("\nVector Store Details:")
+                try:
+                    with open(vector_store_path, 'r') as f:
+                        vector_data = json.load(f)
+
+                    print("  Top-level Keys:")
+                    for key, value in vector_data.items():
+                        if isinstance(value, (list, dict)):
+                            print(f"    {key}: {len(value)} items")
+                        else:
+                            print(f"    {key}: {value}")
+                except Exception as e:
+                    print(f"  Error reading vector store: {str(e)}")
+
+            # Additional diagnostic information
+            print("\nVector Store File Analysis:")
+            for file in ['index_store.json', 'docstore.json', 'vector_store.json']:
+                filepath = os.path.join(vector_dir, file)
+                if os.path.exists(filepath):
+                    size = os.path.getsize(filepath)
+                    print(f"  {file}: {self._format_size(size)}")
+                else:
+                    print(f"  {file}: Not found")
+
+        except Exception as e:
+            print(f"Comprehensive error during vector store inspection: {str(e)}")
+            import traceback
+            traceback.print_exc()
+
+        # Final summary
+        print("\n=== Vector Store Summary ===")
+        print(f"Total Documents: {doc_count}")
+        if embedding_dim:
+            print(f"Embedding Dimensions: {embedding_dim}")
+        print("==========================")
+
+    def dump_vector_store(self, workspace):
+        """
+        Dump vector store metadata for a workspace
+
+        Args:
+            workspace (str): Workspace to inspect
+        """
+        debug_print(self.config, f"Dumping vector store for workspace: {workspace}")
+
+        vector_store_type = self.config.get('storage.vector_store')
+
+        # First, try to load the vector store
+        loaded = self.storage_manager.load_vector_store(workspace)
+        if not loaded:
+            print(f"Failed to load vector store for workspace '{workspace}'")
+            return
+
+        print(f"\nDumping vector store for workspace: {workspace}")
+        print(f"Vector store type: {vector_store_type}")
+
+        # Direct query to get document count
+        try:
+            results = self.storage_manager.query_documents(workspace, "test query", k=1)
+
+            print("\nVector Store Statistics:")
+
+            # Attempt to get total document count
+            total_docs = self._get_total_document_count(workspace)
+            print(f"  Total Documents: {total_docs}")
+
+            # Get vector store directory details
+            vector_dir = os.path.join("data", workspace, "vector_store")
+            if os.path.exists(vector_dir):
+                print("\nVector Store Files:")
+                for file in os.listdir(vector_dir):
+                    filepath = os.path.join(vector_dir, file)
+                    if os.path.isfile(filepath):
+                        size = os.path.getsize(filepath)
+                        print(f"  {file}: {self._format_size(size)}")
+
+            # Check Index Store for additional details
+            if vector_store_type == 'llama_index':
+                self._dump_llama_index_details(workspace)
+
+        except Exception as e:
+            print(f"Error retrieving vector store details: {str(e)}")
