@@ -1581,3 +1581,87 @@ class VectorStoreInspector:
 
         except Exception as e:
             print(f"Error retrieving vector store details: {str(e)}")
+
+    def verify_vector_store(self, workspace):
+        """
+        Perform a comprehensive verification of the vector store
+
+        Args:
+            workspace (str): Workspace to verify
+        """
+        print(f"\nVerifying vector store for workspace: {workspace}")
+
+        # Check directories and files
+        data_dir = os.path.join("data", workspace)
+        vector_dir = os.path.join(data_dir, "vector_store")
+        documents_dir = os.path.join(data_dir, "documents")
+
+        print(f"Vector store directory: {vector_dir}")
+        print(f"Documents directory: {documents_dir}")
+
+        # Count documents in storage
+        doc_count = 0
+        if os.path.exists(documents_dir):
+            doc_files = [f for f in os.listdir(documents_dir) if f.endswith('.json')]
+            doc_count = len(doc_files)
+
+        print(f"Document count in storage: {doc_count}")
+
+        # Check vector store files
+        if os.path.exists(vector_dir):
+            vs_files = os.listdir(vector_dir)
+            print(f"Vector store files: {len(vs_files)}")
+
+            for file in vs_files:
+                path = os.path.join(vector_dir, file)
+                if os.path.isfile(path):
+                    size = os.path.getsize(path)
+                    print(f"  - {file}: {self._format_size(size)}")
+
+                    # For JSON files, check basic structure
+                    if file.endswith('.json'):
+                        try:
+                            with open(path, 'r') as f:
+                                data = json.load(f)
+
+                                if file == 'docstore.json' and isinstance(data, dict):
+                                    if 'docstore/docs' in data:
+                                        vs_doc_count = len(data['docstore/docs'])
+                                        print(f"    Documents in docstore: {vs_doc_count}")
+
+                                        if vs_doc_count == 0:
+                                            print("    ERROR: Docstore is empty!")
+                                        elif vs_doc_count != doc_count:
+                                            print(
+                                                f"    WARNING: Document count mismatch - Storage: {doc_count}, Vector store: {vs_doc_count}")
+                        except Exception as e:
+                            print(f"    Error reading {file}: {str(e)}")
+        else:
+            print("Vector store directory does not exist!")
+
+        # Test query
+        print("\nTesting vector store with query...")
+        try:
+            # Ensure vector store is loaded
+            loaded = self.storage_manager.load_vector_store(workspace)
+            if not loaded:
+                print("Failed to load vector store")
+            else:
+                print("Vector store loaded successfully")
+
+                # Try a simple query
+                test_query = "test query"
+                results = self.storage_manager.query_documents(workspace, test_query, k=3)
+
+                if not results:
+                    print("Query returned no results!")
+                else:
+                    print(f"Query returned {len(results)} results:")
+                    for i, doc in enumerate(results):
+                        score = doc.get('relevance_score', 'N/A')
+                        source = doc.get('metadata', {}).get('source', 'unknown')
+                        print(f"  {i + 1}. Source: {source}, Score: {score}")
+        except Exception as e:
+            print(f"Error testing vector store: {str(e)}")
+            import traceback
+            print(traceback.format_exc())

@@ -70,137 +70,6 @@ class LlamaIndexConnector:
             import traceback
             print(traceback.format_exc())
 
-    def init_vector_store(self, workspace: str) -> bool:
-        """
-        Initialize a vector store for a workspace
-
-        Args:
-            workspace (str): Target workspace
-
-        Returns:
-            bool: Success flag
-        """
-        print(f"Initializing LlamaIndex vector store for workspace: {workspace}")
-
-        try:
-            # Import LlamaIndex components
-            from llama_index.core import VectorStoreIndex, StorageContext
-            from llama_index.core import Settings
-            from llama_index.core.vector_stores.simple import SimpleVectorStore
-
-            # Get vector store directory
-            vector_dir = os.path.join("data", workspace, "vector_store")
-            ensure_dir(vector_dir)
-            print(f"Vector store directory: {vector_dir}")
-
-            # Check for vector store files with different prefixes
-            docstore_path = os.path.join(vector_dir, "docstore.json")
-            index_store_path = os.path.join(vector_dir, "index_store.json")
-            vector_store_path = os.path.join(vector_dir, "vector_store.json")
-
-            # Look for prefixed vector store files
-            prefixed_vector_files = [f for f in os.listdir(vector_dir)
-                                     if f.endswith('__vector_store.json') or
-                                     f.endswith('_vector_store.json')]
-
-            # If we have prefixed files but no vector_store.json, do a quick fix
-            if prefixed_vector_files and not os.path.exists(vector_store_path):
-                print(f"Found prefixed vector store files but no vector_store.json. Attempting quick fix...")
-
-                # Use the largest prefixed file
-                largest_file = None
-                largest_size = 0
-
-                for file in prefixed_vector_files:
-                    file_path = os.path.join(vector_dir, file)
-                    file_size = os.path.getsize(file_path)
-                    if file_size > largest_size:
-                        largest_size = file_size
-                        largest_file = file
-
-                if largest_file:
-                    print(f"Using {largest_file} as vector_store.json")
-                    shutil.copy2(
-                        os.path.join(vector_dir, largest_file),
-                        vector_store_path
-                    )
-
-            # Check if files exist
-            has_docstore = os.path.exists(docstore_path)
-            has_index_store = os.path.exists(index_store_path)
-            has_vector_store = os.path.exists(vector_store_path)
-
-            files_exist = has_docstore and has_index_store and has_vector_store
-
-            print(f"Vector store files exist: {files_exist}")
-            print(f"  - docstore.json: {has_docstore}")
-            print(f"  - index_store.json: {has_index_store}")
-            print(f"  - vector_store.json: {has_vector_store}")
-
-            # Create storage context
-            if not files_exist:
-                print("Creating new vector store")
-
-                # Explicitly use SimpleVectorStore with consistent collection name
-                vector_store = SimpleVectorStore(collection_name="vector_store")
-                self.storage_context = StorageContext.from_defaults(vector_store=vector_store)
-
-                # Create an empty index with this storage context
-                self.index = VectorStoreIndex(
-                    [],
-                    storage_context=self.storage_context
-                )
-
-                # Persist the empty index
-                self.storage_context.persist(persist_dir=vector_dir)
-                print("Initialized new empty vector store")
-
-                # Verify files were created
-                print("Checking if files were created:")
-                print(f"  - docstore.json: {os.path.exists(docstore_path)}")
-                print(f"  - index_store.json: {os.path.exists(index_store_path)}")
-                print(f"  - vector_store.json: {os.path.exists(vector_store_path)}")
-            else:
-                # Try to load existing index
-                print("Loading existing vector store")
-                from llama_index.core import load_index_from_storage
-
-                try:
-                    self.storage_context = StorageContext.from_defaults(persist_dir=vector_dir)
-                    self.index = load_index_from_storage(self.storage_context)
-
-                    # Check if index was loaded properly
-                    if self.index and hasattr(self.index, 'docstore') and self.index.docstore:
-                        doc_count = len(self.index.docstore.docs) if self.index.docstore.docs else 0
-                        print(f"Successfully loaded vector store with {doc_count} documents")
-                    else:
-                        print("Warning: Index loaded but may be empty or invalid")
-                except Exception as e:
-                    print(f"Error loading vector store: {str(e)}")
-                    print("Creating new vector store due to load error")
-
-                    # Explicitly use SimpleVectorStore with consistent collection name
-                    vector_store = SimpleVectorStore(collection_name="vector_store")
-                    self.storage_context = StorageContext.from_defaults(vector_store=vector_store)
-
-                    # Create an empty index with this storage context
-                    self.index = VectorStoreIndex(
-                        [],
-                        storage_context=self.storage_context
-                    )
-
-                    # Persist the empty index
-                    self.storage_context.persist(persist_dir=vector_dir)
-                    print("Initialized new empty vector store after load failure")
-
-            return True
-
-        except Exception as e:
-            print(f"Error initializing LlamaIndex vector store: {str(e)}")
-            import traceback
-            print(traceback.format_exc())
-            return False
-
     def add_documents(self, workspace: str, documents: List[Dict[str, Any]]) -> bool:
         """
         Add documents to the vector store
@@ -217,9 +86,7 @@ class LlamaIndexConnector:
         try:
             # Import necessary LlamaIndex components
             from llama_index.core.schema import Document as LlamaDocument
-            from llama_index.core import VectorStoreIndex, StorageContext
-            from llama_index.core import Settings
-            from llama_index.core.vector_stores.simple import SimpleVectorStore
+            from llama_index.core import VectorStoreIndex, load_index_from_storage
 
             # Get vector store directory
             vector_dir = os.path.join("data", workspace, "vector_store")
@@ -240,7 +107,7 @@ class LlamaIndexConnector:
             document_sources = {}
 
             for i, doc in enumerate(documents):
-                # Extract content and metadata - EXPLICITLY USE PROCESSED CONTENT WITH FALLBACK
+                # Extract content and metadata - USE PROCESSED CONTENT WITH FALLBACK
                 content = doc.get("processed_content", doc.get("content", ""))
                 metadata = doc.get("metadata", {}).copy()
                 source = metadata.get("source", f"doc_{i}")
@@ -255,15 +122,10 @@ class LlamaIndexConnector:
 
                 # Create LlamaDocument with processed content
                 llama_doc = LlamaDocument(
-                    text=content,  # Using processed content with stop words removed
+                    text=content,
                     metadata=metadata
                 )
                 llama_docs.append(llama_doc)
-
-                # Print sample metadata for debugging
-                if i == 0:
-                    print(f"Sample document metadata: {metadata}")
-                    print(f"Using processed content: {content[:100]}..." if len(content) > 100 else content)
 
             print(f"Created {len(llama_docs)} LlamaIndex documents")
 
@@ -275,8 +137,7 @@ class LlamaIndexConnector:
             print(f"Documents in index before adding: {doc_count_before}")
 
             # Check if we have a valid index with documents
-            if (self.index and hasattr(self.index, 'docstore') and
-                    self.index.docstore and self.index.docstore.docs and doc_count_before > 0):
+            if doc_count_before > 0:
                 print(f"Adding documents to existing index with {doc_count_before} documents")
 
                 # Check for duplicate documents by source path
@@ -285,7 +146,7 @@ class LlamaIndexConnector:
                     if hasattr(doc, 'metadata') and doc.metadata and 'source' in doc.metadata:
                         existing_sources.add(doc.metadata['source'])
 
-                # Filter out documents that already exist in the index
+                # Filter out documents that already exist
                 new_docs_to_add = []
                 for doc in llama_docs:
                     if doc.metadata.get('source') not in existing_sources:
@@ -302,83 +163,30 @@ class LlamaIndexConnector:
                 else:
                     print("No new documents to add")
 
-                # Get storage context from existing index
-                if hasattr(self.index, 'storage_context'):
-                    storage_context = self.index.storage_context
-                else:
-                    # Create a new storage context for persistence
-                    print("Creating storage context from existing vector store")
-                    storage_context = self.storage_context
             else:
                 print("Creating new index for documents")
-                # Create a new index with consistent vector store naming
-                vector_store = SimpleVectorStore(collection_name="vector_store")
-                storage_context = StorageContext.from_defaults(vector_store=vector_store)
+                # Use centralized storage context creation
+                self.storage_context = self._get_storage_context(workspace, create_new=True)
 
                 # Create new index with all documents
                 self.index = VectorStoreIndex.from_documents(
                     llama_docs,
-                    storage_context=storage_context
+                    storage_context=self.storage_context
                 )
 
-                # Update storage context reference
-                self.storage_context = storage_context
-
-            # Check document count after adding
-            doc_count_after = len(self.index.docstore.docs) if self.index.docstore.docs else 0
-            print(f"Documents in index after adding: {doc_count_after}")
-
             # Verify documents were added correctly
-            if doc_count_after == 0:
-                print("ERROR: No documents in index after adding!")
-                return False
-            elif doc_count_after < doc_count_before + len(
-                    new_docs_to_add if 'new_docs_to_add' in locals() else llama_docs):
-                expected_count = doc_count_before + len(
-                    new_docs_to_add if 'new_docs_to_add' in locals() else llama_docs)
-                print(f"WARNING: Document count mismatch. Expected {expected_count}, got {doc_count_after}")
+            doc_count_after = len(self.index.docstore.docs) if hasattr(self.index,
+                                                                       'docstore') and self.index.docstore.docs else 0
+            print(f"Documents in index after adding: {doc_count_after}")
 
             # Persist the updated index
             print("Persisting index to disk")
-            if storage_context:
-                storage_context.persist(persist_dir=vector_dir)
+            if self.storage_context:
+                self.storage_context.persist(persist_dir=vector_dir)
+                print(f"Index persisted successfully to {vector_dir}")
             else:
                 print("ERROR: No storage context available for persistence!")
                 return False
-
-            # Verify files were created
-            docstore_path = os.path.join(vector_dir, "docstore.json")
-            index_store_path = os.path.join(vector_dir, "index_store.json")
-            vector_store_path = os.path.join(vector_dir, "vector_store.json")
-
-            print("Checking vector store files after adding documents:")
-            print(
-                f"  - docstore.json: {os.path.exists(docstore_path)} - Size: {os.path.getsize(docstore_path) if os.path.exists(docstore_path) else 0} bytes")
-            print(
-                f"  - index_store.json: {os.path.exists(index_store_path)} - Size: {os.path.getsize(index_store_path) if os.path.exists(index_store_path) else 0} bytes")
-            print(
-                f"  - vector_store.json: {os.path.exists(vector_store_path)} - Size: {os.path.getsize(vector_store_path) if os.path.exists(vector_store_path) else 0} bytes")
-
-            # Check for any prefixed vector store files and migrate if needed
-            prefixed_files = [f for f in os.listdir(vector_dir) if f.endswith('__vector_store.json')]
-            if prefixed_files and not os.path.exists(vector_store_path):
-                print(f"Found prefixed vector store files but no vector_store.json. Copying largest file...")
-                largest_file = None
-                largest_size = 0
-                for file in prefixed_files:
-                    file_path = os.path.join(vector_dir, file)
-                    file_size = os.path.getsize(file_path)
-                    if file_size > largest_size:
-                        largest_size = file_size
-                        largest_file = file
-
-                if largest_file:
-                    print(f"Copying {largest_file} to vector_store.json")
-                    import shutil
-                    shutil.copy2(
-                        os.path.join(vector_dir, largest_file),
-                        vector_store_path
-                    )
 
             # Save additional metadata for debugging
             metadata_path = os.path.join(vector_dir, "custom_metadata.json")
@@ -392,8 +200,7 @@ class LlamaIndexConnector:
                     "documents_added": doc_count_after,
                     "documents_before": doc_count_before,
                     "delta": doc_count_after - doc_count_before,
-                    "new_documents": len(new_docs_to_add if 'new_docs_to_add' in locals() else llama_docs),
-                    "deduplication_applied": 'new_docs_to_add' in locals()
+                    "new_documents": len(new_docs_to_add if 'new_docs_to_add' in locals() else llama_docs)
                 }, f, indent=2)
 
             print(f"Successfully added documents to index")
@@ -578,3 +385,168 @@ class LlamaIndexConnector:
             traceback.print_exc()
 
         return None  # Placeholder return
+
+    def _get_storage_context(self, workspace: str, create_new: bool = False):
+        """
+        Centralized factory method for creating or loading storage contexts
+
+        Args:
+            workspace (str): Target workspace
+            create_new (bool): Whether to create a new storage context even if files exist
+
+        Returns:
+            StorageContext: The created or loaded storage context
+        """
+        from llama_index.core import StorageContext
+        from llama_index.core.vector_stores.simple import SimpleVectorStore
+
+        # Get vector store directory
+        vector_dir = os.path.join("data", workspace, "vector_store")
+        ensure_dir(vector_dir)
+
+        # Check if vector store files exist
+        docstore_path = os.path.join(vector_dir, "docstore.json")
+        index_store_path = os.path.join(vector_dir, "index_store.json")
+        vector_store_path = os.path.join(vector_dir, "vector_store.json")
+
+        files_exist = (os.path.exists(docstore_path) and
+                       os.path.exists(index_store_path) and
+                       os.path.exists(vector_store_path))
+
+        if files_exist and not create_new:
+            # Load existing storage context
+            print(f"Loading existing storage context from {vector_dir}")
+            try:
+                storage_context = StorageContext.from_defaults(persist_dir=vector_dir)
+                return storage_context
+            except Exception as e:
+                print(f"Error loading storage context: {str(e)}")
+                # Fall through to create new context
+
+        # Create new storage context with consistent collection name
+        print(f"Creating new storage context with consistent collection name")
+        vector_store = SimpleVectorStore(collection_name="vector_store")
+        storage_context = StorageContext.from_defaults(vector_store=vector_store)
+
+        return storage_context
+
+    def init_vector_store(self, workspace: str) -> bool:
+        """
+        Initialize a vector store for a workspace
+
+        Args:
+            workspace (str): Target workspace
+
+        Returns:
+            bool: Success flag
+        """
+        print(f"Initializing LlamaIndex vector store for workspace: {workspace}")
+
+        try:
+            # Import LlamaIndex components
+            from llama_index.core import VectorStoreIndex, load_index_from_storage
+
+            # Get vector store directory
+            vector_dir = os.path.join("data", workspace, "vector_store")
+            ensure_dir(vector_dir)
+            print(f"Vector store directory: {vector_dir}")
+
+            # Check for vector store files
+            docstore_path = os.path.join(vector_dir, "docstore.json")
+            index_store_path = os.path.join(vector_dir, "index_store.json")
+            vector_store_path = os.path.join(vector_dir, "vector_store.json")
+
+            # Look for prefixed vector store files and handle them
+            self._handle_prefixed_vector_files(vector_dir, vector_store_path)
+
+            # Check if files exist after possible migration
+            files_exist = (os.path.exists(docstore_path) and
+                           os.path.exists(index_store_path) and
+                           os.path.exists(vector_store_path))
+
+            print(f"Vector store files exist: {files_exist}")
+
+            if not files_exist:
+                # Create new empty index with storage context
+                self.storage_context = self._get_storage_context(workspace, create_new=True)
+                self.index = VectorStoreIndex(
+                    [],
+                    storage_context=self.storage_context
+                )
+
+                # Persist the empty index
+                self.storage_context.persist(persist_dir=vector_dir)
+                print("Initialized new empty vector store")
+            else:
+                # Load existing index with centralized storage context
+                try:
+                    self.storage_context = self._get_storage_context(workspace)
+                    self.index = load_index_from_storage(self.storage_context)
+
+                    # Check if index was loaded properly
+                    if self.index and hasattr(self.index, 'docstore') and self.index.docstore:
+                        doc_count = len(self.index.docstore.docs) if self.index.docstore.docs else 0
+                        print(f"Successfully loaded vector store with {doc_count} documents")
+                    else:
+                        print("Warning: Index loaded but may be empty or invalid")
+                except Exception as e:
+                    print(f"Error loading vector store: {str(e)}")
+
+                    # Create new vector store due to load error
+                    self.storage_context = self._get_storage_context(workspace, create_new=True)
+                    self.index = VectorStoreIndex(
+                        [],
+                        storage_context=self.storage_context
+                    )
+
+                    # Persist the empty index
+                    self.storage_context.persist(persist_dir=vector_dir)
+                    print("Initialized new empty vector store after load failure")
+
+            return True
+
+        except Exception as e:
+            print(f"Error initializing LlamaIndex vector store: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
+            return False
+
+    def _handle_prefixed_vector_files(self, vector_dir, vector_store_path):
+        """
+        Handle prefixed vector store files by copying the largest to vector_store.json
+
+        Args:
+            vector_dir (str): Vector store directory
+            vector_store_path (str): Path to the expected vector_store.json file
+        """
+        # Skip if vector_store.json already exists
+        if os.path.exists(vector_store_path):
+            return
+
+        prefixed_vector_files = [f for f in os.listdir(vector_dir)
+                                 if f.endswith('__vector_store.json') or
+                                 f.endswith('_vector_store.json')]
+
+        if not prefixed_vector_files:
+            return
+
+        print(f"Found prefixed vector store files but no vector_store.json. Attempting quick fix...")
+
+        # Use the largest prefixed file
+        largest_file = None
+        largest_size = 0
+
+        for file in prefixed_vector_files:
+            file_path = os.path.join(vector_dir, file)
+            file_size = os.path.getsize(file_path)
+            if file_size > largest_size:
+                largest_size = file_size
+                largest_file = file
+
+        if largest_file:
+            print(f"Using {largest_file} as vector_store.json")
+            import shutil
+            shutil.copy2(
+                os.path.join(vector_dir, largest_file),
+                vector_store_path
+            )
