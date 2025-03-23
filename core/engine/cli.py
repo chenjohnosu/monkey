@@ -2,17 +2,11 @@
 Command line interface for the document analysis toolkit
 """
 
-# import sys
-# from core.engine.config import Config
-# from core.engine.utils import debug_print
-# from core.modes.themes import ThemeAnalyzer
-# from core.modes.query import QueryEngine
-# from core.modes.grind import FileProcessor
-# from core.modes.merge import VectorStoreMerger
 import shlex
 from core.engine.logging import debug_print
 from core.engine.storage import StorageManager, VectorStoreInspector
 from core.engine.output import OutputManager
+from core.engine.interpreter import setup_llm_theme_analysis
 from datetime import datetime
 
 class CommandProcessor:
@@ -49,7 +43,6 @@ class CommandProcessor:
                                                     self.text_processor)
         self.topic_modeler = TopicModeler(config, self.storage_manager, self.output_manager, self.text_processor)
 
-
         # Initialize the vector store inspector
         self.vector_store_inspector = VectorStoreInspector(config, self.storage_manager)
 
@@ -57,6 +50,9 @@ class CommandProcessor:
 
         self.loaded_workspaces = [self.current_workspace]  # Track loaded workspaces
         self.active_guide = None  # Track the active guide
+
+        # Initialize LLM theme integration
+        self._init_llm_theme_integration()
 
         debug_print(config, "CommandProcessor initialized")
 
@@ -152,11 +148,12 @@ class CommandProcessor:
 
       Run Modes:
         /run themes [all|nfm|net|key|lsa|cluster] - Run theme analysis
+        /run themes-llm [all|nfm|net|key|lsa|cluster] - Run theme analysis with LLM interpretation
         /run query                 - Enter interactive query mode
-        /run grind <ws>            - Process files in workspace to create initial database
-        /run update <ws>           - Update workspace with new or modified files
-        /run scan <ws>             - Scan workspace for new or updated files
-        /run merge <src> <dst>     - Merge workspaces
+        /run grind             - Process files in workspace to create initial database
+        /run update            - Update workspace with new or modified files
+        /run scan              - Scan workspace for new or updated files
+        /run merge       - Merge workspaces
         /run sentiment [all|basic|advanced] - Run sentiment analysis
         /run topic [all|lda|nmf|cluster]    - Run topic modeling
 
@@ -194,10 +191,54 @@ class CommandProcessor:
 
     def _show_specific_help(self, topic):
         """Show help for a specific topic"""
-        help_texts = {
-            # Other help texts...
-
-            'inspect': """
+        if topic == 'run':
+            print("""
+    Run Commands:
+      /run themes [all|nfm|net|key|lsa|cluster]  - Run theme analysis
+      /run themes-llm [all|nfm|net|key|lsa|cluster] - Run theme analysis with LLM interpretation
+      /run query                                 - Enter interactive query mode
+      /run grind                                 - Process files in workspace to create initial database
+      /run update                                - Update workspace with new or modified files
+      /run scan [detailed]                       - Scan workspace for new or updated files
+      /run merge <source_workspace>              - Merge source workspace into current workspace
+      /run sentiment [all|basic|advanced]        - Run sentiment analysis
+      /run topic [all|lda|nmf|cluster]           - Run topic modeling
+    """)
+        elif topic == 'load':
+            print("""
+    Load Commands:
+      /load <workspace>  - Load or create a workspace
+    """)
+        elif topic == 'config':
+            print("""
+    Config Commands:
+      /config llm <model>                - Set LLM model
+      /config embed <model>              - Set embedding model
+      /config storage <backend>          - Set storage backend (llama_index, haystack, or chroma)
+      /config kval <n>                   - Set k value for retrieval
+      /config debug [on|off]             - Set debug mode
+      /config output [txt|md|json]       - Set output format
+      /config guide <guide>              - Set guide from guides.txt
+    """)
+        elif topic == 'save':
+            print("""
+    Save Commands:
+      /save start                - Start saving session
+      /save stop                 - Stop saving session
+      /save buffer               - Save last command output
+    """)
+        elif topic == 'show':
+            print("""
+    Show Commands:
+      /show status               - Show system status
+      /show cuda                 - Show CUDA status
+      /show config               - Show configuration details
+      /show ws                   - Show workspace details
+      /show files                - Show files in current workspace
+      /show guide                - Show available guides
+    """)
+        elif topic == 'inspect':
+            print("""
     Inspect Commands:
       /inspect workspace [ws] - Inspect workspace metadata and vector store
       /inspect ws [ws]        - Alias for workspace inspect
@@ -210,10 +251,9 @@ class CommandProcessor:
       /inspect fix [ws]               - Fix common vector store issues
       /inspect metadata [ws] [query]  - Inspect raw metadata returned from vector store
       /inspect migrate [ws]           - Fix inconsistent vector store naming
-    """
-        }
-
-        print(help_texts.get(topic, f"No specific help available for '{topic}'"))
+    """)
+        else:
+            print(f"No specific help available for '{topic}'")
 
     def _cmd_show(self, args):
         """Handle the show command"""
@@ -270,7 +310,7 @@ class CommandProcessor:
         debug_print(self.config, f"Run command with args: {args}")
 
         if not args:
-            print("Usage: /run [themes|query|grind|update|scan|merge|sentiment|topic] [options]")
+            print("Usage: /run [themes|themes-llm|query|grind|update|scan|merge|sentiment|topic] [options]")
             return
 
         subcommand = args[0].lower()
@@ -279,46 +319,66 @@ class CommandProcessor:
             method = args[1] if len(args) > 1 else 'all'
             self.theme_analyzer.analyze(self.current_workspace, method)
 
+        elif subcommand == 'themes-llm':
+            # Import the module here to avoid circular imports
+            from core.engine.interpreter import run_themes_with_llm_interpretation
+
+            # Extract method parameter if provided
+            method = args[1] if len(args) > 1 else 'all'
+
+            # Create a method reference bound to self
+            import types
+            run_method = types.MethodType(run_themes_with_llm_interpretation, self)
+
+            # Call the method
+            run_method(self.current_workspace, method)
+
         elif subcommand == 'query':
-            self.query_engine.activate(self.current_workspace)
-            print("Query mode activated. Type queries directly or use / commands.")
+            if self.query_engine.activate(self.current_workspace):
+                self.query_engine.enter_interactive_mode()
 
         elif subcommand == 'grind':
-            workspace = self.current_workspace
-            if len(args) > 1:
-                workspace = args[1]
-            self.file_processor.process_workspace(workspace)
+            self.file_processor.process_workspace(self.current_workspace)
 
         elif subcommand == 'update':
-            workspace = self.current_workspace
-            if len(args) > 1:
-                workspace = args[1]
-            self.file_processor.update_workspace(workspace)
+            self.file_processor.update_workspace(self.current_workspace)
 
         elif subcommand == 'scan':
-            workspace = self.current_workspace
-            if len(args) > 1:
-                workspace = args[1]
-            self.file_processor.scan_workspace(workspace, detailed=True)
+            detailed = len(args) > 1 and args[1].lower() == 'detailed'
+            self.file_processor.scan_workspace(self.current_workspace, detailed)
 
         elif subcommand == 'merge':
-            if len(args) < 3:
-                print("Usage: /run merge <source_workspace> <destination_workspace>")
+            if len(args) < 2:
+                print("Usage: /run merge <source_workspace>")
                 return
-            self.vector_store_merger.merge(args[1], args[2])
+            source_workspace = args[1]
+            self.vector_store_merger.merge(source_workspace, self.current_workspace)
 
         elif subcommand == 'sentiment':
-            method = args[1] if len(args) > 1 and args[1] in ['all', 'basic', 'advanced'] else 'all'
-            print(f"Running sentiment analysis with method: {method}")
+            method = args[1] if len(args) > 1 else 'all'
             self.sentiment_analyzer.analyze(self.current_workspace, method)
 
         elif subcommand == 'topic':
-            method = args[1] if len(args) > 1 and args[1] in ['all', 'lda', 'nmf', 'cluster'] else 'all'
-            print(f"Running topic modeling with method: {method}")
+            method = args[1] if len(args) > 1 else 'all'
             self.topic_modeler.analyze(self.current_workspace, method)
 
         else:
             print(f"Unknown run subcommand: {subcommand}")
+
+    def _init_llm_theme_integration(self):
+        """Initialize LLM-assisted theme analysis capability"""
+        try:
+            # Import the setup function
+            from core.engine.interpreter import setup_llm_theme_analysis
+
+            # Call the setup function with self as the command processor
+            setup_llm_theme_analysis(self)
+
+            # Report success
+            debug_print(self.config, "LLM theme analysis integration initialized")
+        except Exception as e:
+            debug_print(self.config, f"Error initializing LLM theme analysis: {str(e)}")
+            print("LLM-assisted theme analysis feature could not be initialized.")
 
     def _cmd_load(self, args):
         """Handle the load command"""
@@ -776,3 +836,4 @@ class CommandProcessor:
                 self.output_manager.print_formatted('feedback',
                                                     "Not in query mode. Use '/run query' to enter interactive query mode.",
                                                     success=False)
+

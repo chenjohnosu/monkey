@@ -114,11 +114,16 @@ class TopicModeler:
         """
         debug_print(self.config, f"Analyzing topics in workspace '{workspace}' using method '{method}'")
 
-        # Validate method
+        # Validate method - case insensitive matching
         valid_methods = ['all', 'lda', 'nmf', 'cluster']
-        if method not in valid_methods:
+        lower_method = method.lower() if isinstance(method, str) else ''
+
+        if lower_method not in valid_methods:
             print(f"Invalid method: {method}. Must be one of: {', '.join(valid_methods)}")
             return {}
+
+        # Convert to lowercase for consistent handling
+        method = lower_method
 
         # Validate workspace and load documents
         docs = self._validate_and_load_documents(workspace)
@@ -225,10 +230,10 @@ class TopicModeler:
 
     def _preprocess_documents(self, docs):
         """
-        Preprocess documents for topic modeling
+        Preprocess documents for topic modeling, incorporating original files from body directory
 
         Args:
-            docs (List[Dict]): Raw input documents
+            docs (List[Dict]): Raw input documents from data directory
 
         Returns:
             Tuple[List[Dict], Counter]: Processed documents and language counts
@@ -236,25 +241,44 @@ class TopicModeler:
         processed_docs = []
         language_counts = Counter()
 
+        # Get current workspace
+        workspace = self.config.get('workspace.default')
+
         for doc in docs:
             # Extract content and metadata
             content = doc.get("content", "").strip()
             processed_content = doc.get("processed_content", "").strip()
+            source_path = doc.get("metadata", {}).get("source", "unknown")
             language = doc.get("metadata", {}).get("language", "unknown")
 
-            # Print detailed document info for debugging
-            print(f"Document Preprocessing:")
-            print(f"  Source: {doc.get('metadata', {}).get('source', 'Unknown')}")
-            print(f"  Language: {language}")
-            print(f"  Raw Content Length: {len(content)}")
-            print(f"  Processed Content Length: {len(processed_content)}")
+            # Try to get original content from body directory if needed
+            if not content or self.config.get('topic.use_originals', True):
+                try:
+                    # Construct path to original file in body directory
+                    original_path = os.path.join("body", workspace, source_path)
 
-            # Prefer processed content, fall back to raw content
+                    if os.path.exists(original_path):
+                        debug_print(self.config, f"Loading original content from: {original_path}")
+                        from core.engine.utils import get_file_content
+                        original_content = get_file_content(original_path)
+
+                        if original_content:
+                            # Use original content if available
+                            content = original_content
+                            debug_print(self.config, f"Using original content for: {source_path}")
+                        else:
+                            debug_print(self.config, f"Failed to load original content, using stored content")
+                    else:
+                        debug_print(self.config, f"Original file not found: {original_path}")
+                except Exception as e:
+                    debug_print(self.config, f"Error loading original file: {str(e)}")
+
+            # Prefer processed content for better topic modeling results
             text_to_use = processed_content if processed_content else content
 
             # Skip empty documents
             if not text_to_use:
-                print(f"  WARNING: Empty document skipped")
+                debug_print(self.config, f"Empty document skipped: {source_path}")
                 continue
 
             # Track language
@@ -262,8 +286,9 @@ class TopicModeler:
 
             processed_docs.append({
                 "content": text_to_use,
-                "source": doc.get("metadata", {}).get("source", "unknown"),
-                "language": language
+                "source": source_path,
+                "language": language,
+                "original_content": content  # Store original content for reference
             })
 
         print(f"\nPreprocessing Summary:")
@@ -317,20 +342,26 @@ class TopicModeler:
             print("scikit-learn not available. Using simple extraction.")
             method = 'simple'
 
+        # Log which method we're executing
+        print(f"\nExecuting topic modeling method: {method}")
+
         # Run topic modeling for each language
         for language, language_docs in docs_by_language.items():
             # Skip if too few documents
             if len(language_docs) < 3:
                 continue
 
-            # Run specific methods
-            if method in ['all', 'lda']:
+            # Run specific methods based on what was requested
+            if method == 'all' or method == 'lda':
+                print(f"Running LDA topic modeling for language: {language}")
                 results[f'lda_{language}'] = self._lda_topic_modeling(language_docs, language)
 
-            if method in ['all', 'nmf']:
+            if method == 'all' or method == 'nmf':
+                print(f"Running NMF topic modeling for language: {language}")
                 results[f'nmf_{language}'] = self._nmf_topic_modeling(language_docs, language)
 
-            if method in ['all', 'cluster'] and CLUSTERING_AVAILABLE:
+            if (method == 'all' or method == 'cluster') and CLUSTERING_AVAILABLE:
+                print(f"Running clustering-based topic modeling for language: {language}")
                 results[f'cluster_{language}'] = self._cluster_topic_modeling(language_docs, language)
 
         return results
@@ -489,7 +520,7 @@ class TopicModeler:
 
     def _nmf_topic_modeling(self, docs, language):
         """
-        Perform Non-Negative Matrix Factorization topic modeling
+        Perform Non-Negative Matrix Factorization topic modeling with version compatibility
 
         Args:
             docs (List[Dict]): Documents to analyze
@@ -520,21 +551,31 @@ class TopicModeler:
             # Determine number of topics dynamically
             n_topics = min(max(5, len(docs) // 3), 20)
 
-            # Apply NMF
-            #nmf_model = NMF(
-            #    n_components=n_topics,
-            #    random_state=42,
-            #    alpha=.1,  # Controls sparseness of the solution
-            #    l1_ratio=.5,  # Balanced between L1 and L2 regularization
-            #    max_iter=200  # Increased iterations for better convergence
-            #)
-            nmf_model = NMF(
-                n_components=n_topics,
-                random_state=42,
-                l1_ratio=.5,
-                regularization='both',
-                max_iter=200
-            )
+            # Try to detect scikit-learn version and use compatible parameters
+            from sklearn import __version__ as sklearn_version
+            debug_print(self.config, f"scikit-learn version: {sklearn_version}")
+
+            # Initialize NMF with minimal parameters to ensure compatibility
+            try:
+                # First try with just the essential parameters
+                nmf_model = NMF(
+                    n_components=n_topics,
+                    random_state=42,
+                    max_iter=200
+                )
+                debug_print(self.config, "Using basic NMF parameters")
+            except Exception as e1:
+                debug_print(self.config, f"Basic NMF initialization failed: {str(e1)}")
+                # If that fails, try with absolutely minimal parameters
+                try:
+                    nmf_model = NMF(n_components=n_topics)
+                    debug_print(self.config, "Using minimal NMF parameters")
+                except Exception as e2:
+                    debug_print(self.config, f"Minimal NMF initialization failed: {str(e2)}")
+                    # If even that fails, return an error
+                    return {"error": f"Could not initialize NMF model: {str(e2)}"}
+
+            # Fit the model
             nmf_output = nmf_model.fit_transform(doc_term_matrix)
 
             # Extract feature names

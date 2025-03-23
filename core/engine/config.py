@@ -34,7 +34,7 @@ class Config:
         # Debug output
         if self.get('system.debug'):
             debug_print(self, f"Configuration loaded from {config_path}")
-    
+
     def _ensure_defaults(self):
         """Ensure default configuration values are set"""
         defaults = {
@@ -67,18 +67,11 @@ class Config:
             },
             'storage': {
                 'vector_store': 'chroma'
+            },
+            'topic': {
+                'use_originals': True  # Always try to use original documents from body directory
             }
         }
-        
-        # Ensure all default sections exist
-        for section, values in defaults.items():
-            if section not in self.config:
-                self.config[section] = {}
-            
-            # Ensure all default values exist in each section
-            for key, value in values.items():
-                if key not in self.config[section]:
-                    self.config[section][key] = value
     
     def get(self, path, default=None):
         """Get a configuration value by path (e.g., 'system.debug')"""

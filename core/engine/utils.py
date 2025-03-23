@@ -384,3 +384,37 @@ def format_md_analysis(title: str, items: List[Dict[str, Any]]) -> str:
             md_lines.append(f"**{k}**: {v}")
 
     return "\n".join(md_lines)
+
+
+def load_original_document(config, workspace, source_path):
+    """
+    Load original document content from body directory with fallback handling
+
+    Args:
+        config: Configuration object for debug output
+        workspace (str): Workspace name
+        source_path (str): Document source path within workspace
+
+    Returns:
+        str: Original document content or None if not available
+    """
+    debug_print(config, f"Loading original document: {source_path}")
+
+    try:
+        # Construct path to original file
+        original_path = os.path.join("body", workspace, source_path)
+
+        if os.path.exists(original_path):
+            # Get content based on file type
+            content = get_file_content(original_path)
+            if content:
+                debug_print(config, f"Successfully loaded original content ({len(content)} chars)")
+                return content
+            else:
+                debug_print(config, f"Failed to extract content from {original_path}")
+        else:
+            debug_print(config, f"Original file not found: {original_path}")
+    except Exception as e:
+        debug_print(config, f"Error loading original document: {str(e)}")
+
+    return None

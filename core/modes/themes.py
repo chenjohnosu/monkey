@@ -3,6 +3,9 @@ Theme analysis module with enhanced content-based processing
 """
 
 import os
+import signal
+import time
+import re
 import numpy as np
 from collections import Counter, defaultdict
 from typing import Dict, List, Any, Tuple
@@ -25,6 +28,12 @@ except ImportError:
     JIEBA_AVAILABLE = False
     print("jieba not available, falling back to character-based tokenization for Chinese")
 
+try:
+    import nltk
+    NLTK_AVAILABLE = True
+except ImportError:
+    NLTK_AVAILABLE = False
+    print("NLTK not available, falling back to regex-based entity extraction")
 
 class ThemeAnalyzer:
     """Analyzes document themes with a focus on content semantics"""
@@ -173,6 +182,8 @@ class ThemeAnalyzer:
         # Output results
         self._output_results(workspace, results, method)
 
+        return results
+
     def _extract_document_contents(self, docs):
         """
         Extract content from documents and preprocess for analysis
@@ -242,7 +253,7 @@ class ThemeAnalyzer:
 
     def _analyze_named_entities(self, doc_contents):
         """
-        Extract and analyze named entities from document content
+        Extract and analyze named entities from document content with optimized processing
 
         Args:
             doc_contents (List[Dict]): Preprocessed document content
@@ -252,119 +263,276 @@ class ThemeAnalyzer:
         """
         debug_print(self.config, "Analyzing named entities in document content")
 
-        # Extract entities from documents based on language
-        entities_by_doc = {}
-        all_entities = Counter()
+        # Create a more efficient processing pipeline
+        print(f"Starting named entity analysis on {len(doc_contents)} documents...")
 
-        for doc in doc_contents:
+        # PHASE 1: Smart entity extraction with early filtering
+        print("Phase 1: Extracting and filtering entities...")
+
+        # Determine document size to dynamically adjust parameters
+        total_content_size = sum(len(doc.get("processed_content", "")) for doc in doc_contents)
+        doc_count = len(doc_contents)
+
+        # Dynamically adjust entity limits based on corpus size
+        if total_content_size > 1000000:  # Very large corpus (>1MB)
+            entity_per_doc_limit = 500
+            significance_threshold = 3  # Higher threshold for large corpus
+        elif total_content_size > 300000:  # Large corpus
+            entity_per_doc_limit = 800
+            significance_threshold = 2
+        else:  # Small to medium corpus
+            entity_per_doc_limit = 1000
+            significance_threshold = 2
+
+        # Extract entities with early filtering
+        entities_by_doc = {}
+        preliminary_entities = Counter()
+        warning_count = 0  # Track warnings to avoid repeating
+
+        for doc_idx, doc in enumerate(doc_contents):
+            # Show progress for every 10% of documents or at least every 5 documents
+            if doc_idx % max(1, min(doc_count // 10, 5)) == 0:
+                print(f"  Processing documents: {doc_idx + 1}/{doc_count}")
+
             doc_id = doc["id"]
             language = doc["language"]
             text = doc["processed_content"]
 
-            # Extract entities using appropriate method for language
+            # Extract entities using optimized method for the language
             if language == "zh":
-                doc_entities = self._extract_chinese_entities(text)
+                doc_entities = self._extract_chinese_entities_optimized(text)
             else:
-                doc_entities = self._extract_english_entities(text)
+                doc_entities = self._extract_english_entities_optimized(text)
 
-            # Add to entity counts
-            entity_counts = Counter(doc_entities)
-            entities_by_doc[doc_id] = entity_counts
-            all_entities.update(entity_counts)
+            # Early filtering: Only keep entities that appear multiple times in the document
+            local_entity_counts = Counter(doc_entities)
+            filtered_entities = {entity: count for entity, count in local_entity_counts.items()
+                                 if count >= 2 or len(entity) >= 4}  # Keep multi-word or repeated entities
 
-        # Filter significant entities (appear in multiple docs or high frequency)
+            # Apply per-document limit
+            if len(filtered_entities) > entity_per_doc_limit:
+                if warning_count < 3:  # Limit the number of warnings
+                    print(
+                        f"  Note: Document {doc_id} has {len(filtered_entities)} entities after filtering. Using top {entity_per_doc_limit}.")
+                    warning_count += 1
+                elif warning_count == 3:
+                    print("  Note: Additional documents with many entities will be limited without individual notices.")
+                    warning_count += 1
+
+                # Keep only the most frequent entities
+                filtered_entities = dict(
+                    sorted(filtered_entities.items(), key=lambda x: x[1], reverse=True)[:entity_per_doc_limit])
+
+            # Add filtered entities to document mapping and preliminary counter
+            entities_by_doc[doc_id] = filtered_entities
+            preliminary_entities.update(filtered_entities)
+
+        # PHASE 2: Identify significant entities across documents
+        print("Phase 2: Identifying significant entities...")
+
+        # Determine ideal entity count based on corpus size
+        if doc_count > 100:
+            target_entity_count = 300
+        elif doc_count > 50:
+            target_entity_count = 400
+        else:
+            target_entity_count = 500
+
+        # Apply frequency and document count filtering
         significant_entities = {}
 
-        for entity, count in all_entities.items():
+        # First, sort entities by document frequency and overall frequency
+        entity_doc_counts = {}
+        for entity in preliminary_entities:
             # Count documents containing this entity
-            doc_count = sum(1 for doc_entities in entities_by_doc.values()
-                            if entity in doc_entities)
+            doc_count = sum(1 for doc_id, entities in entities_by_doc.items() if entity in entities)
+            entity_doc_counts[entity] = doc_count
 
-            # Entity is significant if it appears in multiple docs or has high frequency
-            if doc_count > 1 or count > 5:
+        # Create combined ranking based on doc count and frequency
+        ranked_entities = sorted(
+            [(entity, entity_doc_counts[entity], count) for entity, count in preliminary_entities.items()],
+            key=lambda x: (x[1], x[2]),  # Sort by doc count first, then frequency
+            reverse=True
+        )
+
+        # Take the top entities up to our target
+        top_entity_count = min(target_entity_count, len(ranked_entities))
+
+        # Identify significant entities based on ranking and minimum thresholds
+        for i, (entity, doc_count, count) in enumerate(ranked_entities):
+            # Always include top entities
+            if i < top_entity_count and (doc_count >= significance_threshold or count >= 5):
                 significant_entities[entity] = {
                     "count": count,
                     "doc_count": doc_count,
-                    "docs": [doc_id for doc_id, doc_entities in entities_by_doc.items()
-                             if entity in doc_entities]
+                    "docs": [doc_id for doc_id, entities in entities_by_doc.items() if entity in entities]
                 }
 
-        # Build entity co-occurrence network
+        print(
+            f"Found {len(significant_entities)} significant entities from {len(preliminary_entities)} total extracted")
+
+        # PHASE 3: Optimized network construction
+        print("Phase 3: Building entity relationship network...")
+
+        # Create the graph with a smarter edge creation strategy
         entity_network = nx.Graph()
 
         # Add nodes for significant entities
         for entity, data in significant_entities.items():
             entity_network.add_node(entity,
-                                   count=data["count"],
-                                   doc_count=data["doc_count"])
+                                    count=data["count"],
+                                    doc_count=data["doc_count"])
 
-        # Add edges for entities that co-occur in documents
-        for entity1, data1 in significant_entities.items():
-            docs1 = set(data1["docs"])
+        # Use a more efficient edge creation approach
+        # 1. Create document-to-entity mapping for faster lookup
+        doc_to_entities = defaultdict(list)
+        for entity, data in significant_entities.items():
+            for doc_id in data["docs"]:
+                doc_to_entities[doc_id].append(entity)
 
-            for entity2, data2 in significant_entities.items():
-                if entity1 >= entity2:  # Skip self-loops and duplicates
-                    continue
+        # 2. Create co-occurrence pairs by document instead of by entity pair
+        entity_pairs = Counter()
+        entity_common_docs = defaultdict(set)
+        entity_doc_sets = {entity: set(data["docs"]) for entity, data in significant_entities.items()}
 
-                docs2 = set(data2["docs"])
-                common_docs = docs1.intersection(docs2)
+        # For each document, find all entity pairs
+        for doc_id, entities in doc_to_entities.items():
+            # Create all pairs within this document (more efficient than checking all possible entity combinations)
+            for i in range(len(entities)):
+                for j in range(i + 1, len(entities)):
+                    entity1, entity2 = min(entities[i], entities[j]), max(entities[i], entities[j])
+                    pair = (entity1, entity2)
+                    entity_pairs[pair] += 1
+                    entity_common_docs[pair].add(doc_id)
 
-                if common_docs:
-                    # Calculate Jaccard similarity
-                    similarity = len(common_docs) / len(docs1.union(docs2))
+        # 3. Find the edges with highest co-occurrence and add to network
+        # Determine reasonable edge limit based on node count
+        max_edges = min(50000, len(significant_entities) * 100)
 
-                    if similarity > 0.1:  # Only add significant connections
-                        entity_network.add_edge(entity1, entity2,
-                                              weight=similarity,
-                                              common_docs=len(common_docs))
+        # Sort pairs by co-occurrence count and add edges
+        edge_count = 0
+        for (entity1, entity2), count in entity_pairs.most_common():
+            if edge_count >= max_edges:
+                break
 
-        # Find entity communities
-        try:
-            from community import best_partition
-            partition = best_partition(entity_network)
-        except ImportError:
-            # Fall back to connected components
-            partition = {}
-            for i, component in enumerate(nx.connected_components(entity_network)):
-                for node in component:
-                    partition[node] = i
+            # Only add significant edges (those with jaccard similarity > threshold)
+            common_docs = entity_common_docs[(entity1, entity2)]
+            union_docs = entity_doc_sets[entity1].union(entity_doc_sets[entity2])
+            jaccard = len(common_docs) / len(union_docs) if union_docs else 0
+
+            if jaccard > 0.1:  # Only add significant connections
+                entity_network.add_edge(entity1, entity2,
+                                        weight=jaccard,
+                                        common_docs=len(common_docs))
+                edge_count += 1
+
+        print(f"Created network with {entity_network.number_of_nodes()} nodes and {edge_count} edges")
+
+        # PHASE 4: Efficient community detection
+        print("Phase 4: Detecting entity communities...")
+
+        # Use a faster community detection algorithm for larger networks
+        if entity_network.number_of_nodes() > 300:
+            try:
+                # Try the faster Label Propagation algorithm first
+                from networkx.algorithms.community import label_propagation_communities
+                communities_sets = label_propagation_communities(entity_network)
+
+                # Convert to the partition format {node: community_id}
+                partition = {}
+                for i, community in enumerate(communities_sets):
+                    for node in community:
+                        partition[node] = i
+
+                print(f"  Used fast label propagation algorithm for community detection")
+
+            except Exception as e:
+                # Fall back to connected components
+                print(f"  Community detection error: {str(e)}. Using connected components.")
+                partition = {}
+                for i, component in enumerate(nx.connected_components(entity_network)):
+                    for node in component:
+                        partition[node] = i
+        else:
+            # For smaller networks, try Louvain method with a timeout
+            try:
+                from community import best_partition
+                import signal
+
+                def timeout_handler(signum, frame):
+                    raise TimeoutError("Community detection timed out")
+
+                # Set a timeout for community detection (10 seconds)
+                signal.signal(signal.SIGALRM, timeout_handler)
+                signal.alarm(10)
+
+                try:
+                    partition = best_partition(entity_network)
+                    # Disable alarm
+                    signal.alarm(0)
+                    print(f"  Used Louvain method for community detection")
+                except (TimeoutError, Exception) as e:
+                    # Disable alarm
+                    signal.alarm(0)
+                    print(f"  Community detection issue: {str(e)}. Using connected components.")
+                    # Fall back to connected components
+                    partition = {}
+                    for i, component in enumerate(nx.connected_components(entity_network)):
+                        for node in component:
+                            partition[node] = i
+
+            except ImportError:
+                print("  Community detection package not available. Using connected components.")
+                # Fall back to connected components
+                partition = {}
+                for i, component in enumerate(nx.connected_components(entity_network)):
+                    for node in component:
+                        partition[node] = i
 
         # Group entities by community
         communities = defaultdict(list)
         for entity, community_id in partition.items():
             communities[community_id].append(entity)
 
-        # Identify theme topics and format results
+        # PHASE 5: Theme generation from communities
+        print("Phase 5: Generating themes from entity communities...")
+
+        # Filter out very small communities and generate themes
+        min_community_size = 2
         themes = []
-        for community_id, entity_list in communities.items():
-            # Skip communities with only one entity
-            if len(entity_list) < 2:
+
+        # Get top communities by size
+        for community_id, entity_list in sorted(communities.items(),
+                                                key=lambda x: len(x[1]),
+                                                reverse=True):
+            # Skip communities that are too small
+            if len(entity_list) < min_community_size:
                 continue
 
-            # Sort entities by frequency
+            # Sort entities by frequency and document count
             entities_sorted = sorted(
                 entity_list,
-                key=lambda e: significant_entities[e]["count"],
+                key=lambda e: (significant_entities[e]["doc_count"], significant_entities[e]["count"]),
                 reverse=True
             )
 
-            # Create theme
-            top_entities = entities_sorted[:3]
+            # Create theme with a more descriptive name
+            top_entities = entities_sorted[:min(3, len(entities_sorted))]
             theme_name = " / ".join(top_entities)
 
-            # Calculate theme score (average entity frequency)
-            theme_score = sum(significant_entities[e]["count"] for e in entity_list) / len(entity_list)
-            normalized_score = min(1.0, theme_score / max(all_entities.values()))
-
-            # Count documents in this theme
+            # Calculate theme score based on document coverage
             theme_docs = set()
             for entity in entity_list:
                 theme_docs.update(significant_entities[entity]["docs"])
 
+            # Calculate normalized score by document coverage percentage
+            doc_coverage = len(theme_docs) / len(doc_contents)
+            normalized_score = round(min(1.0, doc_coverage * 2), 2)  # Scale for better distribution
+
             themes.append({
                 "name": f"Theme: {theme_name}",
-                "frequency": round(normalized_score, 2),
-                "keywords": entities_sorted[:5],
+                "frequency": normalized_score,
+                "keywords": entities_sorted[:min(5, len(entities_sorted))],
                 "entity_count": len(entity_list),
                 "document_count": len(theme_docs)
             })
@@ -372,9 +540,10 @@ class ThemeAnalyzer:
         # Sort themes by document count and frequency
         themes.sort(key=lambda x: (x["document_count"], x["frequency"]), reverse=True)
 
+        print(f"Named entity analysis complete: found {len(themes)} themes")
         return {
             "method": "Named Entity Analysis",
-            "entity_count": len(all_entities),
+            "entity_count": len(preliminary_entities),
             "significant_entities": len(significant_entities),
             "themes": themes
         }
@@ -417,7 +586,7 @@ class ThemeAnalyzer:
 
     def _extract_chinese_entities(self, text):
         """
-        Extract named entities from Chinese text
+        Extract named entities from Chinese text with improved performance
 
         Args:
             text (str): Chinese text
@@ -428,14 +597,59 @@ class ThemeAnalyzer:
         # Extract Chinese entity candidates
         import re
 
+        # Limit text size for processing to prevent excessive memory use
+        max_text_length = 100000  # Reasonable upper limit
+        if len(text) > max_text_length:
+            print(f"  Text too long ({len(text)} chars). Limiting to {max_text_length} chars for entity extraction.")
+            text = text[:max_text_length]
+
         # Focus on longer character sequences (more likely to be meaningful entities)
         entities = []
 
-        # Extract sequences of 2-4 Chinese characters
-        for length in range(2, 5):
-            pattern = r'[\u4e00-\u9fff]{' + str(length) + '}'
-            matches = re.findall(pattern, text)
-            entities.extend(matches)
+        # Use jieba for more intelligent word segmentation if available
+        if JIEBA_AVAILABLE:
+            try:
+                import jieba
+                # Extract Chinese words that are 2-4 characters
+                words = list(jieba.cut(text))
+                chinese_words = [w for w in words if re.match(r'^[\u4e00-\u9fff]{2,4}$', w)]
+
+                # Add a reasonable limit to prevent excessive entities
+                max_entities = 10000
+                if len(chinese_words) > max_entities:
+                    print(f"  Found too many Chinese words ({len(chinese_words)}). Limiting to {max_entities}.")
+                    chinese_words = chinese_words[:max_entities]
+
+                entities.extend(chinese_words)
+                return entities
+            except Exception as e:
+                print(f"  Error using jieba for Chinese segmentation: {str(e)}. Falling back to regex.")
+
+        # Fallback: Extract sequences of 2-4 Chinese characters with limitations
+        try:
+            # Process each length limit separately to avoid memory issues
+            max_matches_per_length = 3000  # Reasonable upper limit per character length
+
+            for length in range(2, 5):
+                pattern = r'[\u4e00-\u9fff]{' + str(length) + '}'
+                matches = re.findall(pattern, text)
+
+                # Limit matches per length
+                if len(matches) > max_matches_per_length:
+                    print(f"  Found {len(matches)} {length}-character entities. Limiting to {max_matches_per_length}.")
+                    matches = matches[:max_matches_per_length]
+
+                entities.extend(matches)
+
+            # Final limit on total entities
+            max_total_entities = 10000
+            if len(entities) > max_total_entities:
+                print(f"  Total entities ({len(entities)}) exceeds limit. Truncating to {max_total_entities}.")
+                entities = entities[:max_total_entities]
+
+        except Exception as e:
+            print(f"  Error in regex entity extraction: {str(e)}. Returning limited entities.")
+            return entities[:1000] if len(entities) > 1000 else entities
 
         return entities
 
@@ -1544,3 +1758,217 @@ class ThemeAnalyzer:
             str: Basic semantic summary
         """
         return f"This semantic theme represents a conceptual area centered around {', '.join(keywords[:3])}. These terms appear to be semantically related, suggesting a common topic or domain that connects ideas like {', '.join(keywords[3:7])}. This latent dimension captures an underlying pattern of meaning across documents that discuss these interrelated concepts."
+
+    def _extract_chinese_entities_optimized(self, text):
+        """
+        Extract named entities from Chinese text with optimized approach
+        that balances efficiency and quality
+
+        Args:
+            text (str): Chinese text
+
+        Returns:
+            List[str]: Extracted entities
+        """
+        # Limit text size for processing
+        max_text_length = 50000  # More aggressive limit for better performance
+        if len(text) > max_text_length:
+            text = text[:max_text_length]
+
+        # Use jieba for word segmentation when available
+        if JIEBA_AVAILABLE:
+            try:
+                import jieba
+
+                # Optimize for speed with parallel processing if available
+                try:
+                    jieba.enable_parallel(4)  # Enable parallel processing with 4 threads
+                except:
+                    pass  # Continue if parallel processing isn't available
+
+                # Cut the text into words
+                words = list(jieba.cut(text))
+
+                # Use focused filtering to keep only likely entities:
+                # 1. Words of length 2-4 characters
+                # 2. All characters must be Chinese
+                # 3. Skip common stopwords
+
+                # Load or create Chinese stopwords list if not already available
+                if not hasattr(self, 'chinese_stopwords') or not self.chinese_stopwords:
+                    self.chinese_stopwords = set([
+                        "的", "了", "和", "是", "就", "都", "而", "及", "与", "这", "那", "有", "在",
+                        "我", "你", "他", "她", "它", "们", "个", "为", "又", "也", "但", "却", "只",
+                        "不", "没", "一", "二", "三", "四", "五", "很", "如此", "因为", "所以", "因此"
+                    ])
+
+                # Filter words with regex and stopwords check
+                import re
+                chinese_pattern = re.compile(r'^[\u4e00-\u9fff]{2,4}$')
+                entities = [
+                    w for w in words
+                    if chinese_pattern.match(w) and w not in self.chinese_stopwords
+                ]
+
+                # Use Counter to only keep entities that appear multiple times
+                from collections import Counter
+                entity_counts = Counter(entities)
+
+                # Filter for entities that appear multiple times or are longer
+                min_count = 2 if len(text) > 10000 else 1  # Higher threshold for longer texts
+                filtered_entities = [
+                    entity for entity, count in entity_counts.items()
+                    if count >= min_count or len(entity) >= 3  # Keep longer entities or repeating ones
+                ]
+
+                # Return with reasonable limit
+                max_returns = 2000
+                if len(filtered_entities) > max_returns:
+                    return filtered_entities[:max_returns]
+                return filtered_entities
+
+            except Exception as e:
+                # Fall back to regex based extraction
+                pass
+
+        # Fallback: Regex-based extraction with prioritization
+        # Focus on 3-4 character sequences which are more likely to be meaningful entities
+        import re
+        entities = []
+
+        # Prioritize longer sequences (more likely to be meaningful)
+        for length in [4, 3, 2]:  # Try 4-character entities first, then 3, then 2
+            max_per_length = 5000 // length  # Allocate more slots to shorter entities
+            pattern = r'[\u4e00-\u9fff]{' + str(length) + '}'
+            matches = re.findall(pattern, text)
+
+            # Use Counter to prioritize by frequency
+            from collections import Counter
+            match_counts = Counter(matches)
+
+            # Only keep entities that appear multiple times or at higher-priority lengths
+            min_count = 1 if length >= 3 else 2  # Require 2+ occurrences for 2-character entities
+            frequent_matches = [entity for entity, count in match_counts.most_common(max_per_length)
+                                if count >= min_count]
+
+            entities.extend(frequent_matches)
+
+        return entities
+
+    def _extract_english_entities_optimized(self, text):
+        """
+        Extract named entities from English text with an optimized approach
+        focusing on proper nouns and technical terms
+
+        Args:
+            text (str): English text
+
+        Returns:
+            List[str]: Extracted entities
+        """
+        # Limit text size
+        max_text_length = 50000
+        if len(text) > max_text_length:
+            text = text[:max_text_length]
+
+        # More sophisticated entity extraction
+        import re
+
+        # Try to use NLTK for better entity extraction if available
+        try:
+            import nltk
+
+            # Try to ensure necessary data is available
+            try:
+                nltk.data.find('tokenizers/punkt')
+            except LookupError:
+                nltk.download('punkt', quiet=True)
+
+            try:
+                nltk.data.find('taggers/averaged_perceptron_tagger')
+            except LookupError:
+                nltk.download('averaged_perceptron_tagger', quiet=True)
+
+            # Tokenize and tag parts of speech
+            tokens = nltk.word_tokenize(text)
+            tagged = nltk.pos_tag(tokens)
+
+            # Extract proper nouns (NNP, NNPS) and technical terms
+            entities = []
+
+            # 1. Extract proper noun sequences
+            i = 0
+            while i < len(tagged):
+                if tagged[i][1] in ('NNP', 'NNPS'):  # If proper noun
+                    entity = [tagged[i][0]]
+                    j = i + 1
+                    # Collect consecutive proper nouns
+                    while j < len(tagged) and tagged[j][1] in ('NNP', 'NNPS'):
+                        entity.append(tagged[j][0])
+                        j += 1
+                    if len(entity) > 0:
+                        entities.append(' '.join(entity))
+                    i = j
+                else:
+                    i += 1
+
+            # 2. Add technical terms (nouns with special patterns)
+            technical_pattern = re.compile(r'^[A-Za-z]+([\-_][A-Za-z]+)+$')  # Words with hyphens or underscores
+            camel_case_pattern = re.compile(r'^[a-z]+([A-Z][a-z]+)+$')  # camelCase pattern
+
+            for token, tag in tagged:
+                # Check for technical terms: camelCase, hyphenated, or underscored
+                if (tag.startswith('NN') and  # Noun
+                        (technical_pattern.match(token) or camel_case_pattern.match(token))):
+                    entities.append(token)
+
+            # Return entities with a reasonable limit
+            max_returns = 2000
+            if len(entities) > max_returns:
+                return entities[:max_returns]
+            return entities
+
+        except (ImportError, Exception):
+            # Fall back to regex-based approach
+            pass
+
+        # Fallback: Regex-based approach
+        entities = []
+
+        # 1. Multi-word capitalized phrases (likely organizations, people, locations)
+        capitalized_phrases = re.findall(r'\b[A-Z][a-zA-Z]*(?:\s+[A-Z][a-zA-Z]*)+\b', text)
+
+        # 2. Single capitalized words that aren't at the start of sentences
+        # Find sentence boundaries first
+        sentence_starts = {0}  # Start of text is a sentence start
+        for match in re.finditer(r'[.!?]\s+', text):
+            sentence_starts.add(match.end())
+
+        # Now find capitalized words not at sentence starts
+        for match in re.finditer(r'\b[A-Z][a-zA-Z]{3,}\b', text):
+            if match.start() not in sentence_starts:
+                capitalized_phrases.append(match.group())
+
+        # 3. Technical terms with special patterns
+        technical_terms = re.findall(r'\b[a-zA-Z]+[-_][a-zA-Z]+\b', text)  # Hyphenated/underscored
+        camel_case = re.findall(r'\b[a-z]+([A-Z][a-z]+)+\b', text)  # camelCase
+
+        # 4. Add filtered phrases
+        for phrase in capitalized_phrases:
+            if len(phrase) > 3:  # Skip very short phrases
+                # Filter out common capitalized words that aren't entities
+                common_words = {"The", "This", "That", "These", "Those", "There", "They", "Their"}
+                if phrase not in common_words:
+                    entities.append(phrase)
+
+        # 5. Add technical terms
+        entities.extend(technical_terms)
+        entities.extend(camel_case)
+
+        # Remove duplicates and apply a reasonable limit
+        entities = list(set(entities))
+        max_returns = 2000
+        if len(entities) > max_returns:
+            return entities[:max_returns]
+
+        return entities
