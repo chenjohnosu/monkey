@@ -68,9 +68,9 @@ class CommandProcessor:
 
                 # Add [query] indicator when in query mode
                 if hasattr(self, 'query_engine') and self.query_engine.is_active():
-                    prompt = f"[{llm_model}][{self.current_workspace}][query] > "
+                    prompt = f"[{self.current_workspace}][{llm_model}][query]> "
                 else:
-                    prompt = f"[{llm_model}][{self.current_workspace}] > "
+                    prompt = f"[{self.current_workspace}][{llm_model}]> "
 
                 user_input = input(prompt)
                 if user_input.strip():

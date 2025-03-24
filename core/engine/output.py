@@ -309,11 +309,14 @@ class OutputManager:
         print(formatted)
 
         # Add to buffer if saving session
-        if self.session_file:
+        if hasattr(self, 'session_file') and self.session_file:
             # For session file, store without colors
             from re import sub
             plain_text = sub(r'\033\[\d+(;\d+)?m', '', formatted) if '\033[' in formatted else formatted
-            self._write_to_session(plain_text)
+
+            # Call the _write_to_session method
+            if hasattr(self, '_write_to_session'):
+                self._write_to_session(plain_text)
 
     def _save_markdown_themes(self, filepath, data):
         """Enhanced save theme analysis as Markdown"""
@@ -793,3 +796,42 @@ class OutputManager:
             file.write('=== Analysis Summary ===\n')
             file.write(f'Total Topics: {total_topics}\n')
             file.write(f'Total Errors: {total_errors}\n')
+
+    def _write_to_session(self, text):
+        """
+        Write text to the active session file
+
+        Args:
+            text (str): Text to write to session
+        """
+        if not self.session_file or not hasattr(self, 'session_file'):
+            return
+
+        try:
+            # Write text based on the output format
+            if self.session_file['format'] == 'json':
+                # For JSON, we need to properly handle the commas and formatting
+                if self.session_file.get('first', True):
+                    self.session_file['file'].write('    {\n')
+                    self.session_file['first'] = False
+                else:
+                    self.session_file['file'].write(',\n    {\n')
+
+                # Escape any quotes in the text for JSON compatibility
+                escaped_text = text.replace('"', '\\"').replace('\n', '\\n')
+
+                # Write the content as a JSON object
+                self.session_file['file'].write(f'      "timestamp": "{datetime.datetime.now().isoformat()}",\n')
+                self.session_file['file'].write(f'      "content": "{escaped_text}"\n')
+                self.session_file['file'].write('    }')
+            else:
+                # For text and markdown, just write the text with a timestamp
+                timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                self.session_file['file'].write(f"[{timestamp}] {text}\n")
+
+            # Make sure content is flushed to disk
+            self.session_file['file'].flush()
+
+        except Exception as e:
+            # Log any errors but don't crash the application
+            print(f"Error writing to session file: {str(e)}")
