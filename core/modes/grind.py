@@ -10,7 +10,7 @@ from core.engine.utils import is_supported_file, get_file_content, ensure_dir
 from core.engine.logging import debug_print
 from core.engine.storage import StorageManager
 from core.language.processor import TextProcessor
-
+import datetime
 
 class FileProcessor:
     """Processes files for document analysis"""
@@ -166,7 +166,7 @@ class FileProcessor:
 
                 # Add to list if new or modified
                 if file_status != "Unchanged":
-                    modified_time = datetime.fromtimestamp(os.path.getmtime(filepath))
+                    modified_time = datetime.datetime.fromtimestamp(os.path.getmtime(filepath))
                     size = os.path.getsize(filepath)
 
                     all_files.append({
@@ -217,7 +217,7 @@ class FileProcessor:
                 if not is_supported_file(filepath):
                     continue
 
-                modified_time = datetime.fromtimestamp(os.path.getmtime(filepath))
+                modified_time = datetime.datetime.fromtimestamp(os.path.getmtime(filepath))
                 size = os.path.getsize(filepath)
 
                 all_files.append({
@@ -321,7 +321,7 @@ class FileProcessor:
             'content_hash': content_hash,
             'last_modified': os.path.getmtime(filepath),
             'file_size': os.path.getsize(filepath),
-            'processed_date': datetime.now().isoformat()
+            'processed_date': datetime.datetime.now().isoformat()
         }
 
         # Add special indicator for Chinese documents using Jina model
