@@ -1,5 +1,6 @@
 """
 Query mode module with LlamaIndex and Ollama integration
+With improved session logging capability and fixed exit behavior
 """
 
 import os
@@ -24,6 +25,7 @@ class QueryEngine:
 
         self.active = False
         self.current_workspace = None
+        self.logging_session = False  # Track session logging state
         debug_print(config, "Query engine initialized")
 
     def activate(self, workspace):
@@ -57,7 +59,6 @@ class QueryEngine:
 
         return True
 
-    # In query.py, modify the deactivate method:
     def deactivate(self):
         """Deactivate query mode"""
         debug_print(self.config, "Deactivating query mode")
@@ -65,18 +66,15 @@ class QueryEngine:
         # Store the workspace name for the message
         workspace = self.current_workspace
 
+        # Make sure to stop session logging first if it's active
+        if self.logging_session:
+            self._stop_query_session_logging()
+
         # Reset state
         self.active = False
         self.current_workspace = None
 
-        # Stop session logging if active
-        if hasattr(self, 'logging_session') and self.logging_session:
-            self._stop_query_session_logging()
-
         print(f"Query mode deactivated for workspace '{workspace}' - returning to command loop")
-
-        # Return to command loop immediately (don't wait for another exit command)
-        return True  # Add this return value to signal successful deactivation
 
     def is_active(self):
         """Check if query mode is active"""
@@ -141,9 +139,12 @@ class QueryEngine:
             debug_print(self.config, f"Error generating response: {str(e)}")
             return f"Error generating response: {str(e)}"
 
-    # In the enter_interactive_mode method in query.py:
     def enter_interactive_mode(self):
-        """Enter an isolated interactive query mode"""
+        """
+        Enter an isolated interactive query mode
+
+        This method creates a separate loop for processing queries
+        """
         print("Entering interactive query mode. Type /exit to return to main command mode.")
 
         # Start session saving if configured
@@ -161,10 +162,8 @@ class QueryEngine:
                 # Check for exit command
                 if query.lower() in ['/exit', '/quit']:
                     print("Exiting query mode.")
-                    # Stop session logging if active
-                    if hasattr(self, 'logging_session') and self.logging_session:
-                        self._stop_query_session_logging()
-                    self.deactivate()  # Call deactivate here
+                    # Deactivate will handle stopping the logging session
+                    self.deactivate()
                     break
 
                 # Skip empty queries
@@ -176,10 +175,7 @@ class QueryEngine:
 
             except KeyboardInterrupt:
                 print("\nReturning to main command mode.")
-                # Stop session logging if active
-                if hasattr(self, 'logging_session') and self.logging_session:
-                    self._stop_query_session_logging()
-                self.deactivate()  # Call deactivate on keyboard interrupt too
+                self.deactivate()
                 break
 
     def _start_query_session_logging(self):
@@ -197,6 +193,7 @@ class QueryEngine:
                 debug_print(self.config, f"Error starting query session logging: {str(e)}")
                 self.logging_session = False
         else:
+            debug_print(self.config, "OutputManager doesn't support session saving")
             self.logging_session = False
 
     def _stop_query_session_logging(self):
@@ -204,14 +201,15 @@ class QueryEngine:
         debug_print(self.config, "Stopping query session logging")
 
         # Check if we're logging and output_manager has the functionality
-        if hasattr(self, 'logging_session') and self.logging_session and hasattr(self.output_manager,
-                                                                                 'stop_session_saving'):
+        if self.logging_session and hasattr(self.output_manager, 'stop_session_saving'):
             try:
                 filepath = self.output_manager.stop_session_saving()
                 print(f"Query session logging stopped. Session log saved to: {filepath}")
                 self.logging_session = False
             except Exception as e:
                 debug_print(self.config, f"Error stopping query session logging: {str(e)}")
+                print(f"Warning: Could not properly save session log: {str(e)}")
+                self.logging_session = False
 
     def process_query(self, query):
         """
@@ -229,8 +227,6 @@ class QueryEngine:
         # Handle exit/quit commands to exit query mode
         if query.strip().lower() in ['/exit', '/quit']:
             self.output_manager.print_formatted('feedback', "Exiting query mode")
-            # Stop session logging if active
-            self._stop_query_session_logging()
             self.deactivate()
             return
 
@@ -239,8 +235,7 @@ class QueryEngine:
         print(f"{query}\n")
 
         # Explicitly log the query text if we're saving a session
-        if hasattr(self, 'logging_session') and self.logging_session and hasattr(self.output_manager,
-                                                                                 'session_file') and self.output_manager.session_file:
+        if self.logging_session and hasattr(self.output_manager, '_write_to_session'):
             self.output_manager._write_to_session(f"User Query: {query}")
 
         # Preprocess query
@@ -261,8 +256,7 @@ class QueryEngine:
             print(f"{response}\n")
 
             # Explicitly log the response text
-            if hasattr(self, 'logging_session') and self.logging_session and hasattr(self.output_manager,
-                                                                                     'session_file') and self.output_manager.session_file:
+            if self.logging_session and hasattr(self.output_manager, '_write_to_session'):
                 self.output_manager._write_to_session(f"Response (no documents found): {response}")
 
             self.output_manager.add_to_buffer(query, response, [])
@@ -275,8 +269,7 @@ class QueryEngine:
         from core.engine.utils import Colors
 
         # Log the document details if we're saving a session
-        if hasattr(self, 'logging_session') and self.logging_session and hasattr(self.output_manager,
-                                                                                 'session_file') and self.output_manager.session_file:
+        if self.logging_session and hasattr(self.output_manager, '_write_to_session'):
             doc_log = f"Retrieved {len(docs)} documents:\n"
 
         # Display document summaries in a compact format
@@ -287,12 +280,11 @@ class QueryEngine:
             # Format document with colors
             print(f"\n{Colors.YELLOW}Document {i + 1}: {source}{Colors.RESET}")
             print(f"  {Colors.BRIGHT_WHITE}Relevance:{Colors.RESET} {score:.4f}" if isinstance(score,
-                                                                                               float) else f"  {Colors.BRIGHT_WHITE}Relevance:{Colors.RESET} {score}")
+                                                                                             float) else f"  {Colors.BRIGHT_WHITE}Relevance:{Colors.RESET} {score}")
 
             # Add to log if we're saving a session
-            if hasattr(self, 'logging_session') and self.logging_session and hasattr(self.output_manager,
-                                                                                     'session_file') and self.output_manager.session_file:
-                doc_log += f"Document {i + 1}: {source}, Relevance: {score if isinstance(score, str) else f'{score:.4f}'}\n"
+            if self.logging_session and hasattr(self.output_manager, '_write_to_session'):
+                doc_log += f"Document {i+1}: {source}, Relevance: {score if isinstance(score, str) else f'{score:.4f}'}\n"
 
             # Show content preview with gray text
             content = doc.get('content', '')
@@ -302,9 +294,10 @@ class QueryEngine:
             if preview_lines:
                 print(f"  {Colors.BRIGHT_WHITE}Preview:{Colors.RESET}")
                 # Add preview to log
-                if hasattr(self, 'logging_session') and self.logging_session and hasattr(self.output_manager,
-                                                                                         'session_file') and self.output_manager.session_file:
-                    doc_log += f"  Preview: {preview.replace(chr(10), ' ')}\n"
+                if self.logging_session and hasattr(self.output_manager, '_write_to_session'):
+                    # Use a variable to avoid f-string backslash issue
+                    preview_flat = preview.replace('\n', ' ')
+                    doc_log += f"  Preview: {preview_flat}\n"
 
                 for line in preview_lines[:3]:  # Limit to first 3 lines for compactness
                     print(f"  {Colors.GRAY}{line}{Colors.RESET}")
@@ -312,8 +305,7 @@ class QueryEngine:
                     print(f"  {Colors.GRAY}...{Colors.RESET}")
 
         # Log the document summaries if we're saving a session
-        if hasattr(self, 'logging_session') and self.logging_session and hasattr(self.output_manager,
-                                                                                 'session_file') and self.output_manager.session_file:
+        if self.logging_session and hasattr(self.output_manager, '_write_to_session'):
             self.output_manager._write_to_session(doc_log)
 
         # Generate response using LLM
@@ -324,10 +316,8 @@ class QueryEngine:
         print(f"{response}\n")
 
         # Explicitly log the response text
-        if hasattr(self, 'logging_session') and self.logging_session and hasattr(self.output_manager,
-                                                                                 'session_file') and self.output_manager.session_file:
+        if self.logging_session and hasattr(self.output_manager, '_write_to_session'):
             self.output_manager._write_to_session(f"Response: {response}")
 
         # Save to buffer for potential later saving
         self.output_manager.add_to_buffer(query, response, docs)
-

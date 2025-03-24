@@ -804,7 +804,9 @@ class OutputManager:
         Args:
             text (str): Text to write to session
         """
-        if not self.session_file or not hasattr(self, 'session_file'):
+        import datetime  # Ensure datetime is imported
+
+        if not hasattr(self, 'session_file') or not self.session_file:
             return
 
         try:
@@ -835,3 +837,5 @@ class OutputManager:
         except Exception as e:
             # Log any errors but don't crash the application
             print(f"Error writing to session file: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
