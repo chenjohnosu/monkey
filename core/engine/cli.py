@@ -2,12 +2,14 @@
 Command line interface for the document analysis toolkit
 """
 
+import os
 import shlex
 from core.engine.logging import debug_print
 from core.engine.storage import StorageManager, VectorStoreInspector
 from core.engine.output import OutputManager
-from core.engine.interpreter import setup_llm_theme_analysis
-from datetime import datetime
+import datetime
+from core.engine.interpreter import AnalysisInterpreter
+
 
 class CommandProcessor:
     """Command line interface processor"""
@@ -111,6 +113,8 @@ class CommandProcessor:
             self._cmd_config(args)
         elif command == 'inspect':
             self._cmd_inspect(args)
+        elif command == 'explain':
+            self._cmd_explain(args)
         else:
             print(f"Unknown command: /{command}")
 
@@ -123,7 +127,8 @@ class CommandProcessor:
             'r': 'run',
             's': 'save',
             'h': 'help',
-            'i': 'inspect'
+            'i': 'inspect',
+            'e': 'explain'
         }
         return aliases.get(command, command)
 
@@ -148,7 +153,6 @@ class CommandProcessor:
 
       Run Modes:
         /run themes [all|nfm|net|key|lsa|cluster] - Run theme analysis
-        /run themes-llm [all|nfm|net|key|lsa|cluster] - Run theme analysis with LLM interpretation
         /run query                 - Enter interactive query mode
         /run grind             - Process files in workspace to create initial database
         /run update            - Update workspace with new or modified files
@@ -181,10 +185,14 @@ class CommandProcessor:
         /inspect query [ws] [q]    - Test query pipeline
         /inspect rebuild [ws]      - Rebuild vector store
 
-    Aliases:
-      /q - /quit, /c - /config, /l - /load, /r - /run, /s - /save, /h - /help, /i - /inspect
+      Explain:
+        /explain [themes|topics|sentiment|session] [question] - Get LLM interpretation of analysis
+    
+      Aliases:
+        /q - /quit, /c - /config, /l - /load, /r - /run
+        /s - /save, /h - /help, /i - /inspect, /e - /explain
     """)
-        elif args[0] in ['run', 'load', 'config', 'save', 'show', 'inspect']:
+        elif args[0] in ['run', 'load', 'config', 'save', 'show', 'inspect', 'explain']:
             self._show_specific_help(args[0])
         else:
             print(f"No specific help available for '{args[0]}'")
@@ -252,6 +260,20 @@ class CommandProcessor:
       /inspect metadata [ws] [query]  - Inspect raw metadata returned from vector store
       /inspect migrate [ws]           - Fix inconsistent vector store naming
     """)
+        elif topic == 'explain':
+            print("""
+            Interpretation Commands:
+              /explain theme [question]    - Get LLM interpretation of theme analysis
+              /explain topic [question]    - Get LLM interpretation of topic modeling 
+              /explain sentiment [question] - Get LLM interpretation of sentiment analysis
+              /explain session [question]  - Get LLM interpretation of query session
+
+              Examples:
+                /explain theme What are the most significant themes?
+                /explain topic How do the topics relate to each other?
+                /explain sentiment What emotions are most prominent?
+                /explain session What were the main research directions?
+            """)
         else:
             print(f"No specific help available for '{topic}'")
 
@@ -318,20 +340,6 @@ class CommandProcessor:
         if subcommand == 'themes':
             method = args[1] if len(args) > 1 else 'all'
             self.theme_analyzer.analyze(self.current_workspace, method)
-
-        elif subcommand == 'themes-llm':
-            # Import the module here to avoid circular imports
-            from core.engine.interpreter import run_themes_with_llm_interpretation
-
-            # Extract method parameter if provided
-            method = args[1] if len(args) > 1 else 'all'
-
-            # Create a method reference bound to self
-            import types
-            run_method = types.MethodType(run_themes_with_llm_interpretation, self)
-
-            # Call the method
-            run_method(self.current_workspace, method)
 
         elif subcommand == 'query':
             if self.query_engine.activate(self.current_workspace):
@@ -774,7 +782,6 @@ class CommandProcessor:
                 rel_path = os.path.relpath(filepath, doc_dir)
                 size = os.path.getsize(filepath)
                 modified = os.path.getmtime(filepath)
-                import datetime
                 mod_time = datetime.datetime.fromtimestamp(modified).strftime('%Y-%m-%d %H:%M:%S')
 
                 files.append((rel_path, size, mod_time))
@@ -837,3 +844,95 @@ class CommandProcessor:
                                                     "Not in query mode. Use '/run query' to enter interactive query mode.",
                                                     success=False)
 
+    def _cmd_explain(self, args):
+        """Handle the explain command for analysis interpretation"""
+        debug_print(self.config, f"Explain command with args: {args}")
+
+        if not args:
+            print("Usage: /explain [themes|topics|sentiment|session] [question]")
+            return
+
+        # The first argument is the subcommand
+        subcommand = args[0].lower()
+
+        # Valid subcommands (include both singular and plural forms)
+        valid_subcommands = {
+            # Map various input forms to standardized forms
+            'theme': 'themes',
+            'themes': 'themes',
+            'topic': 'topics',
+            'topics': 'topics',
+            'sentiment': 'sentiment',
+            'session': 'session'
+        }
+
+        # Check if the subcommand is valid and normalize it
+        if subcommand not in valid_subcommands:
+            print(f"Invalid subcommand: {subcommand}")
+            print(f"Must be one of: themes, topics, sentiment, session")
+            return
+
+        # Normalize the subcommand to the standard form
+        normalized_subcommand = valid_subcommands[subcommand]
+
+        # Get the question (everything after the subcommand)
+        question = ' '.join(args[1:]) if len(args) > 1 else None
+
+        # Initialize interpreter if needed
+        if not hasattr(self, 'analysis_interpreter'):
+            from core.engine.interpreter import AnalysisInterpreter
+            self.analysis_interpreter = AnalysisInterpreter(
+                self.config,
+                self.storage_manager,
+                self.output_manager,
+                self.text_processor
+            )
+
+        # Run the appropriate interpretation based on subcommand
+        try:
+            workspace = self.current_workspace
+            self.output_manager.print_formatted('feedback',
+                                                f"Analyzing {normalized_subcommand} results, please wait...")
+
+            interpretation = self.analysis_interpreter.interpret_analysis(
+                workspace, normalized_subcommand, query=question
+            )
+
+            # Display interpretation with proper formatting
+            self.output_manager.print_formatted('header',
+                                                f"LLM EXPLANATION OF {normalized_subcommand.upper()} ANALYSIS")
+            print(interpretation)
+
+            # Save interpretation to file
+            output_format = self.config.get('system.output_format', 'txt')
+            timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+            filename = f"explain_{normalized_subcommand}_{timestamp}.{output_format}"
+
+            logs_dir = os.path.join('logs', self.current_workspace)
+            if not os.path.exists(logs_dir):
+                os.makedirs(logs_dir)
+
+            filepath = os.path.join(logs_dir, filename)
+
+            with open(filepath, 'w', encoding='utf-8') as f:
+                if output_format == 'json':
+                    import json
+                    json.dump({
+                        'timestamp': datetime.datetime.now().isoformat(),
+                        'analysis_type': normalized_subcommand,
+                        'question': question,
+                        'explanation': interpretation
+                    }, f, indent=2)
+                else:
+                    f.write(f"=== LLM EXPLANATION OF {normalized_subcommand.upper()} ANALYSIS ===\n\n")
+                    f.write(f"Timestamp: {datetime.datetime.now().isoformat()}\n")
+                    if question:
+                        f.write(f"Question: {question}\n")
+                    f.write(f"\n{interpretation}\n")
+
+            self.output_manager.print_formatted('feedback', f"Explanation saved to: {filepath}", success=True)
+
+        except Exception as e:
+            print(f"Error generating explanation: {str(e)}")
+            import traceback
+            traceback.print_exc()

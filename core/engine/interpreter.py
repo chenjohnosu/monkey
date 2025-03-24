@@ -1,197 +1,318 @@
 """
-LLM-assisted interpretation for analysis results
+Analysis interpreter using LLMs to explain results
 """
 
 import os
-import types
 import datetime
 from core.engine.logging import debug_print
 
+class AnalysisInterpreter:
+    """Interprets analysis results using LLMs"""
 
-def setup_llm_theme_analysis(command_processor):
-    """
-    Set up LLM-assisted theme analysis
+    def __init__(self, config, storage_manager=None, output_manager=None, text_processor=None):
+        """Initialize the interpreter"""
+        self.config = config
+        self.storage_manager = storage_manager
+        self.output_manager = output_manager
+        self.text_processor = text_processor
 
-    Args:
-        command_processor: The CLI command processor
-    """
-    debug_print(command_processor.config, "Setting up LLM-assisted theme analysis...")
-
-    # Import diagnostic functions from the diagnostics module
-    try:
-        from core.engine.diagnostics import (
-            enhance_theme_analysis_with_diagnostics,
-            _generate_entity_diagnostics,
-            _generate_network_diagnostics,
-            _generate_keyword_diagnostics,
-            _output_enhanced_diagnostics,
-            _group_similar_keywords,
-            send_diagnostics_to_llm
-        )
-
-        # Create the diagnostic theme analyzer if needed
-        if not hasattr(command_processor, 'diagnostic_theme_analyzer'):
-            # Create a copy of the theme analyzer with diagnostic capabilities
-            from core.modes.themes import ThemeAnalyzer
-
-            command_processor.diagnostic_theme_analyzer = ThemeAnalyzer(
-                command_processor.config,
-                command_processor.storage_manager,
-                command_processor.output_manager,
-                command_processor.text_processor
-            )
-
-            # Add the diagnostic methods to the analyzer
-            setattr(command_processor.diagnostic_theme_analyzer, "enhance_theme_analysis_with_diagnostics",
-                    types.MethodType(enhance_theme_analysis_with_diagnostics,
-                                     command_processor.diagnostic_theme_analyzer))
-
-            setattr(command_processor.diagnostic_theme_analyzer, "_generate_entity_diagnostics",
-                    types.MethodType(_generate_entity_diagnostics, command_processor.diagnostic_theme_analyzer))
-
-            setattr(command_processor.diagnostic_theme_analyzer, "_generate_network_diagnostics",
-                    types.MethodType(_generate_network_diagnostics, command_processor.diagnostic_theme_analyzer))
-
-            setattr(command_processor.diagnostic_theme_analyzer, "_generate_keyword_diagnostics",
-                    types.MethodType(_generate_keyword_diagnostics, command_processor.diagnostic_theme_analyzer))
-
-            setattr(command_processor.diagnostic_theme_analyzer, "_output_enhanced_diagnostics",
-                    types.MethodType(_output_enhanced_diagnostics, command_processor.diagnostic_theme_analyzer))
-
-            setattr(command_processor.diagnostic_theme_analyzer, "_group_similar_keywords",
-                    types.MethodType(_group_similar_keywords, command_processor.diagnostic_theme_analyzer))
-
-            setattr(command_processor.diagnostic_theme_analyzer, "send_diagnostics_to_llm",
-                    types.MethodType(send_diagnostics_to_llm, command_processor.diagnostic_theme_analyzer))
-
-            debug_print(command_processor.config, "Created diagnostic theme analyzer with enhanced methods")
-
-        debug_print(command_processor.config, "LLM-assisted theme analysis setup successful")
-
-    except Exception as e:
-        debug_print(command_processor.config, f"Error during LLM theme analysis setup: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        print("LLM-assisted theme analysis could not be initialized properly. Some features may be limited.")
-
-def run_themes_with_llm_interpretation(self, workspace, method='all'):
-    """
-    Run themes analysis with LLM-assisted interpretation
-
-    Args:
-        workspace (str): The workspace to analyze
-        method (str): Analysis method ('all', 'nfm', 'net', 'key', 'lsa', 'cluster')
-    """
-    debug_print(self.config, f"Running LLM-assisted theme analysis on workspace '{workspace}' with method '{method}'")
-
-    # Check if diagnostic theme analyzer is properly initialized
-    if not hasattr(self, 'diagnostic_theme_analyzer'):
-        print("Initializing enhanced theme analyzer with diagnostic capabilities...")
+        # Initialize LLM connector
         try:
-            # Try to set up the analyzer again
-            from core.engine.interpreter import setup_llm_theme_analysis
-            setup_llm_theme_analysis(self)
+            from core.connectors.connector_factory import ConnectorFactory
+            self.factory = ConnectorFactory(config)
+            self.llm_connector = self.factory.get_llm_connector()
+            debug_print(config, "LLM connector initialized for analysis interpretation")
+        except Exception as e:
+            debug_print(config, f"Error initializing LLM connector: {str(e)}")
+            self.factory = None
+            self.llm_connector = None
 
-            if not hasattr(self, 'diagnostic_theme_analyzer'):
-                print("Error: Failed to initialize diagnostic theme analyzer. Falling back to standard analysis.")
-                self.theme_analyzer.analyze(workspace, method)
-                return
+        debug_print(config, "Analysis interpreter initialized")
+
+    def interpret_analysis(self, workspace, analysis_type, query=None):
+        """
+        Interpret analysis results using LLM
+
+        Args:
+            workspace (str): Target workspace
+            analysis_type (str): Type of analysis ('themes', 'topics', 'sentiment', 'session')
+            query (str, optional): Specific question to ask
+
+        Returns:
+            str: Interpretation results
+        """
+        debug_print(self.config, f"Interpreting {analysis_type} analysis for workspace '{workspace}'")
+
+        # Map analysis_type to the standardized form expected by the helper methods
+        # This will ensure compatibility with both singular and plural forms
+        analysis_type_map = {
+            'themes': 'themes',
+            'theme': 'themes',
+            'topics': 'topics',
+            'topic': 'topics',
+            'sentiment': 'sentiment',
+            'session': 'session'
+        }
+
+        # Normalize the analysis type
+        normalized_type = analysis_type_map.get(analysis_type.lower(), analysis_type.lower())
+
+        # Dispatch to the appropriate analysis method
+        if normalized_type == 'themes':
+            return self._interpret_theme_analysis(workspace, query)
+        elif normalized_type == 'topics':
+            return self._interpret_topic_analysis(workspace, query)
+        elif normalized_type == 'sentiment':
+            return self._interpret_sentiment_analysis(workspace, query)
+        elif normalized_type == 'session':
+            return self._interpret_session_analysis(workspace, query)
+        else:
+            return f"Interpretation not available for analysis type: {analysis_type}"
+
+    def _interpret_theme_analysis(self, workspace, query=None):
+        """
+        Interpret theme analysis results
+
+        Args:
+            workspace (str): Target workspace
+            query (str, optional): Specific question to ask
+
+        Returns:
+            str: Interpretation of theme analysis
+        """
+        debug_print(self.config, f"Interpreting theme analysis for workspace '{workspace}'")
+
+        # Find the most recent theme analysis results
+        results_file = self._find_latest_analysis_file(workspace, 'themes')
+        if not results_file:
+            return "No theme analysis results found for this workspace."
+
+        # Read the results file
+        analysis_content = self._read_analysis_file(results_file)
+        if not analysis_content:
+            return "Error reading theme analysis results."
+
+        # Generate interpretation with LLM
+        return self._generate_interpretation(analysis_content, 'theme analysis', query)
+
+    def _interpret_topic_analysis(self, workspace, query=None):
+        """
+        Interpret topic modeling results
+
+        Args:
+            workspace (str): Target workspace
+            query (str, optional): Specific question to ask
+
+        Returns:
+            str: Interpretation of topic modeling
+        """
+        debug_print(self.config, f"Interpreting topic modeling for workspace '{workspace}'")
+
+        # Find the most recent topic analysis results
+        results_file = self._find_latest_analysis_file(workspace, 'topic')
+        if not results_file:
+            return "No topic modeling results found for this workspace."
+
+        # Read the results file
+        analysis_content = self._read_analysis_file(results_file)
+        if not analysis_content:
+            return "Error reading topic modeling results."
+
+        # Generate interpretation with LLM
+        return self._generate_interpretation(analysis_content, 'topic modeling', query)
+
+    def _interpret_sentiment_analysis(self, workspace, query=None):
+        """
+        Interpret sentiment analysis results
+
+        Args:
+            workspace (str): Target workspace
+            query (str, optional): Specific question to ask
+
+        Returns:
+            str: Interpretation of sentiment analysis
+        """
+        debug_print(self.config, f"Interpreting sentiment analysis for workspace '{workspace}'")
+
+        # Find the most recent sentiment analysis results
+        results_file = self._find_latest_analysis_file(workspace, 'sentiment')
+        if not results_file:
+            return "No sentiment analysis results found for this workspace."
+
+        # Read the results file
+        analysis_content = self._read_analysis_file(results_file)
+        if not analysis_content:
+            return "Error reading sentiment analysis results."
+
+        # Generate interpretation with LLM
+        return self._generate_interpretation(analysis_content, 'sentiment analysis', query)
+
+    def _interpret_session_analysis(self, workspace, query=None):
+        """
+        Interpret query session logs
+
+        Args:
+            workspace (str): Target workspace
+            query (str, optional): Specific question to ask
+
+        Returns:
+            str: Interpretation of session logs
+        """
+        debug_print(self.config, f"Interpreting session logs for workspace '{workspace}'")
+
+        # Find the most recent session log
+        results_file = self._find_latest_analysis_file(workspace, 'session')
+        if not results_file:
+            return "No query session logs found for this workspace."
+
+        # Read the session log
+        session_content = self._read_analysis_file(results_file)
+        if not session_content:
+            return "Error reading session logs."
+
+        # Generate interpretation with LLM
+        return self._generate_interpretation(session_content, 'query session', query)
+
+    def _find_latest_analysis_file(self, workspace, analysis_type):
+        """
+        Find the most recent analysis results file
+
+        Args:
+            workspace (str): Target workspace
+            analysis_type (str): Type of analysis
+
+        Returns:
+            str: Path to the analysis file, or None if not found
+        """
+        debug_print(self.config, f"Finding latest {analysis_type} analysis file for '{workspace}'")
+
+        try:
+            # Create logs directory path
+            logs_dir = os.path.join('logs', workspace)
+            if not os.path.exists(logs_dir):
+                debug_print(self.config, f"Logs directory not found: {logs_dir}")
+                return None
+
+            # Pattern matching for different analysis types
+            patterns = {
+                'themes': ['themes_', 'theme_'],
+                'topic': ['topic_'],
+                'sentiment': ['sentiment_'],
+                'session': ['session_']
+            }
+
+            # Get pattern for this analysis type
+            type_patterns = patterns.get(analysis_type, [f"{analysis_type}_"])
+
+            # Find all matching files
+            matching_files = []
+            for filename in os.listdir(logs_dir):
+                # Check if the filename matches any of the patterns for this analysis type
+                if any(pattern in filename for pattern in type_patterns):
+                    filepath = os.path.join(logs_dir, filename)
+                    if os.path.isfile(filepath):
+                        # Get file modification time
+                        mod_time = os.path.getmtime(filepath)
+                        matching_files.append((filepath, mod_time))
+
+            # Sort by modification time (newest first)
+            matching_files.sort(key=lambda x: x[1], reverse=True)
+
+            # Return the newest file
+            if matching_files:
+                debug_print(self.config, f"Found latest file: {matching_files[0][0]}")
+                return matching_files[0][0]
+
+            debug_print(self.config, f"No matching files found for {analysis_type} analysis")
+            return None
 
         except Exception as e:
-            print(f"Error initializing enhanced theme analyzer: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            print("Falling back to standard analysis")
-            self.theme_analyzer.analyze(workspace, method)
-            return
+            debug_print(self.config, f"Error finding analysis file: {str(e)}")
+            return None
 
-    print(f"Running enhanced theme analysis on workspace '{workspace}' with method '{method}'...")
+    def _read_analysis_file(self, filepath):
+        """
+        Read content from an analysis file
 
-    # First run the standard analysis to ensure all components are initialized properly
-    standard_results = self.theme_analyzer.analyze(workspace, method)
+        Args:
+            filepath (str): Path to the analysis file
 
-    # Then run the enhanced version with diagnostic output
-    try:
-        results = self.diagnostic_theme_analyzer.enhance_theme_analysis_with_diagnostics(workspace, method,
-                                                                                         standard_results)
+        Returns:
+            str: File content, or None if error
+        """
+        debug_print(self.config, f"Reading analysis file: {filepath}")
 
-        # Determine output format
-        output_format = self.config.get('system.output_format', 'json')
+        try:
+            with open(filepath, 'r', encoding='utf-8') as file:
+                content = file.read()
+            return content
+        except Exception as e:
+            debug_print(self.config, f"Error reading file: {str(e)}")
+            return None
 
-        # Generate consistent timestamp - this should match what _output_enhanced_diagnostics is using
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    def _generate_interpretation(self, analysis_content, analysis_type, query=None):
+        """
+        Generate interpretation using LLM
 
-        # Create path to the diagnostics file
-        diagnostics_path = os.path.join('logs', workspace, f"diagnostics_{method}_{timestamp}.{output_format}")
+        Args:
+            analysis_content (str): Analysis content to interpret
+            analysis_type (str): Type of analysis for context
+            query (str, optional): Specific question to ask
 
-        # Ask user if they want to generate LLM interpretation
-        print("\n=== LLM INTERPRETATION OPTIONS ===")
-        print("Would you like the LLM to interpret the analysis results?")
-        print("1. Yes - Generate general interpretation")
-        print("2. Yes - Ask a specific question about the results")
-        print("3. No - Skip LLM interpretation")
+        Returns:
+            str: Interpretation from LLM
+        """
+        debug_print(self.config, f"Generating interpretation for {analysis_type}")
 
-        choice = input("Enter choice (1-3): ").strip()
+        # Verify LLM connector is available
+        if not self.llm_connector:
+            return f"LLM connector not available for generating {analysis_type} interpretation."
 
-        if choice == '1':
-            # Generate a general interpretation for the consolidated results
-            if os.path.exists(diagnostics_path):
-                print(f"\nGenerating LLM interpretation for {method.upper()} analysis...")
-                interpretation = self.diagnostic_theme_analyzer.send_diagnostics_to_llm(diagnostics_path)
-
-                # Display interpretation
-                self.output_manager.print_formatted('header', f"LLM INTERPRETATION FOR {method.upper()}")
-                print(interpretation)
+        try:
+            # Limit content length for LLM processing (avoid token limits)
+            max_content_length = 6000
+            if len(analysis_content) > max_content_length:
+                debug_print(self.config, f"Content too large ({len(analysis_content)} chars), truncating")
+                shortened_content = analysis_content[:max_content_length] + "\n...[content truncated]..."
             else:
-                print(f"Warning: Diagnostics file not found at {diagnostics_path}")
-                # Try a fallback approach - look for any diagnostics file with similar pattern
-                fallback_files = [f for f in os.listdir(os.path.join('logs', workspace))
-                                  if f.startswith(f"diagnostics_{method}_") and f.endswith(f".{output_format}")]
+                shortened_content = analysis_content
 
-                if fallback_files:
-                    # Use the most recent file
-                    fallback_path = os.path.join('logs', workspace, sorted(fallback_files)[-1])
-                    print(f"Using alternative diagnostics file: {fallback_path}")
-                    interpretation = self.diagnostic_theme_analyzer.send_diagnostics_to_llm(fallback_path)
+            # Create prompt based on whether a specific question was asked
+            if query:
+                prompt = f"""You are an expert document analysis assistant.
+The user has performed {analysis_type} on a document collection and has a specific question:
 
-                    # Display interpretation
-                    self.output_manager.print_formatted('header', f"LLM INTERPRETATION FOR {method.upper()}")
-                    print(interpretation)
-                else:
-                    print("No diagnostics files found. Cannot generate interpretation.")
+{query}
 
-        elif choice == '2':
-            # Check if the diagnostics file exists
-            if not os.path.exists(diagnostics_path):
-                print(f"Warning: Diagnostics file not found at {diagnostics_path}")
-                # Try fallback approach
-                fallback_files = [f for f in os.listdir(os.path.join('logs', workspace))
-                                  if f.startswith(f"diagnostics_{method}_") and f.endswith(f".{output_format}")]
+Below is the analysis output:
 
-                if fallback_files:
-                    diagnostics_path = os.path.join('logs', workspace, sorted(fallback_files)[-1])
-                    print(f"Using alternative diagnostics file: {diagnostics_path}")
-                else:
-                    print("No diagnostics files found. Cannot generate interpretation.")
-                    return
+{shortened_content}
 
-            # Get the question
-            question = input("\nEnter your question about the analysis: ").strip()
+Please provide a detailed, insightful answer to the user's question based only on the information in the analysis output."""
+            else:
+                prompt = f"""You are an expert document analysis assistant.
+The user has performed {analysis_type} on a document collection.
+Below is the analysis output:
 
-            if question:
-                # Send for interpretation
-                print(f"\nSending question to LLM about {method.upper()} analysis...")
-                interpretation = self.diagnostic_theme_analyzer.send_diagnostics_to_llm(
-                    diagnostics_path, query=question)
+{shortened_content}
 
-                # Display interpretation
-                self.output_manager.print_formatted('header', f"LLM ANSWER FOR {method.upper()}")
-                print(interpretation)
+Please interpret these results and provide insights about:
+1. The main findings and patterns in the analysis
+2. What these results reveal about the document collection
+3. Additional perspectives or implications that might not be immediately obvious
+4. Suggestions for further analysis or investigation
 
-        print("\nAnalysis complete. Diagnostics and interpretations saved to the logs directory.")
+Organize your response in a clear, structured way focusing on the most significant aspects of the analysis."""
 
-    except Exception as e:
-        print(f"Error during enhanced theme analysis: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        print("Analysis could not be completed successfully.")
+            # Generate interpretation with LLM
+            debug_print(self.config, "Sending analysis to LLM for interpretation")
+            model = self.config.get('llm.default_model')
+            interpretation = self.llm_connector.generate(prompt, model=model, max_tokens=1000)
+
+            return interpretation.strip()
+
+        except Exception as e:
+            debug_print(self.config, f"Error generating interpretation: {str(e)}")
+            import traceback
+            debug_print(self.config, traceback.format_exc())
+            return f"Error generating interpretation: {str(e)}"
