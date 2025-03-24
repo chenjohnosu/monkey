@@ -18,6 +18,7 @@ from core.engine.storage import StorageManager
 from core.engine.output import OutputManager
 from core.language.processor import TextProcessor
 from core.language.tokenizer import ChineseTokenizer, JIEBA_AVAILABLE
+import threading
 
 # Import jieba for Chinese text segmentation if available
 try:
@@ -34,6 +35,33 @@ try:
 except ImportError:
     NLTK_AVAILABLE = False
     print("NLTK not available, falling back to regex-based entity extraction")
+
+
+def with_timeout(func, timeout_seconds, *args, **kwargs):
+    """Run a function with a timeout on any platform"""
+    result = [None]
+    error = [None]
+    completed = [False]
+
+    def worker():
+        try:
+            result[0] = func(*args, **kwargs)
+            completed[0] = True
+        except Exception as e:
+            error[0] = e
+
+    thread = threading.Thread(target=worker)
+    thread.daemon = True  # Allow program to exit even if thread is running
+    thread.start()
+    thread.join(timeout_seconds)
+
+    if completed[0]:
+        return result[0]
+    elif error[0]:
+        raise error[0]
+    else:
+        raise TimeoutError(f"Function {func.__name__} timed out after {timeout_seconds} seconds")
+
 
 class ThemeAnalyzer:
     """Analyzes document themes with a focus on content semantics"""
@@ -263,6 +291,33 @@ class ThemeAnalyzer:
         """
         debug_print(self.config, "Analyzing named entities in document content")
 
+        # Add the with_timeout helper function
+        def with_timeout(func, timeout_seconds, *args, **kwargs):
+            """Run a function with a timeout on any platform"""
+            import threading
+            result = [None]
+            error = [None]
+            completed = [False]
+
+            def worker():
+                try:
+                    result[0] = func(*args, **kwargs)
+                    completed[0] = True
+                except Exception as e:
+                    error[0] = e
+
+            thread = threading.Thread(target=worker)
+            thread.daemon = True  # Allow program to exit even if thread is running
+            thread.start()
+            thread.join(timeout_seconds)
+
+            if completed[0]:
+                return result[0]
+            elif error[0]:
+                raise error[0]
+            else:
+                raise TimeoutError(f"Function {func.__name__} timed out after {timeout_seconds} seconds")
+
         # Create a more efficient processing pipeline
         print(f"Starting named entity analysis on {len(doc_contents)} documents...")
 
@@ -457,23 +512,19 @@ class ThemeAnalyzer:
             # For smaller networks, try Louvain method with a timeout
             try:
                 from community import best_partition
-                import signal
 
-                def timeout_handler(signum, frame):
-                    raise TimeoutError("Community detection timed out")
-
-                # Set a timeout for community detection (10 seconds)
-                signal.signal(signal.SIGALRM, timeout_handler)
-                signal.alarm(10)
-
+                # Use cross-platform timeout instead of signal-based timeout
                 try:
-                    partition = best_partition(entity_network)
-                    # Disable alarm
-                    signal.alarm(0)
+                    partition = with_timeout(best_partition, 10, entity_network)
                     print(f"  Used Louvain method for community detection")
-                except (TimeoutError, Exception) as e:
-                    # Disable alarm
-                    signal.alarm(0)
+                except TimeoutError:
+                    print(f"  Community detection timed out. Using connected components.")
+                    # Fall back to connected components
+                    partition = {}
+                    for i, component in enumerate(nx.connected_components(entity_network)):
+                        for node in component:
+                            partition[node] = i
+                except Exception as e:
                     print(f"  Community detection issue: {str(e)}. Using connected components.")
                     # Fall back to connected components
                     partition = {}

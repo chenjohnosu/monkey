@@ -13,7 +13,7 @@ class Config:
         """Initialize configuration from file"""
         self.config_path = config_path
         self.loaded_guides = {}
-        self.version = '0.1.0'
+        self.version = '0.8.0'
         
         # Load configuration
         try:
