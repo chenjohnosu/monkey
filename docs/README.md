@@ -170,8 +170,11 @@ For a comprehensive list of commands, see the [COMMAND.md](COMMAND.md) file.
 ├── monkey.py               - main entry point
 ├── config.yaml             - configuration file
 ├── guides.txt              - LLM directive guides
-├── stopwords_en.txt        - English stopwords
-├── stopwords_zh.txt        - Chinese stopwords
+├── lexicon/                - language resources
+│   ├── stopwords_en.txt    - English stopwords
+│   ├── stopwords_zh.txt    - Chinese stopwords
+│   ├── chinese_positive.txt - Chinese positive sentiment words
+│   └── chinese_negative.txt - Chinese negative sentiment words
 ├── core/                   - core source code
 │   ├── connectors/         - component connectors (LlamaIndex, Haystack, Ollama)
 │   ├── engine/             - core processing engine
@@ -186,11 +189,13 @@ For a comprehensive list of commands, see the [COMMAND.md](COMMAND.md) file.
 
 ## Advanced Usage
 
-### Customizing Stopwords
+### Customizing Stopwords and Lexicons
 
-For better analysis results, you can customize the stopwords files:
-- `stopwords_en.txt` - English stopwords list
-- `stopwords_zh.txt` - Chinese stopwords list
+For better analysis results, you can customize the files in the lexicon directory:
+- `lexicon/stopwords_en.txt` - English stopwords list
+- `lexicon/stopwords_zh.txt` - Chinese stopwords list
+- `lexicon/chinese_positive.txt` - Chinese positive sentiment words
+- `lexicon/chinese_negative.txt` - Chinese negative sentiment words
 
 ### Using Directive Guides
 

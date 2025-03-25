@@ -478,7 +478,12 @@ When in query mode (`/run query`), you can use these special commands:
    /show ws
    ```
 
-4. **Run analyses in sequence**:
+4. **Consider customizing lexicon files for better results**:
+   - Edit `lexicon/stopwords_en.txt` for English stopwords
+   - Edit `lexicon/stopwords_zh.txt` for Chinese stopwords
+   - Edit `lexicon/chinese_positive.txt` and `lexicon/chinese_negative.txt` for sentiment analysis
+
+5. **Run analyses in sequence**:
    ```
    /run themes
    /run topic
