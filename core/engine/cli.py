@@ -4,7 +4,7 @@ Command line interface for the document analysis toolkit
 
 import os
 import shlex
-from core.engine.logging import debug_print
+from core.engine.logging import debug, error, warning, info, trace, get_logger, debug_print
 from core.engine.storage import StorageManager, VectorStoreInspector
 from core.engine.output import OutputManager
 import datetime
@@ -53,12 +53,12 @@ class CommandProcessor:
         self.loaded_workspaces = [self.current_workspace]  # Track loaded workspaces
         self.active_guide = None  # Track the active guide
 
-        debug_print(config, "CommandProcessor initialized")
+        info("CommandProcessor initialized")
 
     def start(self):
         """Start the command processing loop"""
-        debug_print(self.config, "Starting command processing loop")
-        print(f"Monkey v{self.config.get_version()} initialized. Type /help for available commands.")
+        debug("Starting command processing loop")
+        info(f"Monkey v{self.config.get_version()} initialized. Type /help for available commands.")
 
         try:
             while self.running:
@@ -151,7 +151,7 @@ class CommandProcessor:
             /run scan           - Scan workspace for new or updated files
             /run merge          - Merge workspaces
             /run sentiment      - Run sentiment analysis
-            /run topic          - Run topic modeling
+            /run topics         - Run topic modeling
             /run themes         - Run theme analysis
             /run query          - Enter interactive query mode
           
@@ -209,7 +209,7 @@ class CommandProcessor:
                   basic   - Simple sentiment classification
                   advanced - In-depth analysis with aspect extraction
 
-              /run topic [method]    - Run topic modeling
+              /run topics [method]    - Run topic modeling
                 Methods: all, lda, nmf, cluster
                   all    - Run all topic modeling methods
                   lda    - Latent Dirichlet Allocation
@@ -219,7 +219,7 @@ class CommandProcessor:
             Examples:
               /run themes nfm        - Run named entity-based theme extraction
               /run sentiment advanced - Run advanced sentiment analysis
-              /run topic lda         - Run LDA topic modeling
+              /run topics lda         - Run LDA topic modeling
             """)
         elif topic == 'clear':
             print("""
@@ -433,7 +433,7 @@ class CommandProcessor:
 
     def _show_guides(self):
         """Show available guides"""
-        debug_print(self.config, "Showing available guides")
+        print("Showing available guides")
 
         try:
             with open("guides.txt", "r", encoding="utf-8") as file:
@@ -444,7 +444,7 @@ class CommandProcessor:
             guide_tags = re.findall(r'<([^>]+)>.*?</\1>', content, re.DOTALL)
 
             if not guide_tags:
-                print("No guides found in guides.txt")
+                error("No guides found in guides.txt")
                 return
 
             print("Available Guides:")
@@ -454,12 +454,12 @@ class CommandProcessor:
                 else:
                     print(f"    {guide}")
 
-            print("\nUse '/config guide <name>' to set a guide as active")
+            info("\nUse '/config guide <name>' to set a guide as active")
 
         except FileNotFoundError:
-            print("guides.txt file not found")
+            error("guides.txt file not found")
         except Exception as e:
-            print(f"Error reading guides: {str(e)}")
+            error(f"Error reading guides: {str(e)}")
 
     def _load_workspace(self, workspace):
         """

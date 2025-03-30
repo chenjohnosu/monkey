@@ -31,6 +31,7 @@ def parse_arguments():
     parser.add_argument('-w', '--workspace', help='Initial workspace to load')
     parser.add_argument('-c', '--config', help='Custom configuration file')
     parser.add_argument('-d', '--debug', action='store_true', help='Enable debug mode')
+    parser.add_argument('--tui', action='store_true', help='Use Terminal User Interface')
     return parser.parse_args()
 
 
@@ -57,8 +58,24 @@ def main():
     if args.workspace:
         cli.process_command(f"/load ws {args.workspace}")
 
-    # Start command processing loop
-    cli.start()
+    # Start the appropriate interface
+    if args.tui:
+        try:
+            # Import TUI module
+            from core.interface.tui import run_tui
+            # Run TUI interface
+            print("Starting Terminal User Interface...")
+            run_tui(cli)
+        except ImportError:
+            print("TUI module not found. Falling back to CLI mode.")
+            cli.start()
+        except Exception as e:
+            print(f"Error starting TUI: {str(e)}")
+            print("Falling back to CLI mode.")
+            cli.start()
+    else:
+        # Start command processing loop in CLI mode
+        cli.start()
 
 
 if __name__ == "__main__":
