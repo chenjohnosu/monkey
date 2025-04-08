@@ -191,64 +191,70 @@ class MonkeyTUI(App):
     """Main TUI application for Monkey"""
 
     CSS = """
-    StatusBar {
-        height: 1;
-        width: 100%;
-        background: #333344;
-        color: #e0e0e0;
-        padding: 0 1;
-    }
+        StatusBar {
+            height: 1;
+            width: 100%;
+            background: #333344;
+            color: #e0e0e0;
+            padding: 0 1;
+        }
 
-    /* Main container with horizontal layout - full height minus input row */
-    #main_container {
-        width: 100%;
-        height: 1fr;
-        layout: horizontal;
-    }
-    
-    /* Left side - main output area (70% width) */
-    #scrollable_output {
-        width: 70%;
-        height: 100%;
-    }
-    
-    OutputLog {
-        height: 100%;
-        background: #1e1e2e;
-        color: #cdd6f4;
-    }
-    
-    /* Right side container (30% width) */
-    #system_log_container {
-        width: 30%;
-        height: 100%;
-        layout: vertical;
-        border-left: solid #666666;
-    }
-    
-    SystemLog {
-        height: 100%;
-        background: #282a36;
-        color: #f8f8f2;
-        padding: 0 1;
-    }
+        /* Main container with horizontal layout */
+        #main_container {
+            width: 100%;
+            height: 100%;
+            layout: horizontal;
+        }
 
-    Input {
-        height: 3;
-        background: #313244;
-        color: #cdd6f4;
-        border: none;
-        padding: 0 1;
-    }
-    
-    Input:focus {
-        border: none;  /* Remove focus border */
-    }
-    
-    ScrollableContainer:focus {
-        border: none;  /* Remove focus border */
-    }
-    """
+        /* Left panel container - vertical layout */
+        #left_panel {
+            width: 70%;
+            height: 100%;
+            layout: vertical;
+        }
+
+        /* Main output area - in the middle of the left panel */
+        #scrollable_output {
+            width: 100%;
+            height: 1fr;  /* Takes available space */
+        }
+
+        OutputLog {
+            height: 100%;
+            background: #1e1e2e;
+            color: #cdd6f4;
+        }
+
+        /* Right side container for system log */
+        #system_log_container {
+            width: 30%;
+            height: 100%;
+            border-left: solid #666666;
+        }
+
+        SystemLog {
+            height: 100%;
+            background: #282a36;
+            color: #f8f8f2;
+            padding: 0 1;
+        }
+
+        Input {
+            height: 3;
+            background: #313244;
+            color: #cdd6f4;
+            border: none;
+            padding: 0 1;
+        }
+
+        Input:focus {
+            border: none;  /* Remove focus border */
+        }
+
+        ScrollableContainer:focus {
+            border: none;  /* Remove focus border */
+        }
+        """
 
     def __init__(self, command_processor):
         super().__init__()
@@ -287,25 +293,25 @@ class MonkeyTUI(App):
         core.engine.logging.debug_print = tui_debug_print
 
     def compose(self):
-        """Compose the TUI layout"""
-        # Status bar at the top
-        status_bar = StatusBar(self.config)
-        # Store command processor reference in status bar for updates
-        status_bar.command_processor = self.command_processor
-        yield status_bar
+        """Compose the TUI layout with vertical split first, then horizontal divisions on left side"""
 
-        # Main horizontal layout
+        # Create a horizontal split for the main area (left/right panels)
         with Horizontal(id="main_container"):
-            # Left side - main output area (70% width)
-            with ScrollableContainer(id="scrollable_output"):
-                yield OutputLog(auto_scroll=True, highlight=True)
+            # Left panel container (status, output, command input)
+            with Vertical(id="left_panel"):
+                # Status bar at the top
+                yield StatusBar(self.config)
 
-            # Right side - system log (30% width)
+                # Main output area in the middle (scrollable)
+                with ScrollableContainer(id="scrollable_output"):
+                    yield OutputLog(auto_scroll=True, highlight=True)
+
+                # Command input at the bottom
+                yield Input(placeholder="Enter command...", id="command_input")
+
+            # Right panel for system log (keeps the same)
             with ScrollableContainer(id="system_log_container"):
                 yield SystemLog()
-
-        # Command input at the bottom
-        yield Input(placeholder="Enter command...", id="command_input")
 
     def on_mount(self):
         """Handle app mount event"""
