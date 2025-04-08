@@ -38,7 +38,7 @@ Monkey combines the power of established document understanding libraries with a
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/monkey.git
+   git clone https://github.com/chenjohnosu/monkey.git
    cd monkey
    ```
 
