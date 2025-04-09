@@ -14,7 +14,7 @@ import sys
 import argparse
 from core.engine.cli import CommandProcessor
 from core.engine.config import Config
-
+from core.engine.logging import error, warning, info, trace, debug, debug_print
 
 def setup_directories():
     """Create necessary directories if they don't exist"""
@@ -40,6 +40,11 @@ def main():
     # Parse command line arguments
     args = parse_arguments()
 
+    # Check for TUI mode flag and set it immediately
+    if args.tui:
+        from core.engine.logging import LogManager
+        LogManager.set_tui_mode(True)
+
     # Set up necessary directories
     setup_directories()
 
@@ -50,6 +55,10 @@ def main():
     # Override debug setting if specified in arguments
     if args.debug:
         config.set('system.debug', True)
+        # Update global debug flag
+        from core.engine.logging import LogManager
+        LogManager.set_debug(True)
+        debug("Debug mode enabled")
 
     # Initialize command processor
     cli = CommandProcessor(config)
@@ -64,14 +73,14 @@ def main():
             # Import TUI module
             from core.interface.tui import run_tui
             # Run TUI interface
-            print("Starting Terminal User Interface...")
+            info("Starting Terminal User Interface...")
             run_tui(cli)
         except ImportError:
-            print("TUI module not found. Falling back to CLI mode.")
+            warning("TUI module not found. Falling back to CLI mode.")
             cli.start()
         except Exception as e:
-            print(f"Error starting TUI: {str(e)}")
-            print("Falling back to CLI mode.")
+            error(f"Error starting TUI: {str(e)}")
+            info("Falling back to CLI mode.")
             cli.start()
     else:
         # Start command processing loop in CLI mode

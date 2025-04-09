@@ -315,6 +315,10 @@ class MonkeyTUI(App):
 
     def on_mount(self):
         """Handle app mount event"""
+        # Signal that TUI is ready to display messages
+        from core.engine.logging import LogManager
+        LogManager.set_tui_ready(True)
+
         logger.info("TUI interface mounted")
         self.query_one("#command_input").focus()
 
@@ -329,11 +333,6 @@ class MonkeyTUI(App):
 
         # Log that the TUI is ready
         logger.info("TUI interface ready")
-
-        # Update query_mode in StatusBar
-        status_bar = self.query_one(StatusBar)
-        status_bar.query_mode = self.query_mode
-        status_bar.update_status()
 
     def _check_query_mode(self):
         """
@@ -433,7 +432,7 @@ class MonkeyTUI(App):
                     # Get message with short timeout
                     msg = self.log_handler.log_queue.get(block=False)
 
-                    # Display in system log area - just the message, no extra parameters
+                    # Display in system log area
                     self.call_from_thread(lambda m=msg: self.system_log.write(m))
 
                     # Mark as done

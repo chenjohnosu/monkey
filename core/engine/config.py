@@ -8,13 +8,13 @@ from core.engine.logging import debug_print
 
 class Config:
     """Configuration management class"""
-    
+
     def __init__(self, config_path='config.yaml'):
         """Initialize configuration from file"""
         self.config_path = config_path
         self.loaded_guides = {}
         self.version = '0.8.1'
-        
+
         # Load configuration
         try:
             with open(config_path, 'r', encoding='utf-8') as file:
@@ -27,13 +27,18 @@ class Config:
         except yaml.YAMLError as e:
             print(f"Error parsing config file: {str(e)}. Using default configuration.")
             self.config = {}
-        
+
         # Initialize with defaults if needed
         self._ensure_defaults()
-        
-        # Debug output
+
+        # Set global debug flag
+        from core.engine.logging import LogManager
+        LogManager.set_debug(self.get('system.debug', False))
+
+        # Debug output (using debug function instead of direct print)
         if self.get('system.debug'):
-            debug_print(self, f"Configuration loaded from {config_path}")
+            from core.engine.logging import debug
+            debug(f"Configuration loaded from {config_path}")
 
     def _ensure_defaults(self):
         """Ensure default configuration values are set"""

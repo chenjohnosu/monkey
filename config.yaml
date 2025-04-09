@@ -1,6 +1,6 @@
 embedding:
   chinese_model: jina-zh
-  default_model: jina-zh
+  default_model: mixbread
 hardware:
   device: mps
   use_cuda: auto
@@ -19,7 +19,7 @@ llama_index:
     chunk_overlap: 20
     chunk_size: 1024
 llm:
-  default_model: mistral
+  default_model: llama3.1:8b
   ollama_host: http://localhost
   ollama_port: 11434
   source: ollama
@@ -28,7 +28,7 @@ query:
 storage:
   vector_store: llama_index
 system:
-  debug: true
+  debug: false
   output_format: txt
 workspace:
   default: default

@@ -9,25 +9,25 @@
 
 ### Implementation Plan
 1. **Create a formal dependency specification**
-   ```bash
-   # Create requirements.txt
-   pip freeze > requirements.txt
-   
-   # Clean up and organize into categories
-   # core: required dependencies
-   # gpu: CUDA dependencies
-   # ui: TUI dependencies
-   # full: all dependencies
-   ```
+>    ```
+>    Create requirements.txt
+>    pip freeze > requirements.txt
+>    
+>    Clean up and organize into categories
+>    core: required dependencies
+>    gpu: CUDA dependencies
+>    ui: TUI dependencies
+>    full: all dependencies
+>    ```
 
 2. **Implement proper package structure**
-   ```bash
-   # Create setup.py for installable package
-   touch setup.py
-   
-   # Define entry points
-   python -m pip install -e .
-   ```
+>    ```
+>    # Create setup.py for installable package
+>    touch setup.py
+>    
+>    # Define entry points
+>    python -m pip install -e .
+>    ```
 
 3. **Add dependency checking on startup**
    ```python
