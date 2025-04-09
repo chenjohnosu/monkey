@@ -19,7 +19,7 @@ llama_index:
     chunk_overlap: 20
     chunk_size: 1024
 llm:
-  default_model: llama3.1:8b
+  default_model: mistral
   ollama_host: http://localhost
   ollama_port: 11434
   source: ollama

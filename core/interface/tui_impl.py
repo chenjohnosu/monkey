@@ -41,12 +41,16 @@ class StatusBar(Static):
         self.query_mode = False
         self.workspace = config.get('workspace.default', 'none')
         self.llm_model = config.get('llm.default_model', 'none')
+        self.embedding_model = config.get('embedding.default_model', 'none')  # Added embedding model
         self.update_status()
 
     def update_status(self):
         """Update the status information"""
         # Get current LLM model from config
         self.llm_model = self.config.get('llm.default_model', 'none')
+
+        # Get current embedding model from config
+        self.embedding_model = self.config.get('embedding.default_model', 'none')  # Get embedding model
 
         # Get current workspace from command processor if available
         if self.command_processor and hasattr(self.command_processor, 'current_workspace'):
@@ -60,9 +64,9 @@ class StatusBar(Static):
                 # Fallback if query_engine doesn't have is_active method
                 pass
 
-        # Format the status text
+        # Format the status text - now including embedding model
         mode = "query" if self.query_mode else "command"
-        self.update(f"[ workspace: {self.workspace} | llm: {self.llm_model} | mode: {mode} ]")
+        self.update(f"[ workspace: {self.workspace} | llm: {self.llm_model} | embed: {self.embedding_model} | mode: {mode} ]")
 
 
 class OutputLog(RichLog):
@@ -300,7 +304,10 @@ class MonkeyTUI(App):
             # Left panel container (status, output, command input)
             with Vertical(id="left_panel"):
                 # Status bar at the top
-                yield StatusBar(self.config)
+                status_bar = StatusBar(self.config)
+                # Connect the command processor to the status bar
+                status_bar.command_processor = self.command_processor
+                yield status_bar
 
                 # Main output area in the middle (scrollable)
                 with ScrollableContainer(id="scrollable_output"):
@@ -324,6 +331,13 @@ class MonkeyTUI(App):
 
         # Store reference to system log
         self.system_log = self.query_one(SystemLog)
+
+        # Connect command processor to status bar
+        status_bar = self.query_one(StatusBar)
+        status_bar.command_processor = self.command_processor
+
+        # Force an initial status update
+        status_bar.update_status()
 
         # Start log update timer
         self._start_log_timer()
@@ -403,6 +417,12 @@ class MonkeyTUI(App):
         def update_status_thread():
             while self._status_timer_running:
                 try:
+                    # Check if the workspace has changed in command processor
+                    if (hasattr(self.command_processor, 'current_workspace') and
+                        self.query_one(StatusBar).workspace != self.command_processor.current_workspace):
+                        # Force an update to reflect the new workspace
+                        self.call_from_thread(lambda: self.query_one(StatusBar).update_status())
+
                     # Check query mode status
                     self._check_query_mode()
 
@@ -478,7 +498,14 @@ class MonkeyTUI(App):
         # Run the command in a separate thread to prevent UI freezing
         def run_command():
             try:
+                # Process the command and update everything
                 self._process_command(value)
+
+                # Immediately capture the current workspace
+                if hasattr(self.command_processor, 'current_workspace'):
+                    current_ws = self.command_processor.current_workspace
+                    # Force status bar update with the new workspace
+                    self.call_from_thread(lambda: self._force_status_update(current_ws))
 
                 # Check query mode status after command executes
                 self._check_query_mode()
@@ -495,11 +522,26 @@ class MonkeyTUI(App):
 
         threading.Thread(target=run_command).start()
 
+    def _force_status_update(self, workspace):
+        """Force status bar update with current workspace"""
+        status_bar = self.query_one(StatusBar)
+        status_bar.workspace = workspace  # Directly set the workspace
+        status_bar.update_status()  # Update display
+
     def _process_command(self, command_string):
         """Process a command through the CommandProcessor"""
         log = self.query_one(OutputLog)
 
         try:
+            # Detect load command to update workspace immediately
+            load_cmd = False
+            if command_string.startswith('/load'):
+                load_cmd = True
+                tokens = shlex.split(command_string)
+                if len(tokens) > 1:
+                    # Prepare for workspace change
+                    self.query_one(StatusBar).update_status()
+
             # Create a string capture class to redirect output
             class StringCapture:
                 def __init__(self, app):
@@ -569,6 +611,13 @@ class MonkeyTUI(App):
 
             # Process the command
             self.command_processor.process_command(command_string)
+
+            # If this was a load command, immediately update status
+            if load_cmd and hasattr(self.command_processor, 'current_workspace'):
+                # Force status bar to use the new workspace immediately
+                status_bar = self.query_one(StatusBar)
+                status_bar.workspace = self.command_processor.current_workspace
+                self.call_from_thread(lambda: status_bar.update_status())
 
             # Update query mode status by directly checking query_engine
             if hasattr(self.command_processor, 'query_engine'):

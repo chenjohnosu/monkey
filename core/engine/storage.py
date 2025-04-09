@@ -61,6 +61,38 @@ class StorageManager:
         debug_print(self.config, f"Adding document to vector store: {source_path}")
         self._add_to_vector_store(workspace, document)
 
+    def remove_document(self, workspace, source_path):
+        """
+        Remove a document from storage
+
+        Args:
+            workspace (str): Target workspace
+            source_path (str): Document source path
+
+        Returns:
+            bool: Success flag
+        """
+        debug_print(self.config, f"Removing document from workspace: {workspace}, source: {source_path}")
+
+        # Create safe filename from source path
+        import hashlib
+        filename = hashlib.md5(source_path.encode('utf-8')).hexdigest() + '.json'
+        doc_dir = os.path.join("data", workspace, "documents")
+        filepath = os.path.join(doc_dir, filename)
+
+        # Remove file if it exists
+        if os.path.exists(filepath):
+            try:
+                os.remove(filepath)
+                debug_print(self.config, f"Removed document file: {filepath}")
+                return True
+            except Exception as e:
+                debug_print(self.config, f"Error removing document file: {str(e)}")
+                return False
+        else:
+            debug_print(self.config, f"Document file not found: {filepath}")
+            return False
+
     def add_documents(self, workspace: str, documents: List[Dict[str, Any]]) -> bool:
         """Add documents to the vector store"""
         debug_print(self.config, f"Adding {len(documents)} documents to LlamaIndex vector store")

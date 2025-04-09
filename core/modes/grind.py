@@ -116,7 +116,8 @@ class FileProcessor:
 
         # Update vector store
         print("\nUpdating vector store...")
-        success = self.storage_manager.update_vector_store(workspace)
+        success = self.storage_manager.create_vector_store(
+            workspace)  # Changed from update_vector_store to create_vector_store
 
         if success:
             print(f"Workspace '{workspace}' updated successfully")
