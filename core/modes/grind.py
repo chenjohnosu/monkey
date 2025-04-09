@@ -52,75 +52,134 @@ class FileProcessor:
 
         # Get all files in the workspace
         files_to_process = self._get_all_files(workspace)
-        print(f"Creating initial database with {len(files_to_process)} files in workspace '{workspace}'")
 
-        # Process each file
+        # Check if there are files to process
+        if not files_to_process:
+            print(f"No files found in workspace '{workspace}'. Nothing to process.")
+            return
+
+        print(f"Creating initial database with {len(files_to_process)} source files in workspace '{workspace}'")
+
+        # Process each file individually
+        processed_files = []
         for file_info in files_to_process:
             rel_path = file_info['rel_path']
             filepath = file_info['abs_path']
 
             try:
                 # Process the file
-                self._process_file(workspace, rel_path, filepath)
-                print(f"Added: {rel_path}")
+                processed_doc = self._process_file(workspace, rel_path, filepath)
+                processed_files.append(processed_doc)
+                print(f"Added file: {rel_path}")
 
             except Exception as e:
                 print(f"Failed to process {rel_path}: {str(e)}")
 
-        # Create vector store
-        print("\nCreating vector store...")
-        success = self.storage_manager.create_vector_store(workspace)
+        # Create vector store if any files were processed
+        if processed_files:
+            print(f"\nCreating vector store with {len(processed_files)} processed files...")
+            success = self.storage_manager.create_vector_store(workspace)
 
-        if success:
-            print(f"Initial database created successfully for workspace '{workspace}'")
+            if success:
+                print(f"Initial database created successfully for workspace '{workspace}'")
+        else:
+            print("No files were successfully processed. Vector store creation skipped.")
 
     def update_workspace(self, workspace):
         """
-        Update workspace with new or modified files
+        Update workspace with new or modified files, and handle deleted files
 
         Args:
             workspace (str): The workspace to update
         """
         debug_print(self.config, f"Updating workspace: {workspace}")
 
+        # Get list of all currently processed files in the database
+        existing_files = self.storage_manager.get_processed_files(workspace)
+        existing_paths = set(existing_files.keys())
+
+        # Get list of all files currently in the file system
+        body_dir = os.path.join("body", workspace)
+        current_files = set()
+
+        if os.path.exists(body_dir):
+            for root, _, filenames in os.walk(body_dir):
+                for filename in filenames:
+                    filepath = os.path.join(root, filename)
+                    if is_supported_file(filepath):
+                        rel_path = os.path.relpath(filepath, body_dir)
+                        current_files.add(rel_path)
+
+        # Identify deleted files
+        deleted_files = existing_paths - current_files
+
         # Scan for new or updated files
         files_to_update = self.scan_workspace(workspace, detailed=True, return_files=True)
 
-        if not files_to_update:
-            print(f"No new or updated files found in workspace '{workspace}'")
+        # Check if any file changes were detected
+        if not files_to_update and not deleted_files:
+            print(f"No file changes detected in workspace '{workspace}'")
             return
 
-        print(f"Updating {len(files_to_update)} files in workspace '{workspace}'")
-
-        # Process each file
-        for file_info in files_to_update:
-            rel_path = file_info['rel_path']
-            filepath = file_info['abs_path']
-            status = file_info.get('status', "Unknown")
-
-            try:
-                # Remove existing entries for updated files
-                if status == "Modified":
+        # Process deletions first
+        if deleted_files:
+            print(f"Found {len(deleted_files)} deleted files in workspace '{workspace}'")
+            for rel_path in deleted_files:
+                try:
+                    # Remove from document storage and vector store
                     self.storage_manager.remove_document(workspace, rel_path)
+                    print(f"Removed: {rel_path}")
+                except Exception as e:
+                    print(f"Failed to remove {rel_path}: {str(e)}")
 
-                # Process the file
-                self._process_file(workspace, rel_path, filepath)
+        # Process new/modified files
+        if files_to_update:
+            print(f"Processing {len(files_to_update)} new or modified files in workspace '{workspace}'")
 
-                if status == "New":
-                    print(f"Added: {rel_path}")
-                else:
-                    print(f"Updated: {rel_path}")
+            # Track successfully processed files
+            processed_files = []
 
-            except Exception as e:
-                print(f"Failed to process {rel_path}: {str(e)}")
+            # Process each file
+            for file_info in files_to_update:
+                rel_path = file_info['rel_path']
+                filepath = file_info['abs_path']
+                status = file_info.get('status', "Unknown")
 
-        # Update vector store
-        print("\nUpdating vector store...")
-        success = self.storage_manager.create_vector_store(
-            workspace)  # Changed from update_vector_store to create_vector_store
+                try:
+                    # Remove existing entries for updated files
+                    if status == "Modified":
+                        self.storage_manager.remove_document(workspace, rel_path)
 
-        if success:
-            print(f"Workspace '{workspace}' updated successfully")
+                    # Process the file
+                    processed_doc = self._process_file(workspace, rel_path, filepath)
+                    processed_files.append(processed_doc)
+
+                    if status == "New":
+                        print(f"Added: {rel_path}")
+                    else:
+                        print(f"Updated: {rel_path}")
+
+                except Exception as e:
+                    print(f"Failed to process {rel_path}: {str(e)}")
+
+        # Update vector store if there were any changes
+        if deleted_files or files_to_update:
+            print(f"\nRebuilding vector store...")
+            change_summary = []
+            if deleted_files:
+                change_summary.append(f"{len(deleted_files)} deletions")
+            if files_to_update:
+                change_summary.append(f"{len(files_to_update)} updates/additions")
+
+            print(f"Vector store changes: {', '.join(change_summary)}")
+            success = self.storage_manager.create_vector_store(workspace)
+
+            if success:
+                print(f"Workspace '{workspace}' updated successfully")
+            else:
+                print(f"Failed to update vector store for workspace '{workspace}'")
+        else:
+            print("No file changes were successfully processed. Vector store update skipped.")
 
     def scan_workspace(self, workspace, detailed=True, return_files=False):
         """

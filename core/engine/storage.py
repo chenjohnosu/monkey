@@ -8,9 +8,8 @@ import hashlib
 import datetime
 import shutil
 from core.engine.utils import ensure_dir
-from core.engine.logging import debug_print
+from core.engine.logging import debug_print,info,error,warning,debug
 from core.connectors.connector_factory import ConnectorFactory
-from pprint import pprint
 from typing import List, Dict, Any
 
 class StorageManager:
@@ -168,6 +167,55 @@ class StorageManager:
             debug_print(self.config, traceback.format_exc())
             return False
 
+    def update_vector_store(self, workspace, documents=None):
+        """
+        Update the vector store with new or modified documents without rebuilding from scratch
+
+        Args:
+            workspace (str): Target workspace
+            documents (List[Dict], optional): Specific documents to update. If None, updates all documents.
+
+        Returns:
+            bool: Success flag
+        """
+        debug_print(self.config, f"Updating vector store for workspace: {workspace}")
+
+        try:
+            # Get documents to update (either provided or load all)
+            docs_to_update = documents or self.get_documents(workspace)
+
+            if not docs_to_update:
+                print(f"No documents to update for workspace '{workspace}'")
+                return False
+
+            print(f"Updating vector store with {len(docs_to_update)} documents...")
+
+            # Initialize vector store if needed
+            vector_store_initialized = self.load_vector_store(workspace)
+
+            if not vector_store_initialized:
+                print("Vector store not initialized. Creating new vector store...")
+                return self.create_vector_store(workspace)
+
+            # Get vector store type
+            vector_store_type = self.config.get('storage.vector_store')
+
+            # Use appropriate connector update method
+            if vector_store_type == 'llama_index':
+                return self._update_llama_index_documents(workspace, docs_to_update)
+            elif vector_store_type == 'haystack':
+                return self._update_haystack_documents(workspace, docs_to_update)
+            else:
+                # Fallback to create_vector_store for unsupported backends
+                print(f"Incremental updates not supported for {vector_store_type}. Rebuilding vector store...")
+                return self.create_vector_store(workspace)
+
+        except Exception as e:
+            debug_print(self.config, f"Error updating vector store: {str(e)}")
+            import traceback
+            debug_print(self.config, traceback.format_exc())
+            return False
+
     def get_documents(self, workspace):
         """
         Get all documents in a workspace
@@ -186,23 +234,23 @@ class StorageManager:
         documents_dir = os.path.join(workspace_dir, "documents")
 
         # Detailed diagnostics
-        print(f"Workspace Document Retrieval:")
-        print(f"  Workspace Directory: {workspace_dir}")
-        print(f"  Documents Directory: {documents_dir}")
+        debug(f"Workspace Document Retrieval:")
+        debug(f"  Workspace Directory: {workspace_dir}")
+        debug(f"  Documents Directory: {documents_dir}")
 
         # Check directory existence
         if not os.path.exists(workspace_dir):
-            print(f"ERROR: Workspace directory does not exist: {workspace_dir}")
+            error(f"ERROR: Workspace directory does not exist: {workspace_dir}")
             return []
 
         if not os.path.exists(documents_dir):
-            print(f"ERROR: Documents directory does not exist: {documents_dir}")
+            error(f"ERROR: Documents directory does not exist: {documents_dir}")
             # Attempt to create the directory
             try:
                 os.makedirs(documents_dir)
-                print(f"Created documents directory: {documents_dir}")
+                info(f"Created documents directory: {documents_dir}")
             except Exception as e:
-                print(f"Failed to create documents directory: {str(e)}")
+                error(f"Failed to create documents directory: {str(e)}")
                 return []
 
         documents = []
@@ -214,7 +262,7 @@ class StorageManager:
 
             # If no files, provide more context
             if not document_files:
-                print("  Warning: No JSON document files found")
+                warning("  Warning: No JSON document files found")
                 # List all files in the directory to understand why
                 all_files = os.listdir(documents_dir)
                 if all_files:
@@ -222,7 +270,7 @@ class StorageManager:
                     for file in all_files:
                         print(f"    - {file}")
                 else:
-                    print("  No files found in documents directory")
+                    warning("  No files found in documents directory")
         except Exception as e:
             print(f"  Error listing document files: {str(e)}")
             return []
@@ -234,13 +282,13 @@ class StorageManager:
                     document = json.load(file)
                     documents.append(document)
             except Exception as e:
-                print(f"Error loading document {filename}: {str(e)}")
+                error(f"Error loading document {filename}: {str(e)}")
 
         print(f"  Total Documents Loaded: {len(documents)}")
 
         # If no documents, provide context
         if not documents:
-            print("WARNING: No documents could be loaded from the workspace")
+            warning("No documents could be loaded from the workspace")
 
         return documents
 
@@ -323,39 +371,61 @@ class StorageManager:
             print(f"No documents found in workspace '{workspace}'")
             return False
 
+        print(f"Building vector store for {len(documents)} source files")
+
+        # Make sure vector store directory exists and is empty
+        vector_dir = os.path.join("data", workspace, "vector_store")
+        if os.path.exists(vector_dir):
+            # Create backup before removing
+            backup_dir = f"{vector_dir}_backup_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            if os.path.isdir(vector_dir) and os.listdir(vector_dir):  # Only backup if not empty
+                debug_print(self.config, f"Backing up existing vector store to {backup_dir}")
+                shutil.copytree(vector_dir, backup_dir)
+
+            # Remove existing directory and recreate
+            shutil.rmtree(vector_dir)
+
+        ensure_dir(vector_dir)
+
         # Use the appropriate connector to batch add all documents
         try:
-            # Make sure vector store directory exists and is empty
-            vector_dir = os.path.join("data", workspace, "vector_store")
-            if os.path.exists(vector_dir):
-                # Create backup before removing
-                backup_dir = f"{vector_dir}_backup_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                if os.path.isdir(vector_dir) and os.listdir(vector_dir):  # Only backup if not empty
-                    debug_print(self.config, f"Backing up existing vector store to {backup_dir}")
-                    shutil.copytree(vector_dir, backup_dir)
+            # Clear any cached vector store
+            self.vector_stores.pop(workspace, None)
 
-                # Remove existing directory and recreate
-                shutil.rmtree(vector_dir)
-
-            ensure_dir(vector_dir)
-
-            # Initialize and add documents
-            if vector_dir not in self.vector_stores:
-                self.vector_stores.pop(workspace, None)  # Clear any cached vector store
-
+            # Add documents to new vector store
             success = self.connector.add_documents(workspace, documents)
+
             if success:
-                print(f"Vector store created for workspace '{workspace}' with {len(documents)} documents")
+                # Count actual embeddings created
+                vector_store_type = self.config.get('storage.vector_store')
+                if vector_store_type == 'llama_index':
+                    # Check actual number of documents in the vector store
+                    docstore_path = os.path.join(vector_dir, "docstore.json")
+                    if os.path.exists(docstore_path):
+                        try:
+                            with open(docstore_path, 'r') as f:
+                                data = json.load(f)
+                                if 'docstore/docs' in data:
+                                    index_doc_count = len(data['docstore/docs'])
+                                    if index_doc_count != len(documents):
+                                        print(
+                                            f"Note: {len(documents)} source files resulted in {index_doc_count} vector index entries")
+                        except:
+                            pass
+
+                print(f"Vector store created successfully with {len(documents)} source files")
 
                 # Save vector store metadata
                 metadata_path = os.path.join(vector_dir, "metadata.json")
                 with open(metadata_path, 'w', encoding='utf-8') as f:
                     json.dump({
                         "created": datetime.datetime.now().isoformat(),
-                        "document_count": len(documents),
+                        "source_file_count": len(documents),
                         "embedding_model": self.config.get('embedding.default_model')
                     }, f, indent=2)
+
             return success
+
         except Exception as e:
             debug_print(self.config, f"Error creating vector store: {str(e)}")
             import traceback
