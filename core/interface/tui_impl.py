@@ -72,6 +72,7 @@ class OutputLog(RichLog):
         """Clear the log output"""
         super().clear()  # Call the parent class's clear method
 
+
 class SystemLog(RichLog):
     """Dedicated logging area for system messages"""
 
@@ -80,10 +81,10 @@ class SystemLog(RichLog):
         # Add a title to the log
         super().write("[bold]System Messages[/bold]")
 
-    def write(self, content, *, width=None, expand=False, shrink=True, scroll_end=None):
+    def write(self, content, **kwargs):
         """Override write to handle line wrapping with indentation"""
-        # Pass all parameters to the parent write method
-        super().write(content, width=width, expand=expand, shrink=shrink, scroll_end=scroll_end)
+        # Use kwargs to capture and forward all parameters
+        super().write(content, **kwargs)
 
 class TUIInputHandler:
     """Custom input handler to intercept input() calls from CLI functions"""
