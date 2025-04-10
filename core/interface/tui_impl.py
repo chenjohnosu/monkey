@@ -21,13 +21,10 @@ import os
 import builtins
 from datetime import datetime
 
-# Add root directory to path for importing from project
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Import improved logging
 from core.engine.logging import get_logger, error, warning, info, debug, trace
 
-# Get a logger for this module
 logger = get_logger("tui_impl")
 
 class StatusBar(Static):
@@ -68,14 +65,12 @@ class StatusBar(Static):
         mode = "query" if self.query_mode else "command"
         self.update(f"[ workspace: {self.workspace} | llm: {self.llm_model} | embed: {self.embedding_model} | mode: {mode} ]")
 
-
 class OutputLog(RichLog):
     """Main output area using RichLog widget for better scrolling"""
 
     def clear(self):
         """Clear the log output"""
         super().clear()  # Call the parent class's clear method
-
 
 class SystemLog(RichLog):
     """Dedicated logging area for system messages"""
@@ -85,10 +80,11 @@ class SystemLog(RichLog):
         # Add a title to the log
         super().write("[bold]System Messages[/bold]")
 
-    # No custom write method - use the parent class implementation
+    def write(self, content, *, width=None, expand=False, shrink=True, scroll_end=None):
+        """Override write to handle line wrapping with indentation"""
+        # Pass all parameters to the parent write method
+        super().write(content, width=width, expand=expand, shrink=shrink, scroll_end=scroll_end)
 
-
-# Modified input handler for interactive CLI commands
 class TUIInputHandler:
     """Custom input handler to intercept input() calls from CLI functions"""
 
@@ -131,8 +127,6 @@ class TUIInputHandler:
         # Return the value that was entered
         return self.input_queue.pop(0)
 
-
-# Custom logger handler to redirect logs to the TUI
 class TUILogHandler(logging.Handler):
     """Custom logging handler that redirects logs to the TUI system log area"""
 
@@ -156,6 +150,9 @@ class TUILogHandler(logging.Handler):
             lines = msg.split('\n')
             formatted_lines = []
 
+            # Use this for the indentation prefix - can be modified to any character(s)
+            indent_prefix = "  "  # Two spaces for indentation
+
             # Format the first line with timestamp
             if lines:
                 first_line = f"[{timestamp}] {lines[0]}"
@@ -175,13 +172,13 @@ class TUILogHandler(logging.Handler):
 
                 for i in range(1, len(lines)):
                     if record.levelno >= logging.ERROR:
-                        formatted_lines.append(f"[bold red]{indent}{lines[i]}[/bold red]")
+                        formatted_lines.append(f"[bold red]{indent}{indent_prefix}{lines[i]}[/bold red]")
                     elif record.levelno >= logging.WARNING:
-                        formatted_lines.append(f"[yellow]{indent}{lines[i]}[/yellow]")
+                        formatted_lines.append(f"[yellow]{indent}{indent_prefix}{lines[i]}[/yellow]")
                     elif record.levelno >= logging.INFO:
-                        formatted_lines.append(f"[white]{indent}{lines[i]}[/white]")
+                        formatted_lines.append(f"[white]{indent}{indent_prefix}{lines[i]}[/white]")
                     else:  # DEBUG or TRACE
-                        formatted_lines.append(f"[dim]{indent}{lines[i]}[/dim]")
+                        formatted_lines.append(f"[dim]{indent}{indent_prefix}{lines[i]}[/dim]")
 
             # Join the formatted lines and add to the queue
             formatted_msg = "\n".join(formatted_lines)
@@ -189,7 +186,6 @@ class TUILogHandler(logging.Handler):
 
         except Exception:
             self.handleError(record)
-
 
 class MonkeyTUI(App):
     """Main TUI application for Monkey"""
@@ -446,19 +442,28 @@ class MonkeyTUI(App):
 
         # Process queued logs
         try:
-            # Check if there are any messages in the pre-TUI buffer
-            from core.engine.logging import _pre_tui_buffer
-            # Get up to 10 messages at a time to prevent UI freezing
+            # Always check both queues
+            from core.engine.logging import _pre_tui_buffer, tui_message_queue
+
+            # Process pre-TUI buffer first
             for _ in range(10):
                 try:
-                    # Try to get from pre-TUI buffer first
                     msg = _pre_tui_buffer.get(block=False)
                     self.call_from_thread(lambda m=msg: self.system_log.write(m))
                     _pre_tui_buffer.task_done()
                 except queue.Empty:
                     break
 
-            # Process main queue messages
+            # Then process main queue
+            for _ in range(10):
+                try:
+                    msg = tui_message_queue.get(block=False)
+                    self.call_from_thread(lambda m=msg: self.system_log.write(m))
+                    tui_message_queue.task_done()
+                except queue.Empty:
+                    break
+
+            # Finally, process the TUI log handler queue
             for _ in range(10):
                 try:
                     msg = self.log_handler.log_queue.get(block=False)
