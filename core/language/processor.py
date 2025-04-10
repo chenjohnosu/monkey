@@ -4,7 +4,7 @@ Text preprocessing module with enhanced Chinese language support
 
 import os
 import re
-from core.engine.logging import debug_print
+from core.engine.logging import debug_print,warning
 from core.language.detector import LanguageDetector
 
 # Import jieba for Chinese word segmentation if available
@@ -13,7 +13,7 @@ try:
     JIEBA_AVAILABLE = True
 except ImportError:
     JIEBA_AVAILABLE = False
-    print("jieba not available, falling back to character-based segmentation for Chinese")
+    warning("jieba not available, falling back to character-based segmentation for Chinese")
 
 
 class TextProcessor:

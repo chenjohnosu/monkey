@@ -2,7 +2,7 @@
 Language-specific tokenization with enhanced Chinese support
 """
 
-from core.engine.logging import debug_print
+from core.engine.logging import debug_print,warning
 
 # Import jieba for Chinese word segmentation if available
 try:
@@ -10,7 +10,7 @@ try:
     JIEBA_AVAILABLE = True
 except ImportError:
     JIEBA_AVAILABLE = False
-    print("jieba not available, falling back to character-based tokenization for Chinese")
+    warning("jieba not available, falling back to character-based tokenization for Chinese")
 
 class Tokenizer:
     """Language-specific tokenization"""

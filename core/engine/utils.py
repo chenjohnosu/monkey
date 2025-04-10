@@ -7,7 +7,7 @@ import time
 import datetime
 from typing import Dict, List, Union, Any
 from core.language.tokenizer import ChineseTokenizer, JIEBA_AVAILABLE
-from core.engine.logging import debug_print
+from core.engine.logging import debug_print,warning
 
 
 # Import jieba for Chinese word segmentation if available
@@ -16,7 +16,7 @@ try:
     JIEBA_AVAILABLE = True
 except ImportError:
     JIEBA_AVAILABLE = False
-    print("jieba not available, falling back to character-based tokenization for Chinese")
+    warning("jieba not available, falling back to character-based tokenization for Chinese")
 
 def ensure_dir(directory):
     """Ensure a directory exists, creating it if necessary"""

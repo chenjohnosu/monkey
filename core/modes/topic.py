@@ -10,7 +10,7 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime
 
 from core.engine.utils import ensure_dir
-from core.engine.logging import debug_print
+from core.engine.logging import debug_print,warning,info
 from core.engine.storage import StorageManager
 from core.engine.output import OutputManager
 from core.language.processor import TextProcessor
@@ -23,7 +23,7 @@ try:
     SKLEARN_AVAILABLE = True
 except ImportError:
     SKLEARN_AVAILABLE = False
-    print("scikit-learn not available, falling back to simplified topic modeling")
+    warning("scikit-learn not available, falling back to simplified topic modeling")
 
 try:
     import umap
@@ -31,14 +31,14 @@ try:
     CLUSTERING_AVAILABLE = True
 except ImportError:
     CLUSTERING_AVAILABLE = False
-    print("umap and/or hdbscan not available, some clustering features will be limited")
+    warning("umap and/or hdbscan not available, some clustering features will be limited")
 
 try:
     import jieba
     JIEBA_AVAILABLE = True
 except ImportError:
     JIEBA_AVAILABLE = False
-    print("jieba not available, falling back to character-based segmentation for Chinese")
+    warning("jieba not available, falling back to character-based segmentation for Chinese")
 
 class TopicModeler:
 

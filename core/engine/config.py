@@ -4,7 +4,7 @@ Configuration management for the document analysis toolkit
 
 import os
 import yaml
-from core.engine.logging import debug_print
+from core.engine.logging import debug_print,error, info, warning
 
 class Config:
     """Configuration management class"""
@@ -13,7 +13,7 @@ class Config:
         """Initialize configuration from file"""
         self.config_path = config_path
         self.loaded_guides = {}
-        self.version = '0.8.3'
+        self.version = '0.8.5'
 
         # Load configuration
         try:
@@ -22,10 +22,10 @@ class Config:
                 if not self.config:
                     self.config = {}
         except FileNotFoundError:
-            print(f"Config file not found: {config_path}. Using default configuration.")
+            warning(f"Config file not found: {config_path}. Using default configuration.")
             self.config = {}
         except yaml.YAMLError as e:
-            print(f"Error parsing config file: {str(e)}. Using default configuration.")
+            error(f"Error parsing config file: {str(e)}. Using default configuration.")
             self.config = {}
 
         # Initialize with defaults if needed
@@ -117,7 +117,7 @@ class Config:
             with open(self.config_path, 'w', encoding='utf-8') as file:
                 yaml.dump(self.config, file, default_flow_style=False)
         except Exception as e:
-            print(f"Error saving configuration: {str(e)}")
+            error(f"Error saving configuration: {str(e)}")
     
     def set_guide(self, name, content):
         """Store a loaded guide"""

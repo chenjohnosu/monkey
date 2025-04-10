@@ -13,7 +13,7 @@ import networkx as nx
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.decomposition import TruncatedSVD
 from sklearn.cluster import KMeans
-from core.engine.logging import debug_print
+from core.engine.logging import debug_print,warning
 from core.engine.storage import StorageManager
 from core.engine.output import OutputManager
 from core.language.processor import TextProcessor
@@ -27,14 +27,14 @@ try:
     JIEBA_AVAILABLE = True
 except ImportError:
     JIEBA_AVAILABLE = False
-    print("jieba not available, falling back to character-based tokenization for Chinese")
+    warning("jieba not available, falling back to character-based tokenization for Chinese")
 
 try:
     import nltk
     NLTK_AVAILABLE = True
 except ImportError:
     NLTK_AVAILABLE = False
-    print("NLTK not available, falling back to regex-based entity extraction")
+    warning("NLTK not available, falling back to regex-based entity extraction")
 
 
 def with_timeout(func, timeout_seconds, *args, **kwargs):

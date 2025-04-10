@@ -3,7 +3,7 @@ Factory for creating and managing connectors
 """
 
 from typing import Dict, Any, Optional
-from core.engine.logging import debug_print
+from core.engine.logging import debug_print,info
 
 class ConnectorFactory:
     """Factory class for creating and managing connectors"""
@@ -158,10 +158,10 @@ class ConnectorFactory:
                 model_path = "intfloat/multilingual-e5-large"
 
             if model_name == "jina-zh" and not os.path.exists(os.path.expanduser("~/.cache/huggingface/hub/models--jinaai--jina-embeddings-v2-base-zh")):
-                print("First time using jina-embeddings-v2-base-zh. Downloading model (approx. 450MB)...")
-                print("This may take a few minutes depending on your internet connection.")
+                info("First time using jina-embeddings-v2-base-zh. Downloading model (approx. 450MB)...")
+                info("This may take a few minutes depending on your internet connection.")
 
-            # Create and return local embedding model
+            # Create and return local embedding modedl
             return HuggingFaceEmbedding(model_name_or_path=model_path)
 
         except Exception as e:

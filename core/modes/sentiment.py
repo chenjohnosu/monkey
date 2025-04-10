@@ -6,7 +6,7 @@ import os
 import numpy as np
 from collections import Counter, defaultdict
 from typing import Dict, List, Any, Optional
-from core.engine.logging import debug_print
+from core.engine.logging import debug_print,warning,info
 from core.engine.storage import StorageManager
 from core.engine.output import OutputManager
 from core.language.processor import TextProcessor
@@ -18,7 +18,7 @@ try:
     TRANSFORMERS_AVAILABLE = True
 except ImportError:
     TRANSFORMERS_AVAILABLE = False
-    print("transformers not available, falling back to simple lexicon-based sentiment analysis")
+    warning("transformers not available, falling back to simple lexicon-based sentiment analysis")
 
 try:
     from nltk.sentiment import SentimentIntensityAnalyzer
@@ -28,12 +28,12 @@ try:
     try:
         nltk.data.find('sentiment/vader_lexicon.zip')
     except LookupError:
-        print("Downloading NLTK VADER lexicon...")
+        info("Downloading NLTK VADER lexicon...")
         nltk.download('vader_lexicon', quiet=True)
     NLTK_AVAILABLE = True
 except ImportError:
     NLTK_AVAILABLE = False
-    print("NLTK not available, falling back to transformers or lexicon-based sentiment analysis")
+    warning("NLTK not available, falling back to transformers or lexicon-based sentiment analysis")
 
 # Import jieba for Chinese text segmentation if available
 try:
@@ -42,7 +42,7 @@ try:
     JIEBA_AVAILABLE = True
 except ImportError:
     JIEBA_AVAILABLE = False
-    print("jieba not available, Chinese sentiment analysis may be limited")
+    warning("jieba not available, Chinese sentiment analysis may be limited")
 
 
 class SentimentAnalyzer:

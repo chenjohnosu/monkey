@@ -652,7 +652,7 @@ class CommandProcessor:
                 return
             self._load_guide(args[1])
         else:
-            print(f"Unknown config subcommand: {subcommand}")
+            error(f"Unknown config subcommand: {subcommand}")
 
     def _cmd_inspect(self, args):
         """Handle the inspect command"""
@@ -689,7 +689,8 @@ class CommandProcessor:
                     llama_connector = LlamaIndexConnector(self.config)
                     llama_connector.inspect_index_store(workspace)
                 except Exception as e:
-                    print(f"Error inspecting LlamaIndex store: {str(e)}")
+                    error(
+                        f"Error inspecting LlamaIndex store: {str(e)}")
         elif subcommand == 'query':
             workspace = args[1] if len(args) > 1 else self.current_workspace
             query = args[2] if len(args) > 2 else "test"
@@ -699,7 +700,7 @@ class CommandProcessor:
             self.vector_store_inspector.rebuild_vector_store(workspace)
         elif subcommand == 'fix':
             workspace = args[1] if len(args) > 1 else self.current_workspace
-            print(f"Attempting to fix vector store issues for workspace '{workspace}'...")
+            (warning(f"Attempting to fix vector store issues for workspace '{workspace}'..."))
             self.vector_store_inspector.fix_common_issues(workspace)
         elif subcommand == 'metadata':
             workspace = args[1] if len(args) > 1 else self.current_workspace
@@ -721,17 +722,17 @@ class CommandProcessor:
             self.config.set('embedding.default_model', model)
             self.vector_store_inspector.rebuild_vector_store(workspace)
         else:
-            print(f"Unknown inspect subcommand: {subcommand}")
+            error(f"Unknown inspect subcommand: {subcommand}")
 
     def _inspect_metadata(self, workspace, query="test", limit=3):
         """Inspect raw metadata returned from vector store"""
         print(f"\nInspecting vector store metadata for workspace: {workspace}")
-        print(f"Test query: '{query}'")
+        debug(f"Test query: '{query}'")
 
         # Load vector store
         loaded = self.storage_manager.load_vector_store(workspace)
         if not loaded:
-            print("Failed to load vector store")
+            error("Failed to load vector store")
             return
 
         # Perform query without normalization
@@ -753,7 +754,7 @@ class CommandProcessor:
                     print("No metadata found")
 
         except Exception as e:
-            print(f"Error: {str(e)}")
+            error(f"Error: {str(e)}")
 
     def _show_status(self):
         """Show system status with compact colored formatting"""
@@ -920,8 +921,8 @@ class CommandProcessor:
 
         # Check if the subcommand is valid and normalize it
         if subcommand not in valid_subcommands:
-            print(f"Invalid subcommand: {subcommand}")
-            print(f"Must be one of: themes, topics, sentiment, session")
+            error(f"Invalid subcommand: {subcommand}")
+            error(f"Must be one of: themes, topics, sentiment, session")
             return
 
         # Normalize the subcommand to the standard form
