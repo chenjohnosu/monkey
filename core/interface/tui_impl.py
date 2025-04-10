@@ -72,19 +72,42 @@ class OutputLog(RichLog):
         """Clear the log output"""
         super().clear()  # Call the parent class's clear method
 
-
 class SystemLog(RichLog):
-    """Dedicated logging area for system messages"""
+    """Dedicated logging area for system messages with minimal changes"""
 
-    def __init__(self):
-        super().__init__(highlight=True, markup=True, auto_scroll=True)
-        # Add a title to the log
-        super().write("[bold]System Messages[/bold]")
+    def __init__(self, *args, **kwargs):
+        """Initialize with auto_scroll and markup support"""
+        kwargs.setdefault('highlight', True)
+        kwargs.setdefault('markup', True)
+        kwargs.setdefault('auto_scroll', True)
+        super().__init__(*args, **kwargs)
 
-    def write(self, content, **kwargs):
-        """Override write to handle line wrapping with indentation"""
-        # Use kwargs to capture and forward all parameters
-        super().write(content, **kwargs)
+        # Add initial title with minimal error handling
+        try:
+            super().write("[bold]System Messages[/bold]")
+        except Exception:
+            # Fallback to a simple write
+            super().write("System Messages")
+
+    def write(self, *args, **kwargs):
+        """
+        Override write method to handle multiple argument scenarios
+        """
+        try:
+            # If first argument is a string, use it
+            if args and isinstance(args[0], str):
+                return super().write(args[0])
+
+            # Fallback to multi-argument writing
+            return super().write(*args, **kwargs)
+        except Exception as e:
+            # Capture any writing errors
+            error(f"SystemLog write error: {e}")
+            # Attempt bare minimum write
+            try:
+                super().write(str(args[0]) if args else "")
+            except Exception:
+                pass
 
 class TUIInputHandler:
     """Custom input handler to intercept input() calls from CLI functions"""
@@ -319,31 +342,42 @@ class MonkeyTUI(App):
 
     def on_mount(self):
         """Handle app mount event"""
+        # Prevent multiple initializations
+        if hasattr(self, '_mounted'):
+            return
+        self._mounted = True
+
         # Signal that TUI is ready to display messages
         from core.engine.logging import LogManager
         LogManager.set_tui_ready(True)
 
-        logger.info("TUI interface mounted")
-        self.query_one("#command_input").focus()
+        # Consolidated logging
+        logger.info("TUI interface mounted and ready")
 
-        # Store reference to system log
-        self.system_log = self.query_one(SystemLog)
+        try:
+            self.query_one("#command_input").focus()
 
-        # Connect command processor to status bar
-        status_bar = self.query_one(StatusBar)
-        status_bar.command_processor = self.command_processor
+            # Store reference to system log
+            self.system_log = self.query_one(SystemLog)
 
-        # Force an initial status update
-        status_bar.update_status()
+            # Connect command processor to status bar
+            status_bar = self.query_one(StatusBar)
+            status_bar.command_processor = self.command_processor
 
-        # Start log update timer
-        self._start_log_timer()
+            # Force an initial status update
+            status_bar.update_status()
 
-        # Start status update timer
-        self._start_status_timer()
+            # Start log update timer
+            self._start_log_timer()
 
-        # Log that the TUI is ready
-        logger.info("TUI interface ready")
+            # Start status update timer
+            self._start_status_timer()
+
+        except Exception as e:
+            # Capture any initialization errors
+            logger.error(f"Error during TUI initialization: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
 
     def _check_query_mode(self):
         """
@@ -629,6 +663,13 @@ class MonkeyTUI(App):
 
             # Process the command
             self.command_processor.process_command(command_string)
+            # Capture the command and its response
+            command_log = f"> {command_string}\n"
+            response_log = string_capture.line_buffer.strip()
+
+            # Write the command and response to the system log
+            self.call_from_thread(lambda: self.system_log.write(command_log))
+            self.call_from_thread(lambda: self.system_log.write(response_log))
 
             # If this was a load command, immediately update status
             if load_cmd and hasattr(self.command_processor, 'current_workspace'):

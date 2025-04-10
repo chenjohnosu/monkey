@@ -482,7 +482,7 @@ class CommandProcessor:
             # Ask for confirmation before creating a new workspace
             confirm = input(f"Workspace '{workspace}' does not exist. Create it? (y/n): ").strip().lower()
             if confirm != 'y' and confirm != 'yes':
-                print(f"Cancelled creation of workspace '{workspace}'")
+                warning(f"Cancelled creation of workspace '{workspace}'")
                 return
 
         # Create necessary directories
@@ -859,15 +859,20 @@ class CommandProcessor:
             return command_string
 
     def process_command(self, command_string):
-        """Process a command string with compact colored output"""
+        """
+        Process a command string with command echo to system log
+
+        Args:
+            command_string (str): The command to process
+        """
         debug_print(self.config, f"Processing command: {command_string}")
+
+        # Echo the command to the output manager with red color
+        self.output_manager.print_formatted('command', command_string, color='red')
 
         # Skip empty commands
         if not command_string.strip():
             return
-
-        # Log the command nicely
-        self.output_manager.print_formatted('command', command_string)
 
         # Parse the command (existing code)
         try:
