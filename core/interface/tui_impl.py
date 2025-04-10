@@ -85,6 +85,12 @@ class SystemLog(RichLog):
         # Pass all parameters to the parent write method
         super().write(content, width=width, expand=expand, shrink=shrink, scroll_end=scroll_end)
 
+    def add_log(self, message):
+        """Add a log message with proper formatting"""
+        # Add custom indentation for wrapped lines
+        # Use the default write method with all parameters
+        super().write(message)
+
 class TUIInputHandler:
     """Custom input handler to intercept input() calls from CLI functions"""
 
@@ -449,7 +455,7 @@ class MonkeyTUI(App):
             for _ in range(10):
                 try:
                     msg = _pre_tui_buffer.get(block=False)
-                    self.call_from_thread(lambda m=msg: self.system_log.write(m))
+                    self.call_from_thread(lambda m=msg: self.system_log.add_log(m))
                     _pre_tui_buffer.task_done()
                 except queue.Empty:
                     break
