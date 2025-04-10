@@ -228,11 +228,12 @@ class OutputManager:
         Print formatted output to console based on output type
 
         Args:
-            output_type (str): Type of output
+            output_type (str): Type of output ('debug', 'header', 'subheader', 'command',
+                              'feedback', 'analysis', 'list', 'kv')
             content (str or dict): Content to display
             **kwargs: Additional formatting parameters
         """
-        # Get output format
+        # Determine output format
         output_format = kwargs.get('format', self.config.get('system.output_format'))
 
         # Import utility functions
@@ -244,37 +245,72 @@ class OutputManager:
             format_md_command, format_md_feedback, format_md_analysis
         )
 
-        # Import color utility
-        from core.engine.utils import Colors
-
-        # Determine color for command type
-        color = kwargs.get('color')
+        # Default formatted output to the original content
+        formatted = str(content)
 
         # Format based on output type and format
         if output_format == 'md':
             # Markdown formatting
-            if output_type == 'command':
-                # For commands, use specific color handling
-                if color == 'red':
-                    formatted = f"`{content}`{Colors.BRIGHT_RED}  <-- command{Colors.RESET}"
-                else:
-                    formatted = format_md_command(content)
-            # ... rest of existing markdown formatting logic ...
+            if output_type == 'debug':
+                formatted = format_debug(content)
+            elif output_type == 'header':
+                formatted = format_md_header(content)
+            elif output_type == 'subheader':
+                formatted = format_md_subheader(content)
+            elif output_type == 'mini_header':
+                formatted = format_md_mini_header(content)
+            elif output_type == 'command':
+                formatted = format_md_command(content)
+            elif output_type == 'feedback':
+                success = kwargs.get('success', True)
+                formatted = format_md_feedback(content, success)
+            elif output_type == 'analysis':
+                items = kwargs.get('items', [])
+                formatted = format_md_analysis(content, items)
+            elif output_type == 'list':
+                indent = kwargs.get('indent', 0)
+                formatted = f"{'  ' * indent}- {content}"
+            elif output_type == 'kv':
+                key = kwargs.get('key', '')
+                formatted = f"**{key}**: {content}"
+            elif output_type == 'code':
+                formatted = f"```\n{content}\n```"
         else:
             # Plain text formatting with colors
-            if output_type == 'command':
-                # For commands, use specific color handling
-                if color == 'red':
-                    formatted = f"{Colors.BRIGHT_RED}CMD> {content}{Colors.RESET}"
-                else:
-                    formatted = format_command(content)
-            # ... rest of existing plain text formatting logic ...
+            if output_type == 'debug':
+                formatted = format_debug(content)
+            elif output_type == 'header':
+                formatted = format_header(content)
+            elif output_type == 'subheader':
+                formatted = format_subheader(content)
+            elif output_type == 'mini_header':
+                formatted = format_mini_header(content)
+            elif output_type == 'command':
+                formatted = format_command(content)
+            elif output_type == 'feedback':
+                success = kwargs.get('success', True)
+                formatted = format_feedback(content, success)
+            elif output_type == 'analysis':
+                title = kwargs.get('title', 'Result')
+                formatted = format_analysis_result(title, content)
+            elif output_type == 'list':
+                indent = kwargs.get('indent', 0)
+                formatted = format_list_item(content, indent)
+            elif output_type == 'kv':
+                key = kwargs.get('key', '')
+                indent = kwargs.get('indent', 0)
+                formatted = format_key_value(key, content, indent)
+            elif output_type == 'code':
+                indent = kwargs.get('indent', 0)
+                formatted = format_code_block(content, indent)
 
-        ##XX## print(formatted)
+        # Print the formatted output
+        print(formatted)
 
         # Add to buffer if saving session
         if hasattr(self, 'session_file') and self.session_file:
-            # For session file, remove color codes
+            # Use the already-formatted text (which now includes all necessary formatting)
+            # For session file, store without colors
             from re import sub
             plain_text = sub(r'\033\[\d+(;\d+)?m', '', formatted) if '\033[' in formatted else formatted
 
