@@ -8,7 +8,7 @@ import datetime
 import json
 from typing import List, Dict, Any, Optional
 from core.engine.utils import ensure_dir
-from core.engine.logging import debug_print
+from core.engine.logging import debug_print,error,info,warning
 import shutil
 from datetime import datetime
 
@@ -48,13 +48,13 @@ class LlamaIndexConnector:
                 # Fallback to a reliable multilingual model
                 model_name = "intfloat/multilingual-e5-large"
 
-            print(f"Configuring LlamaIndex with embedding model: {model_name}")
+            info(f"Configuring LlamaIndex with embedding model: {model_name}")
 
             # Create local embedding model
             try:
                 embed_model = HuggingFaceEmbedding(model_name=model_name)
                 Settings.embed_model = embed_model
-                print(f"Successfully configured embedding model: {model_name}")
+                info(f"Successfully configured embedding model: {model_name}")
             except Exception as e:
                 print(f"Error creating main embedding model: {str(e)}")
                 # Fall back to a simpler model

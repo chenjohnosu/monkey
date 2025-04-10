@@ -533,6 +533,15 @@ class MonkeyTUI(App):
         log = self.query_one(OutputLog)
 
         try:
+            # Check for direct quit/exit commands - handle these immediately
+            if command_string.lower() in ['/quit', '/exit']:
+                # Stop timers first
+                self._timer_running = False
+                self._status_timer_running = False
+                # Exit directly using the same method as Ctrl-Q
+                self.exit()
+                return
+
             # Detect load command to update workspace immediately
             load_cmd = False
             if command_string.startswith('/load'):
