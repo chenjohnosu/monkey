@@ -446,25 +446,28 @@ class MonkeyTUI(App):
 
         # Process queued logs
         try:
+            # Check if there are any messages in the pre-TUI buffer
+            from core.engine.logging import _pre_tui_buffer
             # Get up to 10 messages at a time to prevent UI freezing
             for _ in range(10):
                 try:
-                    # Get message with short timeout
-                    msg = self.log_handler.log_queue.get(block=False)
-
-                    # Display in system log area
+                    # Try to get from pre-TUI buffer first
+                    msg = _pre_tui_buffer.get(block=False)
                     self.call_from_thread(lambda m=msg: self.system_log.write(m))
+                    _pre_tui_buffer.task_done()
+                except queue.Empty:
+                    break
 
-                    # Mark as done
+            # Process main queue messages
+            for _ in range(10):
+                try:
+                    msg = self.log_handler.log_queue.get(block=False)
+                    self.call_from_thread(lambda m=msg: self.system_log.write(m))
                     self.log_handler.log_queue.task_done()
                 except queue.Empty:
-                    # No more messages
                     break
         except Exception as e:
-            # Catch any errors in log processing
             print(f"Error updating logs: {str(e)}")
-            import traceback
-            print(traceback.format_exc())
 
     def on_input_submitted(self, event):
         """Handle command input"""
