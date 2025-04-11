@@ -7,256 +7,356 @@ import logging
 import queue
 import sys
 import re
+import os
 from typing import Any, Optional
 
-# Message queue for TUI mode
-tui_message_queue = queue.Queue()
-# Flag to indicate if we're in TUI mode
-_in_tui_mode = False
-# Flag to indicate if TUI is fully initialized
-_tui_ready = False
-# Buffer for messages that arrive before TUI is ready
-_pre_tui_buffer = queue.Queue()
+# Message queues for TUI mode
+message_queues = {
+    'user': queue.Queue(),
+    'status': queue.Queue(),
+    'system': queue.Queue(),
+}
 
-class FormattedLogHandler(logging.Handler):
-    """Custom handler that formats logs consistently for both console and TUI"""
+# Global log manager instance
+log_manager = None
 
-    def __init__(self):
-        super().__init__()
+class LogManager:
+    """
+    Unified logging and output manager for both CLI and TUI modes
 
-    def emit(self, record):
-        try:
-            # Determine message color and formatting for TUI
-            color_map = {
-                logging.DEBUG: "[dim]DEBUG[/dim]",
-                logging.INFO: "[white]INFO[/white]",
-                logging.WARNING: "[yellow]WARNING[/yellow]",
-                logging.ERROR: "[bold red]ERROR[/bold red]",
-                logging.CRITICAL: "[bold red]CRITICAL[/bold red]"
-            }
+    Provides:
+    - Single entry point for all output
+    - Interface-aware message routing
+    - Consistent formatting
+    - Configurable log levels
+    """
 
-            # Get the message from the formatter
-            raw_message = self.format(record)
+    # Log level constants (compatible with standard logging)
+    TRACE = 5
+    DEBUG = 10
+    INFO = 20
+    WARNING = 30
+    ERROR = 40
+    CRITICAL = 50
 
-            # Timestamp for context
-            timestamp = datetime.datetime.now().strftime('%H:%M:%S')
+    # Message categories
+    USER = "user"      # User-facing main output
+    STATUS = "status"  # Status bar updates
+    SYSTEM = "system"  # System messages
 
-            # Determine log level display (use color mapping)
-            level_display = color_map.get(record.levelno, f"[{record.levelname}]")
+    def __init__(self, config=None):
+        """Initialize the LogManager"""
+        self.config = config
+        self.tui_mode = False
+        self.tui_ready = False
+        self.log_level = self.INFO
+        self.log_file = None
+        self.log_file_handle = None
+        self.message_queues = message_queues
+        self._setup_logging()
 
-            # Format the message with timestamp and level
-            # Use square bracket indent for multiline messages
-            lines = raw_message.split('\n')
-            if len(lines) > 1:
-                formatted_lines = [f"[{timestamp}] {level_display}: {lines[0]}"]
-                formatted_lines.extend([f"          {line}" for line in lines[1:]])
-                formatted = '\n'.join(formatted_lines)
-            else:
-                formatted = f"[{timestamp}] {level_display}: {raw_message}"
+    def _setup_logging(self):
+        """Configure Python's standard logging to use our handler"""
+        # Define TRACE level for logging
+        logging.TRACE = self.TRACE
+        logging.addLevelName(logging.TRACE, "TRACE")
 
-            if _in_tui_mode:
-                if _tui_ready:
-                    # Add to the main TUI message queue if TUI is ready
-                    tui_message_queue.put(formatted)
-                else:
-                    # Add to pre-TUI buffer if TUI is not ready yet
-                    _pre_tui_buffer.put(formatted)
-            else:
-                # Print directly to stderr (standard for logging)
-                print(formatted, file=sys.stderr)
-        except Exception:
-            self.handleError(record)
+        # Configure root logger
+        root_logger = logging.getLogger()
+        root_logger.setLevel(logging.TRACE)  # Capture everything, filter later
 
-def configure_root_logger(level=logging.INFO):
-    """Configure the root logger with standard formatting"""
-    root_logger = logging.getLogger()
-
-    # Clear existing handlers to avoid duplicates
-    if root_logger.handlers:
+        # Remove existing handlers to avoid duplicates
         for handler in root_logger.handlers[:]:
             root_logger.removeHandler(handler)
 
-    # Set level
-    root_logger.setLevel(level)
+        # Add our custom handler
+        handler = logging.StreamHandler(stream=sys.stderr)
+        handler.setFormatter(logging.Formatter('%(message)s'))
 
-    # Add our custom handler
-    custom_handler = FormattedLogHandler()
-    formatter = logging.Formatter('%(message)s')
-    custom_handler.setFormatter(formatter)
-    root_logger.addHandler(custom_handler)
+        # Override the emit method to use our routing
+        original_emit = handler.emit
+        def custom_emit(record):
+            msg = handler.format(record)
+            if record.levelno >= logging.ERROR:
+                self.error(msg)
+            elif record.levelno >= logging.WARNING:
+                self.warning(msg)
+            elif record.levelno >= logging.INFO:
+                self.info(msg)
+            elif record.levelno >= logging.DEBUG:
+                self.debug(msg)
+            else:
+                self.trace(msg)
 
-    # Silence overly verbose libraries
-    logging.getLogger('numba').setLevel(logging.WARNING)
-    logging.getLogger('matplotlib').setLevel(logging.WARNING)
-    logging.getLogger('PIL').setLevel(logging.WARNING)
+        handler.emit = custom_emit
+        root_logger.addHandler(handler)
 
-    return root_logger
+        # Silence overly verbose libraries
+        logging.getLogger('numba').setLevel(logging.WARNING)
+        logging.getLogger('matplotlib').setLevel(logging.WARNING)
+        logging.getLogger('PIL').setLevel(logging.WARNING)
 
-# Add TRACE level to the logging module
-logging.TRACE = 5
-logging.addLevelName(logging.TRACE, "TRACE")
+    def set_interface_mode(self, mode="cli"):
+        """Set interface mode to 'cli' or 'tui'"""
+        self.tui_mode = (mode.lower() == "tui")
 
-def set_tui_mode(enabled=False):
-    """
-    Set whether we're in TUI mode
+    def set_log_level(self, level):
+        """Set the minimum log level to display"""
+        self.log_level = level
 
-    Args:
-        enabled: Whether TUI mode is enabled
-    """
-    global _in_tui_mode
-    _in_tui_mode = enabled
-    return _in_tui_mode
+    def start_file_logging(self, filepath=None):
+        """Enable logging to file"""
+        if filepath:
+            # Close existing file if open
+            if self.log_file_handle:
+                self.log_file_handle.close()
 
-def set_tui_ready(ready=True):
-    """
-    Set whether the TUI is fully initialized and ready for messages
+            try:
+                # Ensure directory exists
+                log_dir = os.path.dirname(filepath)
+                if log_dir and not os.path.exists(log_dir):
+                    os.makedirs(log_dir)
 
-    Args:
-        ready: Whether TUI is ready
-    """
-    global _tui_ready
-    _tui_ready = ready
+                # Open log file
+                self.log_file_handle = open(filepath, 'w', encoding='utf-8')
+                self.log_file = filepath
 
-    # If TUI is now ready, transfer any buffered messages to the main queue
-    if ready:
-        while not _pre_tui_buffer.empty():
-            tui_message_queue.put(_pre_tui_buffer.get())
+                # Log successful start
+                timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                self.log_file_handle.write(f"=== Log started at {timestamp} ===\n")
+                self.log_file_handle.flush()
 
-    return _tui_ready
+                return True
+            except Exception as e:
+                # Fall back to direct sys.stderr write since logging might not be reliable
+                sys.stderr.write(f"Error opening log file: {str(e)}\n")
+                return False
+        else:
+            return False
 
-def get_tui_message():
-    """
-    Get the next message from the TUI message queue
-
-    Returns:
-        str: The next message, or None if queue is empty
-    """
-    if tui_message_queue.empty():
+    def stop_file_logging(self):
+        """Disable logging to file"""
+        if self.log_file_handle:
+            try:
+                timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                self.log_file_handle.write(f"=== Log ended at {timestamp} ===\n")
+                self.log_file_handle.close()
+                result = self.log_file
+                self.log_file = None
+                self.log_file_handle = None
+                return result
+            except Exception:
+                return None
         return None
-    return tui_message_queue.get()
 
-# Define logging functions before LogManager
-def get_logger(name):
-    """
-    Get a logger instance with the specified name
+    def user(self, message, format_type=None, **kwargs):
+        """Output user-facing content"""
+        self._log(self.USER, self.INFO, message, format_type, **kwargs)
 
-    Args:
-        name: Logger name (usually module name or component)
+    def status(self, message):
+        """Update status information"""
+        self._log(self.STATUS, self.INFO, message)
 
-    Returns:
-        logging.Logger: Configured logger
-    """
-    return logging.getLogger(name)
+    def debug(self, message):
+        """Log debug information"""
+        self._log(self.SYSTEM, self.DEBUG, message)
 
+    def info(self, message):
+        """Log general information"""
+        self._log(self.SYSTEM, self.INFO, message)
+
+    def warning(self, message):
+        """Log warning"""
+        self._log(self.SYSTEM, self.WARNING, message)
+
+    def error(self, message):
+        """Log error"""
+        self._log(self.SYSTEM, self.ERROR, message)
+
+    def trace(self, message):
+        """Log detailed trace information"""
+        self._log(self.SYSTEM, self.TRACE, message)
+
+    def _log(self, category, level, message, format_type=None, **kwargs):
+        """Internal logging implementation"""
+        # Skip logging if below current log level
+        if level < self.log_level:
+            return
+
+        # Format the message based on category and level
+        formatted = self._format_message(category, level, message, format_type, **kwargs)
+        plain = self._strip_formatting(formatted)
+
+        # Route based on interface mode and category
+        if self.tui_mode and self.tui_ready:
+            # Add to appropriate message queue for TUI
+            self.message_queues[category].put(formatted)
+        else:
+            # Direct output for CLI mode
+            self._output_to_cli(category, level, plain)
+
+        # Always write to log file if enabled
+        if self.log_file_handle:
+            self._write_to_log_file(level, plain)
+
+    def _format_message(self, category, level, message, format_type=None, **kwargs):
+        """Format message with appropriate styling"""
+        # Import formatting here to avoid circular imports
+        from core.engine.formatting import Formatter
+
+        # Get timestamp for context
+        timestamp = datetime.datetime.now().strftime('%H:%M:%S')
+
+        # Format based on message category and level
+        if category == self.USER:
+            if format_type == 'header':
+                return Formatter.format_header(message, for_tui=self.tui_mode)
+            elif format_type == 'subheader':
+                return Formatter.format_subheader(message, for_tui=self.tui_mode)
+            elif format_type == 'mini_header':
+                return Formatter.format_mini_header(message, for_tui=self.tui_mode)
+            elif format_type == 'kv':
+                key = kwargs.get('key', '')
+                indent = kwargs.get('indent', 0)
+                return Formatter.format_key_value(key, message, indent, for_tui=self.tui_mode)
+            elif format_type == 'list':
+                indent = kwargs.get('indent', 0)
+                return Formatter.format_list_item(message, indent, for_tui=self.tui_mode)
+            elif format_type == 'feedback':
+                success = kwargs.get('success', True)
+                return Formatter.format_feedback(message, success, for_tui=self.tui_mode)
+            elif format_type == 'code':
+                indent = kwargs.get('indent', 0)
+                return Formatter.format_code_block(message, indent, for_tui=self.tui_mode)
+            elif format_type == 'command':
+                return Formatter.format_command(message, for_tui=self.tui_mode)
+            else:
+                # Default formatting for user messages
+                return message
+
+        elif category == self.SYSTEM:
+            # Format system messages with level prefix
+            level_name = logging.getLevelName(level)
+            if level >= self.ERROR:
+                return Formatter.format_error(f"[{timestamp}] {level_name}: {message}", for_tui=self.tui_mode)
+            elif level >= self.WARNING:
+                return Formatter.format_warning(f"[{timestamp}] {level_name}: {message}", for_tui=self.tui_mode)
+            elif level >= self.INFO:
+                return Formatter.format_info(f"[{timestamp}] {level_name}: {message}", for_tui=self.tui_mode)
+            elif level >= self.DEBUG:
+                return Formatter.format_debug(f"[{timestamp}] {level_name}: {message}", for_tui=self.tui_mode)
+            else:
+                return Formatter.format_trace(f"[{timestamp}] {level_name}: {message}", for_tui=self.tui_mode)
+
+        else:  # STATUS or other categories
+            return message
+
+    def _strip_formatting(self, text):
+        """Remove ANSI escape codes from text"""
+        from core.engine.formatting import Formatter
+        return Formatter.strip_ansi(text)
+
+    def _output_to_cli(self, category, level, formatted_message):
+        """Output to CLI"""
+        if category == self.USER:
+            # Main output goes to stdout
+            print(formatted_message)
+        else:
+            # System messages and status updates go to stderr
+            print(formatted_message, file=sys.stderr)
+
+    def _write_to_log_file(self, level, message):
+        """Write message to log file if enabled"""
+        if self.log_file_handle:
+            try:
+                timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                level_name = logging.getLevelName(level)
+                self.log_file_handle.write(f"[{timestamp}] {level_name}: {message}\n")
+                self.log_file_handle.flush()
+            except Exception:
+                # If writing to log file fails, we can't really log the error
+                # Just continue silently to avoid infinite recursion
+                pass
+
+    def get_queued_messages(self, category):
+        """Get messages from queue for TUI processing"""
+        messages = []
+        queue = self.message_queues.get(category, None)
+
+        if not queue:
+            return messages
+
+        # Get all messages without blocking
+        while not queue.empty():
+            try:
+                messages.append(queue.get_nowait())
+                queue.task_done()
+            except queue.Empty:
+                break
+
+        return messages
+
+# Deprecation wrapper for maintaining compatibility
 def debug_print(config, message):
     """
-    Print a debug message if debug mode is enabled
-    Redirects to standard logging
+    Legacy debug_print function - redirects to log_manager.debug
 
     Args:
-        config: Configuration object with system.debug setting
-        message: Message to print
-    """
-    # Check if debug is enabled in config
-    debug_mode = False
-    if config:
-        try:
-            debug_mode = config.get('system.debug', False)
-        except Exception:
-            pass
-
-    if debug_mode:
-        logging.debug(message)
-
-def error(message):
-    """
-    Log an error message
-
-    Args:
+        config: Configuration object (ignored, kept for compatibility)
         message: Message to log
     """
-    logging.error(message)
+    global log_manager
+    if log_manager:
+        log_manager.debug(message)
+    else:
+        # Fall back to stderr if log_manager not initialized
+        print(f"DEBUG: {message}", file=sys.stderr)
+
+# Initialize global log manager if not already done
+def get_log_manager(config=None):
+    """Get or create the global log manager"""
+    global log_manager
+    if not log_manager:
+        log_manager = LogManager(config)
+    return log_manager
+
+# Compatibility functions mapped to log_manager methods
+def error(message):
+    """Log an error message"""
+    get_log_manager().error(message)
 
 def warning(message):
-    """
-    Log a warning message
-
-    Args:
-        message: Message to log
-    """
-    logging.warning(message)
+    """Log a warning message"""
+    get_log_manager().warning(message)
 
 def info(message):
-    """
-    Log an info message
-
-    Args:
-        message: Message to log
-    """
-    logging.info(message)
+    """Log an info message"""
+    get_log_manager().info(message)
 
 def debug(message):
-    """
-    Log a debug message if debug is enabled
-
-    Args:
-        message: Message to log
-    """
-    logging.debug(message)
+    """Log a debug message"""
+    get_log_manager().debug(message)
 
 def trace(message):
-    """
-    Log a trace message (more detailed than debug)
+    """Log a trace message"""
+    get_log_manager().trace(message)
 
-    Args:
-        message: Message to log
-    """
-    logging.log(logging.TRACE, message)
+def set_tui_mode(enabled=False):
+    """Set whether we're in TUI mode"""
+    get_log_manager().set_interface_mode("tui" if enabled else "cli")
+    return enabled
 
-# Now define LogManager, which can reference the already defined functions
-class LogManager:
-    """
-    Compatibility wrapper for logging functions to maintain existing code structure
-    """
-    _debug_enabled = False
+def set_tui_ready(ready=True):
+    """Set whether the TUI is fully initialized and ready for messages"""
+    get_log_manager().tui_ready = ready
+    return ready
 
-    @staticmethod
-    def set_tui_mode(enabled=False):
-        """Set TUI mode"""
-        return set_tui_mode(enabled)
+def get_logger(name):
+    """Get a logger instance - compatibility function"""
+    return logging.getLogger(name)
 
-    @staticmethod
-    def set_tui_ready(ready=True):
-        """Set TUI readiness"""
-        return set_tui_ready(ready)
+# Initialize the log manager
+log_manager = get_log_manager()
 
-    @staticmethod
-    def get_tui_message():
-        """Get TUI message"""
-        return get_tui_message()
-
-    @staticmethod
-    def set_debug(enabled=False):
-        """Set debug mode"""
-        LogManager._debug_enabled = enabled
-        root_logger = logging.getLogger()
-
-        if enabled:
-            root_logger.setLevel(logging.DEBUG)
-        else:
-            if root_logger.level == logging.DEBUG:
-                root_logger.setLevel(logging.INFO)
-
-        return enabled
-
-    # Attach module-level functions as static methods
-    get_logger = staticmethod(get_logger)
-    debug_print = staticmethod(debug_print)
-    error = staticmethod(error)
-    warning = staticmethod(warning)
-    info = staticmethod(info)
-    debug = staticmethod(debug)
-    trace = staticmethod(trace)
-
-# Initialize the logging system
-configure_root_logger()
+# Configure root logger
+logging.basicConfig(level=logging.INFO, format='%(message)s', handlers=[])
