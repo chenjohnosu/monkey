@@ -5,7 +5,7 @@ With improved session logging capability and fixed exit behavior
 
 import os
 
-from core.engine.logging import debug_print
+from core.engine.logging import debug_print, info, warning, error, debug
 from core.engine.storage import StorageManager
 from core.engine.output import OutputManager
 from core.language.processor import TextProcessor
@@ -40,7 +40,7 @@ class QueryEngine:
         # Check if workspace exists
         data_dir = os.path.join("data", workspace)
         if not os.path.exists(data_dir):
-            print(f"Workspace '{workspace}' does not exist or has no vector store")
+            error(f"Workspace '{workspace}' does not exist or has no vector store")
             return False
 
         # Set active state
@@ -49,13 +49,13 @@ class QueryEngine:
 
         # Load vector store
         if not self.storage_manager.load_vector_store(workspace):
-            print(f"Failed to load vector store for workspace '{workspace}'")
+            error(f"Failed to load vector store for workspace '{workspace}'")
             self.active = False
             return False
 
         # Connect to Ollama and verify model availability
         if not self._verify_llm_connection():
-            print("Warning: LLM connection could not be verified. Will attempt to use when needed.")
+            warning("LLM connection could not be verified. Will attempt to use when needed.")
 
         return True
 
@@ -74,7 +74,7 @@ class QueryEngine:
         self.active = False
         self.current_workspace = None
 
-        print(f"Query mode deactivated for workspace '{workspace}' - returning to command loop")
+        info(f"Query mode deactivated for workspace '{workspace}' - returning to command loop")
 
     def is_active(self):
         """Check if query mode is active"""
@@ -111,7 +111,7 @@ class QueryEngine:
         try:
             return self.llm_connector.generate_with_context(query, docs, model)
         except Exception as e:
-            debug_print(self.config, f"Error generating response: {str(e)}")
+            error(f"Error generating response: {str(e)}")
             return f"Error generating response: {str(e)}"
 
     def _generate_response_no_context(self, query):
@@ -136,7 +136,7 @@ class QueryEngine:
         try:
             return self.llm_connector.generate(prompt, model)
         except Exception as e:
-            debug_print(self.config, f"Error generating response: {str(e)}")
+            error(f"Error generating response: {str(e)}")
             return f"Error generating response: {str(e)}"
 
     def enter_interactive_mode(self):
@@ -145,7 +145,7 @@ class QueryEngine:
 
         This method creates a separate loop for processing queries
         """
-        print("Entering interactive query mode. Type /exit to return to main command mode.")
+        info("Entering interactive query mode. Type /exit to return to main command mode.")
 
         # Start session saving if configured
         self._start_query_session_logging()
@@ -161,7 +161,7 @@ class QueryEngine:
 
                 # Check for exit command
                 if query.lower() in ['/exit', '/quit']:
-                    print("Exiting query mode.")
+                    info("Exiting query mode.")
                     # Deactivate will handle stopping the logging session
                     self.deactivate()
                     break
@@ -174,7 +174,7 @@ class QueryEngine:
                 self.process_query(query)
 
             except KeyboardInterrupt:
-                print("\nReturning to main command mode.")
+                info("\nReturning to main command mode.")
                 self.deactivate()
                 break
 
@@ -187,10 +187,10 @@ class QueryEngine:
             try:
                 # Start session saving with query prefix
                 self.output_manager.start_session_saving(self.current_workspace)
-                print("Query session logging started. All queries and responses will be saved.")
+                info("Query session logging started. All queries and responses will be saved.")
                 self.logging_session = True
             except Exception as e:
-                debug_print(self.config, f"Error starting query session logging: {str(e)}")
+                error(f"Error starting query session logging: {str(e)}")
                 self.logging_session = False
         else:
             debug_print(self.config, "OutputManager doesn't support session saving")
@@ -204,11 +204,11 @@ class QueryEngine:
         if self.logging_session and hasattr(self.output_manager, 'stop_session_saving'):
             try:
                 filepath = self.output_manager.stop_session_saving()
-                print(f"Query session logging stopped. Session log saved to: {filepath}")
+                info(f"Query session logging stopped. Session log saved to: {filepath}")
                 self.logging_session = False
             except Exception as e:
-                debug_print(self.config, f"Error stopping query session logging: {str(e)}")
-                print(f"Warning: Could not properly save session log: {str(e)}")
+                error(f"Error stopping query session logging: {str(e)}")
+                warning(f"Could not properly save session log: {str(e)}")
                 self.logging_session = False
 
     def process_query(self, query):
@@ -221,20 +221,16 @@ class QueryEngine:
         debug_print(self.config, f"Processing query: {query}")
 
         if not self.active:
-            self.output_manager.print_formatted('feedback', "Query mode is not active", success=False)
+            error("Query mode is not active")
             return
 
         # Handle exit/quit commands to exit query mode
         if query.strip().lower() in ['/exit', '/quit']:
-            self.output_manager.print_formatted('feedback', "Exiting query mode")
+            info("Exiting query mode")
             self.deactivate()
             return
 
-        # Display the query with compact formatting
-        self.output_manager.print_formatted('header', "QUERY")
-        print(f"{query}\n")
-
-        # Explicitly log the query text if we're saving a session
+        # Log the query text if we're saving a session
         if self.logging_session and hasattr(self.output_manager, '_write_to_session'):
             self.output_manager._write_to_session(f"User Query: {query}")
 
@@ -248,74 +244,49 @@ class QueryEngine:
         docs = self.storage_manager.query_documents(self.current_workspace, processed_query['processed'], k=k_value)
 
         if not docs:
-            self.output_manager.print_formatted('feedback', "No relevant documents found", success=False)
+            debug("No relevant documents found")
             response = self._generate_response_no_context(query)
 
-            # Display the response
-            self.output_manager.print_formatted('header', "RESPONSE")
-            print(f"{response}\n")
+            # Display only the response
+            print(f"{response}")
 
-            # Explicitly log the response text
+            # Log the response text
             if self.logging_session and hasattr(self.output_manager, '_write_to_session'):
                 self.output_manager._write_to_session(f"Response (no documents found): {response}")
 
             self.output_manager.add_to_buffer(query, response, [])
             return
 
-        # Display retrieved documents header with count
-        self.output_manager.print_formatted('subheader', f"RETRIEVED DOCUMENTS ({len(docs)})")
-
-        # Import color codes
-        from core.engine.utils import Colors
+        # Log the document retrieval details to debug
+        debug(f"Retrieved {len(docs)} documents")
+        for i, doc in enumerate(docs):
+            source = doc.get('metadata', {}).get('source', 'unknown')
+            score = doc.get('relevance_score', 'N/A')
+            debug(f"Document {i + 1}: {source} (Score: {score if isinstance(score, str) else f'{score:.4f}'})")
 
         # Log the document details if we're saving a session
         if self.logging_session and hasattr(self.output_manager, '_write_to_session'):
             doc_log = f"Retrieved {len(docs)} documents:\n"
-
-        # Display document summaries in a compact format
-        for i, doc in enumerate(docs):
-            source = doc.get('metadata', {}).get('source', 'unknown')
-            score = doc.get('relevance_score', 'N/A')
-
-            # Format document with colors
-            print(f"\n{Colors.YELLOW}Document {i + 1}: {source}{Colors.RESET}")
-            print(f"  {Colors.BRIGHT_WHITE}Relevance:{Colors.RESET} {score:.4f}" if isinstance(score,
-                                                                                             float) else f"  {Colors.BRIGHT_WHITE}Relevance:{Colors.RESET} {score}")
-
-            # Add to log if we're saving a session
-            if self.logging_session and hasattr(self.output_manager, '_write_to_session'):
+            for i, doc in enumerate(docs):
+                source = doc.get('metadata', {}).get('source', 'unknown')
+                score = doc.get('relevance_score', 'N/A')
                 doc_log += f"Document {i+1}: {source}, Relevance: {score if isinstance(score, str) else f'{score:.4f}'}\n"
 
-            # Show content preview with gray text
-            content = doc.get('content', '')
-            preview = (content[:200] + '...') if len(content) > 200 else content
-            preview_lines = preview.split('\n')
-
-            if preview_lines:
-                print(f"  {Colors.BRIGHT_WHITE}Preview:{Colors.RESET}")
                 # Add preview to log
-                if self.logging_session and hasattr(self.output_manager, '_write_to_session'):
-                    # Use a variable to avoid f-string backslash issue
-                    preview_flat = preview.replace('\n', ' ')
-                    doc_log += f"  Preview: {preview_flat}\n"
+                content = doc.get('content', '')
+                preview = (content[:200] + '...') if len(content) > 200 else content
+                preview_flat = preview.replace('\n', ' ')
+                doc_log += f"  Preview: {preview_flat}\n"
 
-                for line in preview_lines[:3]:  # Limit to first 3 lines for compactness
-                    print(f"  {Colors.GRAY}{line}{Colors.RESET}")
-                if len(preview_lines) > 3:
-                    print(f"  {Colors.GRAY}...{Colors.RESET}")
-
-        # Log the document summaries if we're saving a session
-        if self.logging_session and hasattr(self.output_manager, '_write_to_session'):
             self.output_manager._write_to_session(doc_log)
 
         # Generate response using LLM
         response = self._generate_response(query, docs)
 
-        # Display the response
-        self.output_manager.print_formatted('header', "RESPONSE")
-        print(f"{response}\n")
+        # Display only the response
+        print(f"{response}")
 
-        # Explicitly log the response text
+        # Log the response text
         if self.logging_session and hasattr(self.output_manager, '_write_to_session'):
             self.output_manager._write_to_session(f"Response: {response}")
 
