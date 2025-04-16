@@ -28,7 +28,7 @@ query:
 storage:
   vector_store: llama_index
 system:
-  debug: true
+  debug: false
   output_format: txt
 workspace:
   default: default
