@@ -8,6 +8,11 @@ import datetime
 import re
 import json
 from typing import Dict, List, Any
+from pathlib import Path
+import tempfile
+import shutil
+import contextlib
+from functools import wraps
 
 # Import logging for debug_print usage
 from core.engine.logging import debug_print, error, warning, info, debug, trace
@@ -16,15 +21,14 @@ from core.engine.logging import debug_print, error, warning, info, debug, trace
 # ===== FILE OPERATIONS =====
 
 def ensure_dir(directory):
-    """Ensure a directory exists, creating it if necessary"""
-    if not os.path.exists(directory):
-        os.makedirs(directory)
-        return True
-    return False
+    """Ensure a directory exists, creating it if necessary using pathlib"""
+    path = Path(directory)
+    path.mkdir(parents=True, exist_ok=True)
+    return not path.exists()
 
 def get_file_extension(filepath):
-    """Get the extension of a file"""
-    return os.path.splitext(filepath)[1].lower()
+    """Get the extension of a file using pathlib"""
+    return Path(filepath).suffix.lower()
 
 def get_supported_extensions():
     """Get a list of supported file extensions"""
@@ -115,15 +119,28 @@ def get_file_content(filepath):
     else:
         return None
 
+
 def save_json(filepath, data, indent=2):
-    """Save data to a JSON file with error handling"""
+    """Save data to a JSON file with proper error handling and atomic writes"""
     try:
-        with open(filepath, 'w', encoding='utf-8') as file:
-            json.dump(data, file, indent=indent)
+        # Create parent directory if needed
+        Path(filepath).parent.mkdir(parents=True, exist_ok=True)
+
+        # Write to temp file first, then rename for atomicity
+        temp_file = f"{filepath}.tmp"
+        with open(temp_file, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=indent)
+
+        # Atomic replace
+        os.replace(temp_file, filepath)
         return True
     except Exception as e:
         error(f"Error saving JSON file {filepath}: {str(e)}")
+        # Clean up temp file if it exists
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(f"{filepath}.tmp")
         return False
+
 
 def load_json(filepath, default=None):
     """Load data from a JSON file with error handling"""
@@ -139,6 +156,36 @@ def load_json(filepath, default=None):
     except Exception as e:
         error(f"Error loading JSON file {filepath}: {str(e)}")
         return default
+
+
+def create_timestamped_backup(filepath):
+    """Create a timestamped backup of a file or directory using proper temp files"""
+    path = Path(filepath)
+    if not path.exists():
+        return None
+
+    # Create backup filename with timestamp
+    timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+    backup_path = f"{filepath}_backup_{timestamp}"
+
+    try:
+        # Use temporary directory for atomic operation
+        with tempfile.TemporaryDirectory() as tmpdir:
+            temp_backup = Path(tmpdir) / path.name
+
+            # Copy to temp location first
+            if path.is_dir():
+                shutil.copytree(path, temp_backup)
+            else:
+                shutil.copy2(path, temp_backup)
+
+            # Then move to final location (more atomic)
+            shutil.move(temp_backup, backup_path)
+
+        return backup_path
+    except Exception as e:
+        error(f"Error creating backup of {filepath}: {str(e)}")
+        return None
 
 def timestamp_filename(prefix, extension):
     """Generate a filename with a timestamp"""
@@ -190,7 +237,7 @@ def load_original_document(config, workspace, source_path):
 
 def split_text_into_chunks(text, chunk_size=500):
     """
-    Split text into chunks for processing
+    Split text into chunks more efficiently
 
     Args:
         text (str): Text to split
@@ -199,23 +246,26 @@ def split_text_into_chunks(text, chunk_size=500):
     Returns:
         List[str]: Text chunks
     """
-    # Split by sentences first if possible
-    chunks = []
-    sentences = text.split('.')
+    if not text:
+        return []
 
+    # Use regular expressions for more efficient sentence splitting
+    import re
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+
+    chunks = []
     current_chunk = ""
 
     for sentence in sentences:
-        sentence = sentence.strip() + "."
-
-        if len(current_chunk) + len(sentence) <= chunk_size:
-            current_chunk += " " + sentence
-        else:
+        # If adding this sentence would exceed chunk size
+        if len(current_chunk) + len(sentence) + 1 > chunk_size:
+            # Save current chunk if it exists
             if current_chunk:
                 chunks.append(current_chunk.strip())
 
-            # If sentence is longer than chunk_size, split it
+            # Handle sentences longer than chunk_size
             if len(sentence) > chunk_size:
+                # Split long sentence into chunks
                 words = sentence.split()
                 current_chunk = ""
 
@@ -227,6 +277,9 @@ def split_text_into_chunks(text, chunk_size=500):
                         current_chunk = word
             else:
                 current_chunk = sentence
+        else:
+            # Add sentence to current chunk
+            current_chunk += " " + sentence
 
     # Add the last chunk if it exists
     if current_chunk:
@@ -374,12 +427,12 @@ def extract_keywords(config, texts, language="en", top_n=10, stopwords=None):
 # ===== PERFORMANCE MEASUREMENT =====
 
 def measure_execution_time(func):
-    """Decorator to measure execution time of a function"""
+    """Decorator to measure execution time of a function using functools.wraps"""
+    @wraps(func)
     def wrapper(*args, **kwargs):
         start_time = time.time()
         result = func(*args, **kwargs)
-        end_time = time.time()
-        execution_time = end_time - start_time
+        execution_time = time.time() - start_time
         print(f"Function '{func.__name__}' executed in {execution_time:.2f} seconds")
         return result
     return wrapper

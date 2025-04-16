@@ -4,7 +4,7 @@ Command line interface for the document analysis toolkit
 
 import os
 import shlex
-from core.engine.logging import debug, error, warning, info, trace, get_logger, debug_print
+from core.engine.logging import debug, error, warning, info, trace, debug_print
 from core.engine.storage import StorageManager, VectorStoreInspector
 from core.engine.output import OutputManager
 import datetime
