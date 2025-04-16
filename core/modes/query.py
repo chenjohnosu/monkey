@@ -20,6 +20,7 @@ class QueryEngine:
 
     def __init__(self, config, storage_manager=None, output_manager=None, text_processor=None):
         """Initialize the query engine"""
+
         self.config = config
         self.storage_manager = storage_manager or StorageManager(config)
         self.output_manager = output_manager or OutputManager(config)
@@ -29,7 +30,7 @@ class QueryEngine:
 
         self.active = False
         self.current_workspace = None
-        self.session_logger = None
+        self.logging_session = False  # Explicitly add logging_session attribute
         debug_print(config, "Query engine initialized")
 
     def activate(self, workspace):
@@ -213,9 +214,6 @@ class QueryEngine:
     def process_query(self, query):
         """
         Process a user query with compact colored output and properly log all content
-
-        Args:
-            query (str): The query string
         """
         debug_print(self.config, f"Processing query: {query}")
 
@@ -223,18 +221,16 @@ class QueryEngine:
             self.output_manager.print_formatted('feedback', "Query mode is not active", success=False)
             return
 
-        # Handle exit/quit commands to exit query mode
-        if query.strip().lower() in ['/exit', '/quit']:
-            self.output_manager.print_formatted('feedback', "Exiting query mode")
-            self.deactivate()
-            return
-
         # Display the query with compact formatting
         self.output_manager.print_formatted('header', "QUERY")
-        print(f"{query}\n")
 
-        # Log the query text
-        self._log_to_session(f"User Query: {query}")
+        # Use textwrap to wrap the query
+        wrapped_query_lines = textwrap.wrap(query, width=80)
+        print('\n'.join(wrapped_query_lines) + '\n')
+
+        # Explicitly log the query text if we're saving a session
+        if self.logging_session and hasattr(self.output_manager, '_write_to_session'):
+            self.output_manager._write_to_session(f"User Query: {query}")
 
         # Preprocess query
         processed_query = self.text_processor.preprocess(query)
@@ -245,30 +241,30 @@ class QueryEngine:
         # Retrieve documents
         docs = self.storage_manager.query_documents(self.current_workspace, processed_query['processed'], k=k_value)
 
-        # If no relevant documents found, generate response without context
         if not docs:
             self.output_manager.print_formatted('feedback', "No relevant documents found", success=False)
             response = self._generate_response_no_context(query)
 
             # Display the response
             self.output_manager.print_formatted('header', "RESPONSE")
-            print(f"{response}\n")
 
-            # Log the response text
-            self._log_to_session(f"Response (no documents found): {response}")
+            # Wrap the response
+            wrapped_response_lines = textwrap.wrap(response, width=80)
+            print('\n'.join(wrapped_response_lines) + '\n')
 
-            # Add to buffer for potential later saving
+            # Explicitly log the response text
+            if self.logging_session and hasattr(self.output_manager, '_write_to_session'):
+                self.output_manager._write_to_session(f"Response (no documents found): {response}")
+
             self.output_manager.add_to_buffer(query, response, [])
             return
 
         # Display retrieved documents header with count
         self.output_manager.print_formatted('subheader', f"RETRIEVED DOCUMENTS ({len(docs)})")
 
-        # Import color codes
-        from core.engine.utils import Colors
-
-        # Create document summary log
-        doc_log = f"Retrieved {len(docs)} documents:\n"
+        # Log the document details if we're saving a session
+        if self.logging_session and hasattr(self.output_manager, '_write_to_session'):
+            doc_log = f"Retrieved {len(docs)} documents:\n"
 
         # Display document summaries in a compact format
         for i, doc in enumerate(docs):
@@ -280,8 +276,9 @@ class QueryEngine:
             print(f"  {Colors.BRIGHT_WHITE}Relevance:{Colors.RESET} {score:.4f}" if isinstance(score,
                                                                                                float) else f"  {Colors.BRIGHT_WHITE}Relevance:{Colors.RESET} {score}")
 
-            # Add to log
-            doc_log += f"Document {i + 1}: {source}, Relevance: {score if isinstance(score, str) else f'{score:.4f}'}\n"
+            # Add to log if we're saving a session
+            if self.logging_session and hasattr(self.output_manager, '_write_to_session'):
+                doc_log += f"Document {i + 1}: {source}, Relevance: {score if isinstance(score, str) else f'{score:.4f}'}\n"
 
             # Show content preview with gray text
             content = doc.get('content', '')
@@ -290,25 +287,41 @@ class QueryEngine:
 
             if preview_lines:
                 print(f"  {Colors.BRIGHT_WHITE}Preview:{Colors.RESET}")
-                doc_log += "  Preview: {}\n".format(preview.replace('\n', ' '))
+                # Add preview to log
+                if self.logging_session and hasattr(self.output_manager, '_write_to_session'):
+                    preview_flat = preview.replace('\n', ' ')
+                    doc_log += f"  Preview: {preview_flat}\n"
 
+                # Wrap preview lines
+                wrapped_preview_lines = []
                 for line in preview_lines[:3]:  # Limit to first 3 lines for compactness
-                    print(f"  {Colors.GRAY}{line}{Colors.RESET}")
+                    wrapped_preview_lines.extend(
+                        textwrap.wrap(line, width=70, initial_indent='  ', subsequent_indent='    '))
+
+                # Print wrapped lines with gray color
+                for wrapped_line in wrapped_preview_lines:
+                    print(f"{Colors.GRAY}{wrapped_line}{Colors.RESET}")
+
                 if len(preview_lines) > 3:
                     print(f"  {Colors.GRAY}...{Colors.RESET}")
 
-        # Log the document summaries
-        self._log_to_session(doc_log)
+        # Log the document summaries if we're saving a session
+        if self.logging_session and hasattr(self.output_manager, '_write_to_session'):
+            self.output_manager._write_to_session(doc_log)
 
         # Generate response using LLM
         response = self._generate_response(query, docs)
 
         # Display the response
         self.output_manager.print_formatted('header', "RESPONSE")
-        print(f"{response}\n")
 
-        # Log the response text
-        self._log_to_session(f"Response: {response}")
+        # Wrap the response
+        wrapped_response_lines = textwrap.wrap(response, width=80)
+        print('\n'.join(wrapped_response_lines) + '\n')
+
+        # Explicitly log the response text
+        if self.logging_session and hasattr(self.output_manager, '_write_to_session'):
+            self.output_manager._write_to_session(f"Response: {response}")
 
         # Save to buffer for potential later saving
         self.output_manager.add_to_buffer(query, response, docs)
