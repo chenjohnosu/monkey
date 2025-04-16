@@ -3,9 +3,6 @@ Theme analysis module with enhanced content-based processing
 """
 
 import os
-import signal
-import time
-import re
 import numpy as np
 from collections import Counter, defaultdict
 from typing import Dict, List, Any, Tuple
@@ -19,6 +16,10 @@ from core.engine.output import OutputManager
 from core.language.processor import TextProcessor
 from core.language.tokenizer import ChineseTokenizer, JIEBA_AVAILABLE
 import threading
+from core.engine.utils import (
+    ensure_dir, get_file_content, timestamp_filename, format_size,
+    split_text_into_chunks, configure_vectorizer
+)
 
 # Import jieba for Chinese text segmentation if available
 try:
@@ -736,22 +737,17 @@ class ThemeAnalyzer:
                 "language": doc["language"]
             })
 
-        # Check if we have enough documents
         if len(doc_texts) < 2:
             return {
                 "method": "Content Network Analysis",
                 "themes": [{"name": "Insufficient documents for analysis", "centrality": 0, "nodes": []}]
             }
 
-        # Determine primary language
         languages = [meta["language"] for meta in doc_metadata]
         primary_language = Counter(languages).most_common(1)[0][0]
         is_chinese = primary_language == "zh"
 
-        # Create TF-IDF vectors for documents with parameters appropriate for corpus size
         try:
-            # Configure vectorizer for language and corpus size using utility function
-            from core.engine.utils import configure_vectorizer
             vectorizer = configure_vectorizer(
                 self.config,
                 len(doc_texts),
@@ -1249,8 +1245,6 @@ class ThemeAnalyzer:
         is_chinese = Counter(languages).most_common(1)[0][0] == "zh"
 
         try:
-            # Create TF-IDF vectors with settings appropriate for corpus
-            from core.engine.utils import configure_vectorizer
             vectorizer = configure_vectorizer(
                 self.config,
                 len(doc_texts),
@@ -1321,7 +1315,6 @@ class ThemeAnalyzer:
 
                         # Read content from original file if it exists
                         if os.path.exists(original_path):
-                            from core.engine.utils import get_file_content
                             content = get_file_content(original_path)
                             if content:
                                 original_contents.append(content)
@@ -1506,8 +1499,6 @@ class ThemeAnalyzer:
         is_chinese = Counter(languages).most_common(1)[0][0] == "zh"
 
         try:
-            # Create TF-IDF vectors with settings appropriate for document set size
-            from core.engine.utils import configure_vectorizer
             vectorizer = configure_vectorizer(
                 self.config,
                 len(doc_texts),
@@ -1556,7 +1547,6 @@ class ThemeAnalyzer:
 
                         # Read content from original file if it exists
                         if os.path.exists(original_path):
-                            from core.engine.utils import get_file_content
                             content = get_file_content(original_path)
                             if content:
                                 original_contents.append(content)

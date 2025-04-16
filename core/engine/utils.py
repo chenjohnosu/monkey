@@ -1,22 +1,19 @@
 """
-Utility functions for the document analysis toolkit
+Consolidated utility functions for the document analysis toolkit
 """
 
 import os
 import time
 import datetime
-from typing import Dict, List, Union, Any
-from core.language.tokenizer import ChineseTokenizer, JIEBA_AVAILABLE
-from core.engine.logging import debug_print,warning
+import re
+import json
+from typing import Dict, List, Any
+
+# Import logging for debug_print usage
+from core.engine.logging import debug_print, error, warning, info, debug, trace
 
 
-# Import jieba for Chinese word segmentation if available
-try:
-    import jieba
-    JIEBA_AVAILABLE = True
-except ImportError:
-    JIEBA_AVAILABLE = False
-    warning("jieba not available, falling back to character-based tokenization for Chinese")
+# ===== FILE OPERATIONS =====
 
 def ensure_dir(directory):
     """Ensure a directory exists, creating it if necessary"""
@@ -101,15 +98,14 @@ def get_file_content(filepath):
             debug_print(None, f"Failed to extract PDF content: {filepath}, {str(e)}")
             return None
 
-    # HTML files (keeping your existing implementation)
+    # HTML files
     elif ext == '.html':
         try:
             # Extract text from HTML
             with open(filepath, 'r', encoding='utf-8') as file:
                 html_content = file.read()
 
-            # Simple HTML tag removal (very basic)
-            import re
+            # Simple HTML tag removal
             text = re.sub('<[^<]+?>', ' ', html_content)
             text = re.sub('\\s+', ' ', text)
             return text.strip()
@@ -119,21 +115,125 @@ def get_file_content(filepath):
     else:
         return None
 
+def save_json(filepath, data, indent=2):
+    """Save data to a JSON file with error handling"""
+    try:
+        with open(filepath, 'w', encoding='utf-8') as file:
+            json.dump(data, file, indent=indent)
+        return True
+    except Exception as e:
+        error(f"Error saving JSON file {filepath}: {str(e)}")
+        return False
+
+def load_json(filepath, default=None):
+    """Load data from a JSON file with error handling"""
+    try:
+        with open(filepath, 'r', encoding='utf-8') as file:
+            return json.load(file)
+    except FileNotFoundError:
+        warning(f"JSON file not found: {filepath}")
+        return default
+    except json.JSONDecodeError:
+        error(f"Error parsing JSON file: {filepath}")
+        return default
+    except Exception as e:
+        error(f"Error loading JSON file {filepath}: {str(e)}")
+        return default
+
 def timestamp_filename(prefix, extension):
     """Generate a filename with a timestamp"""
     timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
     return f"{prefix}_{timestamp}.{extension}"
 
-def measure_execution_time(func):
-    """Decorator to measure execution time of a function"""
-    def wrapper(*args, **kwargs):
-        start_time = time.time()
-        result = func(*args, **kwargs)
-        end_time = time.time()
-        execution_time = end_time - start_time
-        print(f"Function '{func.__name__}' executed in {execution_time:.2f} seconds")
-        return result
-    return wrapper
+def format_size(size_bytes):
+    """Format file size in a human-readable format"""
+    for unit in ['B', 'KB', 'MB', 'GB']:
+        if size_bytes < 1024 or unit == 'GB':
+            return f"{size_bytes:.2f} {unit}"
+        size_bytes /= 1024
+
+def load_original_document(config, workspace, source_path):
+    """
+    Load original document content from body directory with fallback handling
+
+    Args:
+        config: Configuration object for debug output
+        workspace (str): Workspace name
+        source_path (str): Document source path within workspace
+
+    Returns:
+        str: Original document content or None if not available
+    """
+    debug_print(config, f"Loading original document: {source_path}")
+
+    try:
+        # Construct path to original file
+        original_path = os.path.join("body", workspace, source_path)
+
+        if os.path.exists(original_path):
+            # Get content based on file type
+            content = get_file_content(original_path)
+            if content:
+                debug_print(config, f"Successfully loaded original content ({len(content)} chars)")
+                return content
+            else:
+                debug_print(config, f"Failed to extract content from {original_path}")
+        else:
+            debug_print(config, f"Original file not found: {original_path}")
+    except Exception as e:
+        debug_print(config, f"Error loading original document: {str(e)}")
+
+    return None
+
+
+# ===== TEXT PROCESSING =====
+
+def split_text_into_chunks(text, chunk_size=500):
+    """
+    Split text into chunks for processing
+
+    Args:
+        text (str): Text to split
+        chunk_size (int): Maximum chunk size
+
+    Returns:
+        List[str]: Text chunks
+    """
+    # Split by sentences first if possible
+    chunks = []
+    sentences = text.split('.')
+
+    current_chunk = ""
+
+    for sentence in sentences:
+        sentence = sentence.strip() + "."
+
+        if len(current_chunk) + len(sentence) <= chunk_size:
+            current_chunk += " " + sentence
+        else:
+            if current_chunk:
+                chunks.append(current_chunk.strip())
+
+            # If sentence is longer than chunk_size, split it
+            if len(sentence) > chunk_size:
+                words = sentence.split()
+                current_chunk = ""
+
+                for word in words:
+                    if len(current_chunk) + len(word) + 1 <= chunk_size:
+                        current_chunk += " " + word
+                    else:
+                        chunks.append(current_chunk.strip())
+                        current_chunk = word
+            else:
+                current_chunk = sentence
+
+    # Add the last chunk if it exists
+    if current_chunk:
+        chunks.append(current_chunk.strip())
+
+    return chunks
+
 
 def configure_vectorizer(config, doc_count, language=None, chinese_stopwords=None):
     """
@@ -148,7 +248,11 @@ def configure_vectorizer(config, doc_count, language=None, chinese_stopwords=Non
     Returns:
         TfidfVectorizer: Configured vectorizer
     """
-    from sklearn.feature_extraction.text import TfidfVectorizer
+    try:
+        from sklearn.feature_extraction.text import TfidfVectorizer
+    except ImportError:
+        error("scikit-learn not available. Install with: pip install scikit-learn")
+        return None
 
     debug_print(config, f"Configuring TF-IDF vectorizer for {doc_count} documents in language: {language}")
 
@@ -181,17 +285,22 @@ def configure_vectorizer(config, doc_count, language=None, chinese_stopwords=Non
 
     # Configure language-specific parameters
     if is_chinese:
-        tokenizer = ChineseTokenizer()
-        stop_words = None  # Handle in preprocessing
+        try:
+            from core.language.tokenizer import ChineseTokenizer
+            tokenizer = ChineseTokenizer()
+            stop_words = None  # Handle in preprocessing
 
-        # Create vectorizer for Chinese text
-        vectorizer = TfidfVectorizer(
-            min_df=min_df,
-            max_df=max_df,
-            stop_words=None,
-            token_pattern=r"(?u)\b\S+\b",  # Only match non-whitespace sequences
-            tokenizer=tokenizer
-        )
+            # Create vectorizer for Chinese text
+            vectorizer = TfidfVectorizer(
+                min_df=min_df,
+                max_df=max_df,
+                stop_words=None,
+                token_pattern=r"(?u)\b\S+\b",  # Only match non-whitespace sequences
+                tokenizer=tokenizer
+            )
+        except ImportError:
+            error("ChineseTokenizer not available")
+            return None
     else:
         # Create vectorizer for English text
         vectorizer = TfidfVectorizer(
@@ -201,6 +310,7 @@ def configure_vectorizer(config, doc_count, language=None, chinese_stopwords=Non
         )
 
     return vectorizer
+
 
 def extract_keywords(config, texts, language="en", top_n=10, stopwords=None):
     """
@@ -216,8 +326,12 @@ def extract_keywords(config, texts, language="en", top_n=10, stopwords=None):
     Returns:
         List[str]: Extracted keywords
     """
-    from sklearn.feature_extraction.text import TfidfVectorizer
-    import numpy as np
+    try:
+        from sklearn.feature_extraction.text import TfidfVectorizer
+        import numpy as np
+    except ImportError:
+        error("scikit-learn not available. Install with: pip install scikit-learn")
+        return []
 
     debug_print(config, f"Extracting keywords from {len(texts)} texts in {language}")
 
@@ -226,6 +340,8 @@ def extract_keywords(config, texts, language="en", top_n=10, stopwords=None):
 
     # Get vectorizer configured for corpus
     vectorizer = configure_vectorizer(config, len(texts), language, stopwords)
+    if not vectorizer:
+        return []
 
     try:
         # Create document-term matrix
@@ -253,6 +369,23 @@ def extract_keywords(config, texts, language="en", top_n=10, stopwords=None):
     except Exception as e:
         debug_print(config, f"Error extracting keywords: {str(e)}")
         return []
+
+
+# ===== PERFORMANCE MEASUREMENT =====
+
+def measure_execution_time(func):
+    """Decorator to measure execution time of a function"""
+    def wrapper(*args, **kwargs):
+        start_time = time.time()
+        result = func(*args, **kwargs)
+        end_time = time.time()
+        execution_time = end_time - start_time
+        print(f"Function '{func.__name__}' executed in {execution_time:.2f} seconds")
+        return result
+    return wrapper
+
+
+# ===== FORMATTING UTILITIES =====
 
 # ANSI color codes
 class Colors:
@@ -346,6 +479,8 @@ def format_code_block(content: str, indent: int = 0) -> str:
     return '\n'.join(formatted_lines)
 
 
+# ===== MARKDOWN FORMATTING =====
+
 def format_md_header(title: str) -> str:
     """Format markdown header"""
     return f"\n## {title}"
@@ -384,37 +519,3 @@ def format_md_analysis(title: str, items: List[Dict[str, Any]]) -> str:
             md_lines.append(f"**{k}**: {v}")
 
     return "\n".join(md_lines)
-
-
-def load_original_document(config, workspace, source_path):
-    """
-    Load original document content from body directory with fallback handling
-
-    Args:
-        config: Configuration object for debug output
-        workspace (str): Workspace name
-        source_path (str): Document source path within workspace
-
-    Returns:
-        str: Original document content or None if not available
-    """
-    debug_print(config, f"Loading original document: {source_path}")
-
-    try:
-        # Construct path to original file
-        original_path = os.path.join("body", workspace, source_path)
-
-        if os.path.exists(original_path):
-            # Get content based on file type
-            content = get_file_content(original_path)
-            if content:
-                debug_print(config, f"Successfully loaded original content ({len(content)} chars)")
-                return content
-            else:
-                debug_print(config, f"Failed to extract content from {original_path}")
-        else:
-            debug_print(config, f"Original file not found: {original_path}")
-    except Exception as e:
-        debug_print(config, f"Error loading original document: {str(e)}")
-
-    return None
