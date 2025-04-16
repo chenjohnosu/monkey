@@ -11,9 +11,11 @@ import datetime
 from core.engine.interpreter import AnalysisInterpreter
 
 
-class CommandProcessor:
-    """Command line interface processor"""
 
+
+class CommandProcessor:
+
+    # CLI
     def __init__(self, config):
         """Initialize CommandProcessor with configuration"""
         self.config = config
@@ -54,7 +56,6 @@ class CommandProcessor:
         self.active_guide = None  # Track the active guide
 
         info("CommandProcessor initialized")
-
     def start(self):
         """Start the command processing loop"""
         debug("Starting command processing loop")
@@ -78,9 +79,8 @@ class CommandProcessor:
             print("\nExiting...")
         finally:
             debug_print(self.config, "Command processing loop ended")
-
     def _handle_system_command(self, command, args):
-        """Handle system commands with the new clear command"""
+        """Handle system commands using command dispatcher pattern"""
         debug_print(self.config, f"Handling system command: {command} with args: {args}")
 
         # Handle aliases
@@ -93,32 +93,40 @@ class CommandProcessor:
             self.query_engine.deactivate()
             return
 
-        # Process commands
-        if command == 'quit' or command == 'exit':
-            self._cmd_quit()
-        elif command == 'help':
-            self._cmd_help(args)
-        elif command == 'show':
-            self._cmd_show(args)
-        elif command == 'run':
-            self._cmd_run(args)
-        elif command == 'load':
-            self._cmd_load(args)
-        elif command == 'save':
-            self._cmd_save(args)
-        elif command == 'config':
-            self._cmd_config(args)
-        elif command == 'inspect':
-            self._cmd_inspect(args)
-        elif command == 'explain':
-            self._cmd_explain(args)
-        elif command == 'clear':  # Add the new clear command
-            self._cmd_clear(args)
-        else:
-            print(f"Unknown command: /{command}")
+        # Command dispatch dictionary
+        command_handlers = {
+            'quit': self._cmd_quit,
+            'exit': self._cmd_quit,
+            'help': self._cmd_help,
+            'show': self._cmd_show,
+            'run': self._cmd_run,
+            'load': self._cmd_load,
+            'save': self._cmd_save,
+            'config': self._cmd_config,
+            'inspect': self._cmd_inspect,
+            'explain': self._cmd_explain,
+            'clear': self._cmd_clear
+        }
 
+        # Get the handler for this command
+        handler = command_handlers.get(command)
+
+        if handler:
+            # Call the handler with the arguments
+            handler(args)
+        else:
+            # Command not found
+            self.output_manager.print_formatted('feedback',
+                                                f"Unknown command: /{command}",
+                                                success=False)
+    def _format_size(self, size_bytes):
+        """Format file size in a human-readable format"""
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if size_bytes < 1024 or unit == 'GB':
+                return f"{size_bytes:.2f} {unit}"
+            size_bytes /= 1024
     def _resolve_alias(self, command):
-        """Resolve command aliases to full commands, with clear command added"""
+        """Resolve command aliases to full commands with dictionary lookup"""
         aliases = {
             'q': 'quit',
             'c': 'config',
@@ -128,15 +136,106 @@ class CommandProcessor:
             'h': 'help',
             'i': 'inspect',
             'e': 'explain',
-            'cl': 'clear'  # Add alias for clear
+            'cl': 'clear'
         }
         return aliases.get(command, command)
+    def process_command(self, command_string):
+        """
+        Process a command string with improved error handling and command parsing
 
-    def _cmd_quit(self):
-        """Handle the quit command"""
+        Args:
+            command_string (str): The command to process
+        """
+        debug_print(self.config, f"Processing command: {command_string}")
+
+        # Skip empty commands
+        if not command_string.strip():
+            return
+
+        # Echo the command to the output manager
+        self.output_manager.print_formatted('command', command_string)
+
+        try:
+            # Parse the command safely
+            parsed_command = self._parse_command(command_string)
+
+            if not parsed_command:
+                return
+
+            command, args = parsed_command
+
+            # Process the command based on type
+            self._process_parsed_command(command, args)
+
+        except Exception as e:
+            # Handle any unexpected errors
+            self.output_manager.print_formatted('feedback',
+                                                f"Error processing command: {str(e)}",
+                                                success=False)
+
+            if self.config.get('system.debug'):
+                import traceback
+                debug_print(self.config, traceback.format_exc())
+    def _parse_command(self, command_string):
+        """
+        Parse a command string into command and arguments
+
+        Args:
+            command_string (str): The command to parse
+
+        Returns:
+            tuple: (command, args) or None if parsing failed
+        """
+        try:
+            # Use shlex to properly handle quoted arguments
+            import shlex
+            tokens = shlex.split(command_string)
+
+            if not tokens:
+                return None
+
+            command = tokens[0].lower()
+            args = tokens[1:]
+
+            return (command, args)
+
+        except Exception as e:
+            self.output_manager.print_formatted('feedback',
+                                                f"Error parsing command: {str(e)}",
+                                                success=False)
+            return None
+    def _process_parsed_command(self, command, args):
+        """
+        Process a parsed command
+
+        Args:
+            command (str): The command to process
+            args (list): Command arguments
+        """
+        # Handle system commands (starting with /)
+        if command.startswith('/'):
+            # Always process system commands, even in query mode
+            self._handle_system_command(command[1:], args)
+        else:
+            # Treat as a query in interactive mode
+            if hasattr(self, 'query_engine') and self.query_engine.is_active():
+                # Reconstruct original command for query processing
+                query = command
+                if args:
+                    query += ' ' + ' '.join(args)
+                self.query_engine.process_query(query)
+            else:
+                self.output_manager.print_formatted('feedback',
+                                                    "Not in query mode. Use '/run query' to enter interactive query mode.",
+                                                    success=False)
+
+    # Command: Quit
+    def _cmd_quit(self, args=None):
+        """Handle the quit command with proper argument handling"""
         debug_print(self.config, "Quit command received")
         self.running = False
 
+    # Command: Help
     def _cmd_help(self, args):
         """Display help information with structured help topics"""
         debug_print(self.config, f"Help command with args: {args}")
@@ -151,218 +250,97 @@ class CommandProcessor:
             print(f"No specific help available for '{args[0]}'")
             print("Available help topics: " + ", ".join(self.HELP_TOPICS.keys()))
 
-    def _cmd_show(self, args):
-        """Handle the show command"""
-        debug_print(self.config, f"Show command with args: {args}")
-
-        if not args:
-            print("Usage: /show [status|cuda|config|ws|files|guide]")
-            return
-
-        subcommand = args[0].lower()
-
-        if subcommand == 'status':
-            self._show_status()
-        elif subcommand == 'cuda':
-            self._show_cuda()
-        elif subcommand == 'config':
-            self._show_config()
-        elif subcommand == 'ws' or subcommand == 'workspace':
-            self._show_workspace()
-        elif subcommand == 'files':
-            self._show_files()
-        elif subcommand == 'guide' or subcommand == 'guides':
-            self._show_guides()
-        elif subcommand == 'embed':
-            if len(args) < 2:
-                print(f"Current embedding model: {self.config.get('embedding.default_model')}")
-                print("Available models: multilingual-e5, mixbread, bge, jina-zh")
-                return
-            self.config.set('embedding.default_model', args[1])
-            print(f"Embedding model set to: {args[1]}")
-        else:
-            print(f"Unknown show subcommand: {subcommand}")
-
-    def _show_cuda(self):
-        """Show CUDA status"""
-        debug_print(self.config, "Showing CUDA status")
-        from core.engine.cuda import check_cuda_status
-        check_cuda_status(self.config)
-
-    def _show_config(self):
-        """Show configuration details"""
-        debug_print(self.config, "Showing configuration")
-        self.config.display()
-
-    def _format_size(self, size_bytes):
-        """Format file size in a human-readable format"""
-        for unit in ['B', 'KB', 'MB', 'GB']:
-            if size_bytes < 1024 or unit == 'GB':
-                return f"{size_bytes:.2f} {unit}"
-            size_bytes /= 1024
-
+    # Command: Run
     def _cmd_run(self, args):
-        """Handle the run command"""
+        """Handle the run command using a command pattern approach"""
         debug_print(self.config, f"Run command with args: {args}")
 
         if not args:
-            print("Usage: /run [themes|query|grind|update|scan|merge|sentiment|topic] [options]")
+            self.output_manager.print_formatted('feedback',
+                                                "Usage: /run [themes|query|grind|update|scan|merge|sentiment|topics] [options]",
+                                                success=False)
             return
 
         subcommand = args[0].lower()
 
-        if subcommand == 'themes':
-            method = args[1] if len(args) > 1 else 'all'
-            self.theme_analyzer.analyze(self.current_workspace, method)
+        # Dictionary mapping subcommands to handler methods
+        run_handlers = {
+            'themes': self._run_themes,
+            'query': self._run_query,
+            'grind': self._run_grind,
+            'update': self._run_update,
+            'scan': self._run_scan,
+            'merge': self._run_merge,
+            'sentiment': self._run_sentiment,
+            'topics': self._run_topics
+        }
 
-        elif subcommand == 'query':
-            if self.query_engine.activate(self.current_workspace):
-                self.query_engine.enter_interactive_mode()
+        # Get the handler for this subcommand
+        handler = run_handlers.get(subcommand)
 
-        elif subcommand == 'grind':
-            self.file_processor.process_workspace(self.current_workspace)
-
-        elif subcommand == 'update':
-            self.file_processor.update_workspace(self.current_workspace)
-
-        elif subcommand == 'scan':
-            detailed = len(args) > 1 and args[1].lower() == 'detailed'
-            self.file_processor.scan_workspace(self.current_workspace, detailed)
-
-        elif subcommand == 'merge':
-            if len(args) < 2:
-                print("Usage: /run merge <source_workspace>")
-                return
-            source_workspace = args[1]
-            self.vector_store_merger.merge(source_workspace, self.current_workspace)
-
-        elif subcommand == 'sentiment':
-            method = args[1] if len(args) > 1 else 'all'
-            self.sentiment_analyzer.analyze(self.current_workspace, method)
-
-        elif subcommand == 'topics':
-            method = args[1] if len(args) > 1 else 'all'
-            self.topic_modeler.analyze(self.current_workspace, method)
-
+        if handler:
+            # Pass remaining arguments to the handler
+            handler(args[1:])
         else:
-            print(f"Unknown run subcommand: {subcommand}")
+            self.output_manager.print_formatted('feedback',
+                                                f"Unknown run subcommand: {subcommand}",
+                                                success=False)
+    def _run_themes(self, args):
+        """Run theme analysis with specified method"""
+        method = args[0] if args else 'all'
 
-    def _cmd_load(self, args):
-        """Handle the load command"""
-        debug_print(self.config, f"Load command with args: {args}")
+        self.output_manager.print_formatted('header', f"Running Theme Analysis: {method.upper()}")
+        self.theme_analyzer.analyze(self.current_workspace, method)
+    def _run_query(self, args):
+        """Enter interactive query mode"""
+        self.output_manager.print_formatted('header', "Entering Interactive Query Mode")
 
+        if self.query_engine.activate(self.current_workspace):
+            self.query_engine.enter_interactive_mode()
+        else:
+            self.output_manager.print_formatted('feedback',
+                                                "Failed to activate query engine",
+                                                success=False)
+    def _run_grind(self, args):
+        """Process files in workspace to create initial database"""
+        self.output_manager.print_formatted('header', f"Processing Files for Workspace: {self.current_workspace}")
+        self.file_processor.process_workspace(self.current_workspace)
+    def _run_update(self, args):
+        """Update workspace with new or modified files"""
+        self.output_manager.print_formatted('header', f"Updating Workspace: {self.current_workspace}")
+        self.file_processor.update_workspace(self.current_workspace)
+    def _run_scan(self, args):
+        """Scan workspace for new or updated files"""
+        detailed = len(args) > 0 and args[0].lower() == 'detailed'
+        mode = "Detailed" if detailed else "Standard"
+
+        self.output_manager.print_formatted('header', f"{mode} Workspace Scan: {self.current_workspace}")
+        self.file_processor.scan_workspace(self.current_workspace, detailed)
+    def _run_merge(self, args):
+        """Merge source workspace into current workspace"""
         if not args:
-            print("Usage: /load <workspace>")
+            self.output_manager.print_formatted('feedback',
+                                                "Usage: /run merge <source_workspace>",
+                                                success=False)
             return
 
-        # Simplified load command - always for workspace
-        workspace = args[0]
-        self._load_workspace(workspace)
+        source_workspace = args[0]
 
-    def _show_guides(self):
-        """Show available guides"""
-        print("Showing available guides")
+        self.output_manager.print_formatted('header',
+                                            f"Merging Workspace: {source_workspace} → {self.current_workspace}")
+        self.vector_store_merger.merge(source_workspace, self.current_workspace)
+    def _run_sentiment(self, args):
+        """Run sentiment analysis with specified method"""
+        method = args[0] if args else 'all'
 
-        try:
-            with open("guides.txt", "r", encoding="utf-8") as file:
-                content = file.read()
+        self.output_manager.print_formatted('header', f"Running Sentiment Analysis: {method.upper()}")
+        self.sentiment_analyzer.analyze(self.current_workspace, method)
+    def _run_topics(self, args):
+        method = args[0] if args else 'all'
+        self.output_manager.print_formatted('header', f"Running Topic Modeling: {method.upper()}")
+        self.topic_modeler.analyze(self.current_workspace, method)
 
-            import re
-            # Find all guide tags
-            guide_tags = re.findall(r'<([^>]+)>.*?</\1>', content, re.DOTALL)
-
-            if not guide_tags:
-                error("No guides found in guides.txt")
-                return
-
-            print("Available Guides:")
-            for guide in sorted(guide_tags):
-                if guide == self.active_guide:
-                    print(f"  * {guide} (active)")
-                else:
-                    print(f"    {guide}")
-
-            info("\nUse '/config guide <name>' to set a guide as active")
-
-        except FileNotFoundError:
-            error("guides.txt file not found")
-        except Exception as e:
-            error(f"Error reading guides: {str(e)}")
-
-    def _load_workspace(self, workspace):
-        """
-        Load a workspace with confirmation for new workspaces
-
-        Args:
-            workspace (str): The workspace to load
-        """
-        debug_print(self.config, f"Loading workspace: {workspace}")
-
-        # Check if workspace directories exist
-        import os
-        data_dir = os.path.join("data", workspace)
-        body_dir = os.path.join("body", workspace)
-
-        # Check if this is a new workspace
-        is_new_workspace = not os.path.exists(data_dir) and not os.path.exists(body_dir)
-
-        if is_new_workspace:
-            # Ask for confirmation before creating a new workspace
-            confirm = input(f"Workspace '{workspace}' does not exist. Create it? (y/n): ").strip().lower()
-            if confirm != 'y' and confirm != 'yes':
-                warning(f"Cancelled creation of workspace '{workspace}'")
-                return
-
-        # Create necessary directories
-        for directory in [data_dir, body_dir]:
-            if not os.path.exists(directory):
-                os.makedirs(directory)
-                print(f"Created directory: {directory}")
-
-        # Add to loaded workspaces if not already loaded
-        if workspace not in self.loaded_workspaces:
-            self.loaded_workspaces.append(workspace)
-            print(f"Workspace '{workspace}' loaded")
-        else:
-            print(f"Workspace '{workspace}' is already loaded")
-
-        # Update current workspace
-        if self.current_workspace != workspace:
-            self.current_workspace = workspace
-            print(f"Switched active workspace to '{workspace}'")
-
-    def _load_guide(self, guide_name):
-        """Load a guide from guides.txt"""
-        debug_print(self.config, f"Loading guide: {guide_name}")
-
-        try:
-            with open("guides.txt", "r", encoding="utf-8") as file:
-                content = file.read()
-
-            import re
-            pattern = rf"<{guide_name}>(.*?)</{guide_name}>"
-            match = re.search(pattern, content, re.DOTALL)
-
-            if match:
-                guide_content = match.group(1).strip()
-                print(f"Guide '{guide_name}' loaded:")
-                print("-" * 40)
-                print(guide_content)
-                print("-" * 40)
-
-                # Store the guide for later use
-                self.config.set_guide(guide_name, guide_content)
-
-                # Set as active guide
-                self.active_guide = guide_name
-                print(f"Guide '{guide_name}' set as active guide")
-            else:
-                print(f"Guide '{guide_name}' not found in guides.txt")
-        except FileNotFoundError:
-            print("guides.txt file not found")
-        except Exception as e:
-            print(f"Error loading guide: {str(e)}")
-
+    # Command Save
     def _cmd_save(self, args):
         """Handle the save command"""
         debug_print(self.config, f"Save command with args: {args}")
@@ -381,7 +359,6 @@ class CommandProcessor:
             self._save_buffer()
         else:
             print(f"Unknown save subcommand: {subcommand}")
-
     def _start_saving(self):
         """Start saving session output"""
         debug_print(self.config, "Starting session saving")
@@ -393,7 +370,6 @@ class CommandProcessor:
         self.saving_session = True
         self.output_manager.start_session_saving(self.current_workspace)
         print("Session saving started")
-
     def _stop_saving(self):
         """Stop saving session output"""
         debug_print(self.config, "Stopping session saving")
@@ -405,7 +381,6 @@ class CommandProcessor:
         self.saving_session = False
         filepath = self.output_manager.stop_session_saving()
         print(f"Session saving stopped. Output saved to: {filepath}")
-
     def _save_buffer(self):
         """Save last command output buffer"""
         debug_print(self.config, "Saving output buffer")
@@ -416,72 +391,137 @@ class CommandProcessor:
         else:
             print("No buffer to save")
 
+    # Command: Config
     def _cmd_config(self, args):
-        """Handle the config command"""
+        """Handle the config command using a command pattern approach"""
         debug_print(self.config, f"Config command with args: {args}")
 
         if not args:
-            print("Usage: /config [llm|embed|kval|debug|storage|output] [value]")
+            self.output_manager.print_formatted('feedback',
+                                                "Usage: /config [llm|embed|kval|debug|storage|output|guide] [value]",
+                                                success=False)
             return
 
         subcommand = args[0].lower()
 
-        if subcommand == 'llm':
-            if len(args) < 2:
-                print(f"Current LLM model: {self.config.get('llm.default_model')}")
-                return
-            self.config.set('llm.default_model', args[1])
-            print(f"LLM model set to: {args[1]}")
-        elif subcommand == 'embed':
-            if len(args) < 2:
-                print(f"Current embedding model: {self.config.get('embedding.default_model')}")
-                return
-            self.config.set('embedding.default_model', args[1])
-            print(f"Embedding model set to: {args[1]}")
-        elif subcommand == 'kval':
-            if len(args) < 2:
-                print(f"Current k value: {self.config.get('query.k_value')}")
-                return
-            try:
-                k_value = int(args[1])
-                self.config.set('query.k_value', k_value)
-                print(f"K value set to: {k_value}")
-            except ValueError:
-                print("K value must be an integer")
-        elif subcommand == 'debug':
-            if len(args) < 2:
-                print(f"Debug mode: {'Enabled' if self.config.get('system.debug') else 'Disabled'}")
-                return
-            debug_value = args[1].lower() == 'on'
-            self.config.set('system.debug', debug_value)
-            print(f"Debug mode: {'Enabled' if debug_value else 'Disabled'}")
-        elif subcommand == 'storage':
-            if len(args) < 2:
-                print(f"Current storage backend: {self.config.get('storage.vector_store')}")
-                return
-            valid_backends = ['llama_index', 'haystack', 'chroma']
-            if args[1] not in valid_backends:
-                print(f"Storage backend must be one of: {', '.join(valid_backends)}")
-                return
-            self.config.set('storage.vector_store', args[1])
-            print(f"Storage backend set to: {args[1]}")
-        elif subcommand == 'output':
-            if len(args) < 2:
-                print(f"Current output format: {self.config.get('system.output_format')}")
-                return
-            if args[1] not in ['txt', 'md', 'json']:
-                print("Output format must be one of: txt, md, json")
-                return
-            self.config.set('system.output_format', args[1])
-            print(f"Output format set to: {args[1]}")
-        elif subcommand == 'guide':
-            if len(args) < 2:
-                print(f"Current active guide: {self.active_guide or 'None'}")
-                return
-            self._load_guide(args[1])
-        else:
-            error(f"Unknown config subcommand: {subcommand}")
+        # Dictionary of config subcommand handlers
+        config_handlers = {
+            'llm': self._config_llm,
+            'embed': self._config_embed,
+            'kval': self._config_kval,
+            'debug': self._config_debug,
+            'storage': self._config_storage,
+            'output': self._config_output,
+            'guide': self._config_guide
+        }
 
+        handler = config_handlers.get(subcommand)
+
+        if handler:
+            # Pass remaining arguments to the handler
+            handler(args[1:])
+        else:
+            self.output_manager.print_formatted('feedback',
+                                                f"Unknown config subcommand: {subcommand}",
+                                                success=False)
+    def _config_llm(self, args):
+        """Configure LLM model"""
+        if not args:
+            current_model = self.config.get('llm.default_model')
+            self.output_manager.print_formatted('kv', current_model, key="Current LLM model")
+            return
+
+        self.config.set('llm.default_model', args[0])
+        self.output_manager.print_formatted('feedback',
+                                            f"LLM model set to: {args[0]}",
+                                            success=True)
+    def _config_embed(self, args):
+        """Configure embedding model"""
+        if not args:
+            current_model = self.config.get('embedding.default_model')
+            self.output_manager.print_formatted('kv', current_model, key="Current embedding model")
+            return
+
+        self.config.set('embedding.default_model', args[0])
+        self.output_manager.print_formatted('feedback',
+                                            f"Embedding model set to: {args[0]}",
+                                            success=True)
+    def _config_kval(self, args):
+        """Configure k-value for retrieval"""
+        if not args:
+            current_value = self.config.get('query.k_value')
+            self.output_manager.print_formatted('kv', current_value, key="Current k value")
+            return
+
+        try:
+            k_value = int(args[0])
+            self.config.set('query.k_value', k_value)
+            self.output_manager.print_formatted('feedback',
+                                                f"K value set to: {k_value}",
+                                                success=True)
+        except ValueError:
+            self.output_manager.print_formatted('feedback',
+                                                "K value must be an integer",
+                                                success=False)
+    def _config_debug(self, args):
+        """Configure debug mode"""
+        if not args:
+            debug_status = 'Enabled' if self.config.get('system.debug') else 'Disabled'
+            self.output_manager.print_formatted('kv', debug_status, key="Debug mode")
+            return
+
+        debug_value = args[0].lower() == 'on'
+        self.config.set('system.debug', debug_value)
+        debug_status = 'Enabled' if debug_value else 'Disabled'
+        self.output_manager.print_formatted('feedback',
+                                            f"Debug mode: {debug_status}",
+                                            success=True)
+    def _config_storage(self, args):
+        """Configure storage backend"""
+        if not args:
+            current_backend = self.config.get('storage.vector_store')
+            self.output_manager.print_formatted('kv', current_backend, key="Current storage backend")
+            return
+
+        valid_backends = ['llama_index', 'haystack', 'chroma']
+        if args[0] not in valid_backends:
+            self.output_manager.print_formatted('feedback',
+                                                f"Storage backend must be one of: {', '.join(valid_backends)}",
+                                                success=False)
+            return
+
+        self.config.set('storage.vector_store', args[0])
+        self.output_manager.print_formatted('feedback',
+                                            f"Storage backend set to: {args[0]}",
+                                            success=True)
+    def _config_output(self, args):
+        """Configure output format"""
+        if not args:
+            current_format = self.config.get('system.output_format')
+            self.output_manager.print_formatted('kv', current_format, key="Current output format")
+            return
+
+        valid_formats = ['txt', 'md', 'json']
+        if args[0] not in valid_formats:
+            self.output_manager.print_formatted('feedback',
+                                                f"Output format must be one of: {', '.join(valid_formats)}",
+                                                success=False)
+            return
+
+        self.config.set('system.output_format', args[0])
+        self.output_manager.print_formatted('feedback',
+                                            f"Output format set to: {args[0]}",
+                                            success=True)
+    def _config_guide(self, args):
+        """Configure active guide"""
+        if not args:
+            guide_name = self.active_guide or 'None'
+            self.output_manager.print_formatted('kv', guide_name, key="Current active guide")
+            return
+
+        self._load_guide(args[0])
+
+    # Command: Inspect
     def _cmd_inspect(self, args):
         """Handle the inspect command"""
         debug_print(self.config, f"Inspect command with args: {args}")
@@ -551,7 +591,6 @@ class CommandProcessor:
             self.vector_store_inspector.rebuild_vector_store(workspace)
         else:
             error(f"Unknown inspect subcommand: {subcommand}")
-
     def _inspect_metadata(self, workspace, query="test", limit=3):
         """Inspect raw metadata returned from vector store"""
         print(f"\nInspecting vector store metadata for workspace: {workspace}")
@@ -584,161 +623,7 @@ class CommandProcessor:
         except Exception as e:
             error(f"Error: {str(e)}")
 
-    """
-    Refactored display functions for the CLI module to use formatting utilities consistently.
-    File: core/engine/cli.py
-
-    Replace the existing implementations of _show_status, _show_workspace, and _show_files 
-    with these refactored versions.
-    """
-
-    def _show_status(self):
-        """Show system status with compact colored formatting"""
-        debug_print(self.config, "Showing system status")
-
-        self.output_manager.print_formatted('header', "SYSTEM STATUS")
-
-        self.output_manager.print_formatted('kv', self.current_workspace, key="Current Workspace", indent=2)
-        self.output_manager.print_formatted('kv', self.config.get('llm.default_model'), key="LLM Model", indent=2)
-        self.output_manager.print_formatted('kv', self.config.get('embedding.default_model'), key="Embedding Model",
-                                            indent=2)
-
-        debug_status = 'Enabled' if self.config.get('system.debug') else 'Disabled'
-        self.output_manager.print_formatted('kv', debug_status, key="Debug Mode", indent=2)
-
-        self.output_manager.print_formatted('kv', self.config.get('system.output_format'), key="Output Format",
-                                            indent=2)
-        self.output_manager.print_formatted('kv', self.config.get('hardware.device'), key="Device", indent=2)
-
-        session_status = 'Active' if self.saving_session else 'Inactive'
-        self.output_manager.print_formatted('kv', session_status, key="Session Saving", indent=2)
-
-    def _show_workspace(self):
-        """Show workspace details with compact colored formatting"""
-        debug_print(self.config, "Showing workspace details")
-
-        self.output_manager.print_formatted('header', "WORKSPACES")
-
-        for ws in self.loaded_workspaces:
-            if ws == self.current_workspace:
-                self.output_manager.print_formatted('list', f"{ws} (active)", indent=2)
-            else:
-                self.output_manager.print_formatted('list', ws, indent=2)
-
-        # Get additional workspace stats if available
-        if hasattr(self, 'storage_manager'):
-            stats = self.storage_manager.get_workspace_stats(self.current_workspace)
-            if stats and isinstance(stats, dict):
-                self.output_manager.print_formatted('subheader', f"Details for {self.current_workspace}")
-
-                # Use dict.get() to safely retrieve values with defaults if keys don't exist
-                self.output_manager.print_formatted('kv', stats.get('doc_count', 0), key="Document Count", indent=2)
-                self.output_manager.print_formatted('kv', stats.get('embedding_count', 0), key="Embeddings", indent=2)
-                self.output_manager.print_formatted('kv', stats.get('last_updated', 'Unknown'), key="Last Updated",
-                                                    indent=2)
-                self.output_manager.print_formatted('kv', stats.get('embedding_model', 'Unknown'),
-                                                    key="Embedding Model", indent=2)
-
-                # Show language distribution
-                languages = stats.get('languages', {})
-                if languages:
-                    self.output_manager.print_formatted('mini_header', "Language Distribution")
-                    for lang, count in languages.items():
-                        self.output_manager.print_formatted('kv', count, key=lang, indent=4)
-
-    def _show_files(self):
-        """Show files in the current workspace with compact colored formatting"""
-        debug_print(self.config, "Showing workspace files")
-
-        import os
-        import datetime
-        doc_dir = os.path.join("body", self.current_workspace)
-
-        if not os.path.exists(doc_dir):
-            self.output_manager.print_formatted('feedback', f"Document directory does not exist: {doc_dir}",
-                                                success=False)
-            return
-
-        self.output_manager.print_formatted('header', f"FILES IN WORKSPACE: {self.current_workspace}")
-
-        files = []
-        for root, _, filenames in os.walk(doc_dir):
-            for filename in filenames:
-                filepath = os.path.join(root, filename)
-                rel_path = os.path.relpath(filepath, doc_dir)
-                size = os.path.getsize(filepath)
-                modified = os.path.getmtime(filepath)
-                mod_time = datetime.datetime.fromtimestamp(modified).strftime('%Y-%m-%d %H:%M:%S')
-
-                files.append((rel_path, size, mod_time))
-
-        if not files:
-            self.output_manager.print_formatted('feedback', "No files found", success=False)
-            return
-
-        # Print file list header
-        self.output_manager.print_formatted('kv', "Filename", key="Path", indent=2)
-        self.output_manager.print_formatted('kv', "Size", key="Size", indent=2)
-        self.output_manager.print_formatted('kv', "Modified", key="Last Modified", indent=2)
-        print()  # Add a blank line for readability
-
-        # Print each file with consistent formatting
-        for file_path, size, mod_time in sorted(files):
-            self.output_manager.print_formatted('list', f"{file_path} ({self._format_size(size)}) - {mod_time}",
-                                                indent=2)
-
-    def _format_command(self, command_string):
-        """Format a command string for display in logs and feedback"""
-        if command_string.startswith('/'):
-            tokens = command_string.split()
-            command = tokens[0][1:]  # Remove leading slash
-            args = tokens[1:] if len(tokens) > 1 else []
-
-            if args:
-                return f"{command} {' '.join(args)}"
-            else:
-                return command
-        else:
-            return command_string
-
-    def process_command(self, command_string):
-        """
-        Process a command string with command echo to system log
-
-        Args:
-            command_string (str): The command to process
-        """
-        debug_print(self.config, f"Processing command: {command_string}")
-
-        # Echo the command to the output manager with red color
-        self.output_manager.print_formatted('command', command_string, color='red')
-
-        # Skip empty commands
-        if not command_string.strip():
-            return
-
-        # Parse the command (existing code)
-        try:
-            tokens = shlex.split(command_string)
-            command = tokens[0].lower()
-            args = tokens[1:]
-        except Exception as e:
-            self.output_manager.print_formatted('feedback', f"Error parsing command: {str(e)}", success=False)
-            return
-
-        # Handle commands (rest of existing code)
-        if command.startswith('/'):
-            # Always process system commands, even in query mode
-            self._handle_system_command(command[1:], args)
-        else:
-            # Treat as a query in interactive mode
-            if hasattr(self, 'query_engine') and self.query_engine.is_active():
-                self.query_engine.process_query(command_string)
-            else:
-                self.output_manager.print_formatted('feedback',
-                                                    "Not in query mode. Use '/run query' to enter interactive query mode.",
-                                                    success=False)
-
+    # Command: Explain
     def _cmd_explain(self, args):
         """Handle the explain command for analysis interpretation"""
         debug_print(self.config, f"Explain command with args: {args}")
@@ -832,17 +717,266 @@ class CommandProcessor:
             import traceback
             traceback.print_exc()
 
+    # Command: Show
+    def _cmd_show(self, args):
+        """Handle the show command"""
+        debug_print(self.config, f"Show command with args: {args}")
+
+        if not args:
+            print("Usage: /show [status|cuda|config|ws|files|guide]")
+            return
+
+        subcommand = args[0].lower()
+
+        if subcommand == 'status':
+            self._show_status()
+        elif subcommand == 'cuda':
+            self._show_cuda()
+        elif subcommand == 'config':
+            self._show_config()
+        elif subcommand == 'ws' or subcommand == 'workspace':
+            self._show_workspace()
+        elif subcommand == 'files':
+            self._show_files()
+        elif subcommand == 'guide' or subcommand == 'guides':
+            self._show_guides()
+        elif subcommand == 'embed':
+            if len(args) < 2:
+                print(f"Current embedding model: {self.config.get('embedding.default_model')}")
+                print("Available models: multilingual-e5, mixbread, bge, jina-zh")
+                return
+            self.config.set('embedding.default_model', args[1])
+            print(f"Embedding model set to: {args[1]}")
+        else:
+            print(f"Unknown show subcommand: {subcommand}")
+    def _show_cuda(self):
+        """Show CUDA status"""
+        debug_print(self.config, "Showing CUDA status")
+        from core.engine.cuda import check_cuda_status
+        check_cuda_status(self.config)
+    def _show_config(self):
+        """Show configuration details"""
+        debug_print(self.config, "Showing configuration")
+        self.config.display()
+    def _show_guides(self):
+        """Show available guides"""
+        print("Showing available guides")
+
+        try:
+            with open("guides.txt", "r", encoding="utf-8") as file:
+                content = file.read()
+
+            import re
+            # Find all guide tags
+            guide_tags = re.findall(r'<([^>]+)>.*?</\1>', content, re.DOTALL)
+
+            if not guide_tags:
+                error("No guides found in guides.txt")
+                return
+
+            print("Available Guides:")
+            for guide in sorted(guide_tags):
+                if guide == self.active_guide:
+                    print(f"  * {guide} (active)")
+                else:
+                    print(f"    {guide}")
+
+            info("\nUse '/config guide <name>' to set a guide as active")
+
+        except FileNotFoundError:
+            error("guides.txt file not found")
+        except Exception as e:
+            error(f"Error reading guides: {str(e)}")
+    def _show_status(self):
+        """Show system status with compact colored formatting"""
+        debug_print(self.config, "Showing system status")
+
+        self.output_manager.print_formatted('header', "SYSTEM STATUS")
+
+        self.output_manager.print_formatted('kv', self.current_workspace, key="Current Workspace", indent=2)
+        self.output_manager.print_formatted('kv', self.config.get('llm.default_model'), key="LLM Model", indent=2)
+        self.output_manager.print_formatted('kv', self.config.get('embedding.default_model'), key="Embedding Model",
+                                            indent=2)
+
+        debug_status = 'Enabled' if self.config.get('system.debug') else 'Disabled'
+        self.output_manager.print_formatted('kv', debug_status, key="Debug Mode", indent=2)
+
+        self.output_manager.print_formatted('kv', self.config.get('system.output_format'), key="Output Format",
+                                            indent=2)
+        self.output_manager.print_formatted('kv', self.config.get('hardware.device'), key="Device", indent=2)
+
+        session_status = 'Active' if self.saving_session else 'Inactive'
+        self.output_manager.print_formatted('kv', session_status, key="Session Saving", indent=2)
+    def _show_workspace(self):
+        """Show workspace details with compact colored formatting"""
+        debug_print(self.config, "Showing workspace details")
+
+        self.output_manager.print_formatted('header', "WORKSPACES")
+
+        for ws in self.loaded_workspaces:
+            if ws == self.current_workspace:
+                self.output_manager.print_formatted('list', f"{ws} (active)", indent=2)
+            else:
+                self.output_manager.print_formatted('list', ws, indent=2)
+
+        # Get additional workspace stats if available
+        if hasattr(self, 'storage_manager'):
+            stats = self.storage_manager.get_workspace_stats(self.current_workspace)
+            if stats and isinstance(stats, dict):
+                self.output_manager.print_formatted('subheader', f"Details for {self.current_workspace}")
+
+                # Use dict.get() to safely retrieve values with defaults if keys don't exist
+                self.output_manager.print_formatted('kv', stats.get('doc_count', 0), key="Document Count", indent=2)
+                self.output_manager.print_formatted('kv', stats.get('embedding_count', 0), key="Embeddings", indent=2)
+                self.output_manager.print_formatted('kv', stats.get('last_updated', 'Unknown'), key="Last Updated",
+                                                    indent=2)
+                self.output_manager.print_formatted('kv', stats.get('embedding_model', 'Unknown'),
+                                                    key="Embedding Model", indent=2)
+
+                # Show language distribution
+                languages = stats.get('languages', {})
+                if languages:
+                    self.output_manager.print_formatted('mini_header', "Language Distribution")
+                    for lang, count in languages.items():
+                        self.output_manager.print_formatted('kv', count, key=lang, indent=4)
+    def _show_files(self):
+        """Show files in the current workspace with compact colored formatting"""
+        debug_print(self.config, "Showing workspace files")
+
+        import os
+        import datetime
+        doc_dir = os.path.join("body", self.current_workspace)
+
+        if not os.path.exists(doc_dir):
+            self.output_manager.print_formatted('feedback', f"Document directory does not exist: {doc_dir}",
+                                                success=False)
+            return
+
+        self.output_manager.print_formatted('header', f"FILES IN WORKSPACE: {self.current_workspace}")
+
+        files = []
+        for root, _, filenames in os.walk(doc_dir):
+            for filename in filenames:
+                filepath = os.path.join(root, filename)
+                rel_path = os.path.relpath(filepath, doc_dir)
+                size = os.path.getsize(filepath)
+                modified = os.path.getmtime(filepath)
+                mod_time = datetime.datetime.fromtimestamp(modified).strftime('%Y-%m-%d %H:%M:%S')
+
+                files.append((rel_path, size, mod_time))
+
+        if not files:
+            self.output_manager.print_formatted('feedback', "No files found", success=False)
+            return
+
+        # Print file list header
+        self.output_manager.print_formatted('kv', "Filename", key="Path", indent=2)
+        self.output_manager.print_formatted('kv', "Size", key="Size", indent=2)
+        self.output_manager.print_formatted('kv', "Modified", key="Last Modified", indent=2)
+        print()  # Add a blank line for readability
+
+        # Print each file with consistent formatting
+        for file_path, size, mod_time in sorted(files):
+            self.output_manager.print_formatted('list', f"{file_path} ({self._format_size(size)}) - {mod_time}",
+                                                indent=2)
+
+    # Command: Load
+    def _cmd_load(self, args):
+        """Handle the load command"""
+        debug_print(self.config, f"Load command with args: {args}")
+
+        if not args:
+            print("Usage: /load <workspace>")
+            return
+
+        # Simplified load command - always for workspace
+        workspace = args[0]
+        self._load_workspace(workspace)
+    def _load_workspace(self, workspace):
+        """
+        Load a workspace with confirmation for new workspaces
+
+        Args:
+            workspace (str): The workspace to load
+        """
+        debug_print(self.config, f"Loading workspace: {workspace}")
+
+        # Check if workspace directories exist
+        import os
+        data_dir = os.path.join("data", workspace)
+        body_dir = os.path.join("body", workspace)
+
+        # Check if this is a new workspace
+        is_new_workspace = not os.path.exists(data_dir) and not os.path.exists(body_dir)
+
+        if is_new_workspace:
+            # Ask for confirmation before creating a new workspace
+            confirm = input(f"Workspace '{workspace}' does not exist. Create it? (y/n): ").strip().lower()
+            if confirm != 'y' and confirm != 'yes':
+                warning(f"Cancelled creation of workspace '{workspace}'")
+                return
+
+        # Create necessary directories
+        for directory in [data_dir, body_dir]:
+            if not os.path.exists(directory):
+                os.makedirs(directory)
+                print(f"Created directory: {directory}")
+
+        # Add to loaded workspaces if not already loaded
+        if workspace not in self.loaded_workspaces:
+            self.loaded_workspaces.append(workspace)
+            print(f"Workspace '{workspace}' loaded")
+        else:
+            print(f"Workspace '{workspace}' is already loaded")
+
+        # Update current workspace
+        if self.current_workspace != workspace:
+            self.current_workspace = workspace
+            print(f"Switched active workspace to '{workspace}'")
+    def _load_guide(self, guide_name):
+        """Load a guide from guides.txt"""
+        debug_print(self.config, f"Loading guide: {guide_name}")
+
+        try:
+            with open("guides.txt", "r", encoding="utf-8") as file:
+                content = file.read()
+
+            import re
+            pattern = rf"<{guide_name}>(.*?)</{guide_name}>"
+            match = re.search(pattern, content, re.DOTALL)
+
+            if match:
+                guide_content = match.group(1).strip()
+                print(f"Guide '{guide_name}' loaded:")
+                print("-" * 40)
+                print(guide_content)
+                print("-" * 40)
+
+                # Store the guide for later use
+                self.config.set_guide(guide_name, guide_content)
+
+                # Set as active guide
+                self.active_guide = guide_name
+                print(f"Guide '{guide_name}' set as active guide")
+            else:
+                print(f"Guide '{guide_name}' not found in guides.txt")
+        except FileNotFoundError:
+            print("guides.txt file not found")
+        except Exception as e:
+            print(f"Error loading guide: {str(e)}")
+
+    # Clear Subcommand
     def _cmd_clear(self, args):
         """
         Handle the clear command to remove logs, vector databases, or cached data
-
-        Args:
-            args (List[str]): Command arguments
+        with improved structure and reusable utility functions
         """
         debug_print(self.config, f"Clear command with args: {args}")
 
         if not args:
-            print("Usage: /clear [logs|vdb|cache|all] [workspace]")
+            self.output_manager.print_formatted('feedback',
+                                                "Usage: /clear [logs|vdb|cache|all] [workspace]",
+                                                success=False)
             print("  logs    - Clear log files")
             print("  vdb     - Clear vector database files")
             print("  cache   - Clear cached data and intermediary files")
@@ -854,290 +988,410 @@ class CommandProcessor:
         # Determine target workspace
         workspace = args[1] if len(args) > 1 else self.current_workspace
 
-        if subcommand == 'logs':
-            self._clear_logs(workspace)
-        elif subcommand == 'vdb':
-            self._clear_vector_database(workspace)
-        elif subcommand == 'cache':
-            self._clear_cache(workspace)
-        elif subcommand == 'all':
-            self._clear_logs(workspace)
-            self._clear_vector_database(workspace)
-            self._clear_cache(workspace)
+        # Command mapping
+        clear_handlers = {
+            'logs': self._clear_logs,
+            'vdb': self._clear_vector_database,
+            'cache': self._clear_cache,
+            'all': self._clear_all
+        }
+
+        handler = clear_handlers.get(subcommand)
+
+        if handler:
+            handler(workspace)
         else:
-            print(f"Unknown clear subcommand: {subcommand}")
+            self.output_manager.print_formatted('feedback',
+                                                f"Unknown clear subcommand: {subcommand}",
+                                                success=False)
             print("Valid subcommands: logs, vdb, cache, all")
-
     def _clear_logs(self, workspace):
-        """Clear log files for a workspace"""
-        import os
-        import glob
+        """Clear log files for a workspace with enhanced feedback"""
+        self.output_manager.print_formatted('header', f"Clearing Logs for '{workspace}'")
 
-        logs_dir = os.path.join("logs", workspace)
-        if not os.path.exists(logs_dir):
-            print(f"No logs directory found for workspace '{workspace}'")
+        # Use utility function to get and remove files
+        log_files = self._get_files_by_patterns(
+            os.path.join("logs", workspace),
+            ["*.txt", "*.json", "*.md"]
+        )
+
+        if not log_files:
+            self.output_manager.print_formatted('feedback',
+                                                f"No log files found for workspace '{workspace}'",
+                                                success=False)
             return
 
         # Ask for confirmation
-        confirm = input(f"Are you sure you want to clear all logs for workspace '{workspace}'? (y/n): ").strip().lower()
-        if confirm != 'y' and confirm != 'yes':
-            print("Operation cancelled")
+        if not self._confirm_operation(f"clear {len(log_files)} log files"):
             return
 
-        # Delete log files
-        log_files = glob.glob(os.path.join(logs_dir, "*.txt"))
-        log_files.extend(glob.glob(os.path.join(logs_dir, "*.json")))
-        log_files.extend(glob.glob(os.path.join(logs_dir, "*.md")))
+        # Remove files with feedback
+        removed = self._remove_files(log_files)
 
-        if not log_files:
-            print(f"No log files found for workspace '{workspace}'")
-            return
-
-        for file in log_files:
-            try:
-                os.remove(file)
-                debug_print(self.config, f"Removed log file: {file}")
-            except Exception as e:
-                debug_print(self.config, f"Error removing file {file}: {str(e)}")
-
-        print(f"Cleared {len(log_files)} log files for workspace '{workspace}'")
-
+        self.output_manager.print_formatted('feedback',
+                                            f"Cleared {removed} log files for workspace '{workspace}'",
+                                            success=True)
     def _clear_vector_database(self, workspace):
         """Clear vector database files for a workspace"""
-        import os
-        import shutil
+        self.output_manager.print_formatted('header', f"Clearing Vector Database for '{workspace}'")
 
         vector_dir = os.path.join("data", workspace, "vector_store")
         if not os.path.exists(vector_dir):
-            print(f"No vector database found for workspace '{workspace}'")
+            self.output_manager.print_formatted('feedback',
+                                                f"No vector database found for workspace '{workspace}'",
+                                                success=False)
             return
 
-        # Ask for confirmation
-        confirm = input(
-            f"Are you sure you want to clear the vector database for workspace '{workspace}'? This will require rebuilding indexes. (y/n): ").strip().lower()
-        if confirm != 'y' and confirm != 'yes':
-            print("Operation cancelled")
+        # Ask for confirmation with stronger warning
+        if not self._confirm_operation(
+                f"clear vector database for '{workspace}'",
+                "This will require rebuilding indexes"
+        ):
             return
 
         # Create backup
-        import datetime
-        backup_dir = f"{vector_dir}_backup_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        try:
-            shutil.copytree(vector_dir, backup_dir)
-            print(f"Created backup of vector database at: {backup_dir}")
-        except Exception as e:
-            debug_print(self.config, f"Error creating backup: {str(e)}")
-            # Continue with deletion even if backup fails
+        backup_dir = self._create_backup(vector_dir)
+        if backup_dir:
+            self.output_manager.print_formatted('feedback',
+                                                f"Created backup of vector database at: {backup_dir}",
+                                                success=True)
 
-        # Delete vector database
+        # Delete and recreate vector database directory
         try:
+            import shutil
             shutil.rmtree(vector_dir)
             os.makedirs(vector_dir)  # Recreate empty directory
-            print(f"Cleared vector database for workspace '{workspace}'")
+            self.output_manager.print_formatted('feedback',
+                                                f"Cleared vector database for workspace '{workspace}'",
+                                                success=True)
         except Exception as e:
             debug_print(self.config, f"Error clearing vector database: {str(e)}")
-            print(f"Error clearing vector database: {str(e)}")
-
+            self.output_manager.print_formatted('feedback',
+                                                f"Error clearing vector database: {str(e)}",
+                                                success=False)
     def _clear_cache(self, workspace):
         """Clear cached data and intermediary files"""
-        import os
-        import glob
+        self.output_manager.print_formatted('header', f"Clearing Cache for '{workspace}'")
 
         # Paths for cache files
-        cache_paths = [
+        cache_patterns = [
             os.path.join("data", workspace, "*.json"),  # JSON cache files
             os.path.join("data", workspace, "*.cache"),  # Cache files
             os.path.join("data", workspace, "*.tmp")  # Temporary files
         ]
 
-        # Ask for confirmation
-        confirm = input(
-            f"Are you sure you want to clear cache files for workspace '{workspace}'? (y/n): ").strip().lower()
-        if confirm != 'y' and confirm != 'yes':
-            print("Operation cancelled")
+        # Gather all files matching patterns
+        cache_files = []
+        for pattern in cache_patterns:
+            cache_files.extend(self._get_files_by_patterns("", [pattern]))
+
+        if not cache_files:
+            self.output_manager.print_formatted('feedback',
+                                                f"No cache files found for workspace '{workspace}'",
+                                                success=False)
             return
 
-        # Count cleared files
-        cleared_count = 0
+        # Ask for confirmation
+        if not self._confirm_operation(f"clear {len(cache_files)} cache files"):
+            return
 
-        # Remove cache files
-        for path_pattern in cache_paths:
-            files = glob.glob(path_pattern)
-            for file in files:
-                try:
-                    os.remove(file)
-                    cleared_count += 1
-                    debug_print(self.config, f"Removed cache file: {file}")
-                except Exception as e:
-                    debug_print(self.config, f"Error removing file {file}: {str(e)}")
+        # Remove files with feedback
+        removed = self._remove_files(cache_files)
 
-        print(f"Cleared {cleared_count} cache files for workspace '{workspace}'")
+        self.output_manager.print_formatted('feedback',
+                                            f"Cleared {removed} cache files for workspace '{workspace}'",
+                                            success=True)
+    def _clear_all(self, workspace):
+        """Clear all logs, vector database, and cache files"""
+        self.output_manager.print_formatted('header', f"Clearing All Data for '{workspace}'")
 
+        # Ask for confirmation with stronger warning
+        if not self._confirm_operation(
+                f"clear ALL data (logs, vector database, and cache) for '{workspace}'",
+                "This is a destructive operation that cannot be undone"
+        ):
+            return
 
-HELP_TOPICS = {
-    "run": """
-    Run Commands:
-      /run themes [method]     - Run theme analysis
-        Methods: all, nfm, net, key, lsa, cluster
-          all    - Run all theme analysis methods
-          nfm    - Named entity-based theme extraction
-          net    - Content network analysis
-          key    - Keyword-based theme identification
-          lsa    - Latent semantic analysis
-          cluster - Document clustering
+        # Clear each type of data
+        self._clear_logs(workspace)
+        self._clear_vector_database(workspace)
+        self._clear_cache(workspace)
 
-      /run query             - Enter interactive query mode with context-aware responses
+        self.output_manager.print_formatted('feedback',
+                                            f"All clearing operations completed for workspace '{workspace}'",
+                                            success=True)
 
-      /run grind             - Process files in workspace to create initial database
+    # Utility functions for file operations
+    def _format_command(self, command_string):
+        """Format a command string for display in logs and feedback"""
+        if command_string.startswith('/'):
+            tokens = command_string.split()
+            command = tokens[0][1:]  # Remove leading slash
+            args = tokens[1:] if len(tokens) > 1 else []
 
-      /run update            - Update workspace with new or modified files
+            if args:
+                return f"{command} {' '.join(args)}"
+            else:
+                return command
+        else:
+            return command_string
+    def _get_files_by_patterns(self, directory, patterns):
+        """
+        Get all files matching the given patterns
 
-      /run scan [detailed]   - Scan workspace for new or updated files
-        detailed - Show additional file information
+        Args:
+            directory: Base directory to search
+            patterns: List of glob patterns
 
-      /run merge <source_ws> - Merge source workspace into current workspace
+        Returns:
+            List of file paths
+        """
+        import glob
 
-      /run sentiment [method] - Run sentiment analysis
-        Methods: all, basic, advanced
-          all     - Run all sentiment analysis methods
-          basic   - Simple sentiment classification
-          advanced - In-depth analysis with aspect extraction
+        if not os.path.exists(directory) and directory:
+            return []
 
-      /run topics [method]    - Run topic modeling
-        Methods: all, lda, nmf, cluster
-          all    - Run all topic modeling methods
-          lda    - Latent Dirichlet Allocation
-          nmf    - Non-Negative Matrix Factorization
-          cluster - Clustering-based topic modeling
+        files = []
+        for pattern in patterns:
+            # If directory is empty, just use the pattern as is
+            if directory:
+                path_pattern = os.path.join(directory, pattern)
+            else:
+                path_pattern = pattern
 
-    Examples:
-      /run themes nfm        - Run named entity-based theme extraction
-      /run sentiment advanced - Run advanced sentiment analysis
-      /run topics lda         - Run LDA topic modeling
-    """,
-    "clear": """
-    Clear Commands:
-      /clear logs [workspace]    - Clear log files for a workspace
-      /clear vdb [workspace]     - Clear vector database files for a workspace
-      /clear cache [workspace]   - Clear cached data and intermediary files
-      /clear all [workspace]     - Clear all logs, vector database, and cache files
+            files.extend(glob.glob(path_pattern))
 
-    Notes:
-      - If workspace is not specified, the current workspace is used
-      - Clearing vector database will require rebuilding indexes
-      - A backup is created before clearing the vector database
-      - All clear operations require confirmation
-    """,
-    "load": """
-    Load Commands:
-      /load ws <workspace>  - Load or create a workspace
+        return files
+    def _confirm_operation(self, operation, warning=None):
+        """
+        Ask for confirmation before performing destructive operations
 
-    Notes:
-      - If the workspace doesn't exist, you'll be prompted to create it
-      - Loading a workspace sets it as the current active workspace
-      - All commands will operate on the current workspace
-    """,
-    "config": """
-    Config Commands:
-      /config llm <model>                - Set LLM model (e.g., mistral, llama2)
-      /config embed <model>              - Set embedding model (e.g., multilingual-e5, mixbread)
-      /config storage <backend>          - Set storage backend (llama_index, haystack, or chroma)
-      /config kval <n>                   - Set k value for retrieval (number of docs to return)
-      /config debug [on|off]             - Enable or disable debug mode
-      /config output [txt|md|json]       - Set output format for saved files
-      /config guide <guide>              - Set guide from guides.txt
+        Args:
+            operation: Description of the operation
+            warning: Optional additional warning message
 
-    Examples:
-      /config llm mistral                - Set LLM model to mistral
-      /config embed multilingual-e5      - Set embedding model to multilingual-e5
-      /config kval 5                     - Set retrieval to return 5 documents
-    """,
-    "save": """
-    Save Commands:
-      /save start                - Start saving session (all commands and outputs)
-      /save stop                 - Stop saving session and write to file
-      /save buffer               - Save last command output to file
+        Returns:
+            Boolean indicating whether to proceed
+        """
+        prompt = f"Are you sure you want to {operation}? (y/n): "
 
-    Notes:
-      - Session logs are saved to logs/<workspace>/ directory
-      - Output format depends on your config.output_format setting
-      - The buffer contains the most recent command output
-    """,
-    "show": """
-    Show Commands:
-      /show status               - Show system status (current settings)
-      /show cuda                 - Show CUDA status and GPU information
-      /show config               - Show detailed configuration settings
-      /show ws                   - Show workspace details and statistics
-      /show files                - Show files in current workspace
-      /show guide                - Show available guides from guides.txt
+        if warning:
+            print(f"WARNING: {warning}")
 
-    Examples:
-      /show status               - View current workspace and model settings
-      /show files                - List all files in the current workspace
-    """,
-    "inspect": """
-    Inspect Commands:
-      /inspect workspace [ws]         - Inspect workspace metadata and vector store
-      /inspect ws [ws]                - Alias for workspace inspect
-      /inspect documents [ws] [limit] - Dump document content in workspace
-        Optional: Specify number of documents to show (default: 5)
-      /inspect vectorstore [ws]       - Dump vector store metadata
-      /inspect vdb [ws]               - Alias for vectorstore inspect
-      /inspect query [ws] [query]     - Test query pipeline with optional test query
-      /inspect rebuild [ws]           - Rebuild vector store from existing documents
-      /inspect fix [ws]               - Fix common vector store issues
-      /inspect metadata [ws] [query]  - Inspect raw metadata returned from vector store
-      /inspect migrate [ws]           - Fix inconsistent vector store naming
+        confirm = input(prompt).strip().lower()
 
-    Examples:
-      /inspect documents default 10   - Show content of 10 documents in default workspace
-      /inspect query research         - Test query pipeline with the term "research"
-    """,
-    "explain": """
-    Interpretation Commands:
-      /explain themes [question]    - Get LLM interpretation of theme analysis
-      /explain topics [question]    - Get LLM interpretation of topic modeling 
-      /explain sentiment [question] - Get LLM interpretation of sentiment analysis
-      /explain session [question]   - Get LLM interpretation of query session
+        if confirm not in ('y', 'yes'):
+            self.output_manager.print_formatted('feedback',
+                                                "Operation cancelled",
+                                                success=False)
+            return False
 
-    Examples:
-      /explain themes What are the most significant themes?
-      /explain topics How do the topics relate to each other?
-      /explain sentiment What emotions are most prominent?
-      /explain session What were the main research directions?
+        return True
+    def _remove_files(self, file_list):
+        """
+        Remove a list of files with error handling
+
+        Args:
+            file_list: List of file paths to remove
+
+        Returns:
+            Number of files successfully removed
+        """
+        removed_count = 0
+
+        for file_path in file_list:
+            try:
+                os.remove(file_path)
+                removed_count += 1
+                debug_print(self.config, f"Removed file: {file_path}")
+            except Exception as e:
+                debug_print(self.config, f"Error removing file {file_path}: {str(e)}")
+
+        return removed_count
+    def _create_backup(self, directory):
+        """
+        Create a timestamped backup of a directory
+
+        Args:
+            directory: Directory to back up
+
+        Returns:
+            Path to backup directory or None if failed
+        """
+        import datetime
+        import shutil
+
+        try:
+            backup_dir = f"{directory}_backup_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            shutil.copytree(directory, backup_dir)
+            return backup_dir
+        except Exception as e:
+            debug_print(self.config, f"Error creating backup: {str(e)}")
+            return None
+
+    HELP_TOPICS = {
+        "run": """
+        Run Commands:
+          /run themes [method]     - Run theme analysis
+            Methods: all, nfm, net, key, lsa, cluster
+              all    - Run all theme analysis methods
+              nfm    - Named entity-based theme extraction
+              net    - Content network analysis
+              key    - Keyword-based theme identification
+              lsa    - Latent semantic analysis
+              cluster - Document clustering
+    
+          /run query             - Enter interactive query mode with context-aware responses
+    
+          /run grind             - Process files in workspace to create initial database
+    
+          /run update            - Update workspace with new or modified files
+    
+          /run scan [detailed]   - Scan workspace for new or updated files
+            detailed - Show additional file information
+    
+          /run merge <source_ws> - Merge source workspace into current workspace
+    
+          /run sentiment [method] - Run sentiment analysis
+            Methods: all, basic, advanced
+              all     - Run all sentiment analysis methods
+              basic   - Simple sentiment classification
+              advanced - In-depth analysis with aspect extraction
+    
+          /run topics [method]    - Run topic modeling
+            Methods: all, lda, nmf, cluster
+              all    - Run all topic modeling methods
+              lda    - Latent Dirichlet Allocation
+              nmf    - Non-Negative Matrix Factorization
+              cluster - Clustering-based topic modeling
+    
+        Examples:
+          /run themes nfm        - Run named entity-based theme extraction
+          /run sentiment advanced - Run advanced sentiment analysis
+          /run topics lda         - Run LDA topic modeling
+        """,
+        "clear": """
+        Clear Commands:
+          /clear logs [workspace]    - Clear log files for a workspace
+          /clear vdb [workspace]     - Clear vector database files for a workspace
+          /clear cache [workspace]   - Clear cached data and intermediary files
+          /clear all [workspace]     - Clear all logs, vector database, and cache files
+    
+        Notes:
+          - If workspace is not specified, the current workspace is used
+          - Clearing vector database will require rebuilding indexes
+          - A backup is created before clearing the vector database
+          - All clear operations require confirmation
+        """,
+        "load": """
+        Load Commands:
+          /load ws <workspace>  - Load or create a workspace
+    
+        Notes:
+          - If the workspace doesn't exist, you'll be prompted to create it
+          - Loading a workspace sets it as the current active workspace
+          - All commands will operate on the current workspace
+        """,
+        "config": """
+        Config Commands:
+          /config llm <model>                - Set LLM model (e.g., mistral, llama2)
+          /config embed <model>              - Set embedding model (e.g., multilingual-e5, mixbread)
+          /config storage <backend>          - Set storage backend (llama_index, haystack, or chroma)
+          /config kval <n>                   - Set k value for retrieval (number of docs to return)
+          /config debug [on|off]             - Enable or disable debug mode
+          /config output [txt|md|json]       - Set output format for saved files
+          /config guide <guide>              - Set guide from guides.txt
+    
+        Examples:
+          /config llm mistral                - Set LLM model to mistral
+          /config embed multilingual-e5      - Set embedding model to multilingual-e5
+          /config kval 5                     - Set retrieval to return 5 documents
+        """,
+        "save": """
+        Save Commands:
+          /save start                - Start saving session (all commands and outputs)
+          /save stop                 - Stop saving session and write to file
+          /save buffer               - Save last command output to file
+    
+        Notes:
+          - Session logs are saved to logs/<workspace>/ directory
+          - Output format depends on your config.output_format setting
+          - The buffer contains the most recent command output
+        """,
+        "show": """
+        Show Commands:
+          /show status               - Show system status (current settings)
+          /show cuda                 - Show CUDA status and GPU information
+          /show config               - Show detailed configuration settings
+          /show ws                   - Show workspace details and statistics
+          /show files                - Show files in current workspace
+          /show guide                - Show available guides from guides.txt
+    
+        Examples:
+          /show status               - View current workspace and model settings
+          /show files                - List all files in the current workspace
+        """,
+        "inspect": """
+        Inspect Commands:
+          /inspect workspace [ws]         - Inspect workspace metadata and vector store
+          /inspect ws [ws]                - Alias for workspace inspect
+          /inspect documents [ws] [limit] - Dump document content in workspace
+            Optional: Specify number of documents to show (default: 5)
+          /inspect vectorstore [ws]       - Dump vector store metadata
+          /inspect vdb [ws]               - Alias for vectorstore inspect
+          /inspect query [ws] [query]     - Test query pipeline with optional test query
+          /inspect rebuild [ws]           - Rebuild vector store from existing documents
+          /inspect fix [ws]               - Fix common vector store issues
+          /inspect metadata [ws] [query]  - Inspect raw metadata returned from vector store
+          /inspect migrate [ws]           - Fix inconsistent vector store naming
+    
+        Examples:
+          /inspect documents default 10   - Show content of 10 documents in default workspace
+          /inspect query research         - Test query pipeline with the term "research"
+        """,
+        "explain": """
+        Interpretation Commands:
+          /explain themes [question]    - Get LLM interpretation of theme analysis
+          /explain topics [question]    - Get LLM interpretation of topic modeling 
+          /explain sentiment [question] - Get LLM interpretation of sentiment analysis
+          /explain session [question]   - Get LLM interpretation of query session
+    
+        Examples:
+          /explain themes What are the most significant themes?
+          /explain topics How do the topics relate to each other?
+          /explain sentiment What emotions are most prominent?
+          /explain session What were the main research directions?
+        """
+    }
+
+    HELP_OVERVIEW = """
+    Available Commands:
+    
+      Run Modes:
+        /run grind          - Process files in workspace to create initial database
+        /run update         - Update workspace with new or modified files
+        /run scan           - Scan workspace for new or updated files
+        /run merge          - Merge workspaces
+        /run sentiment      - Run sentiment analysis
+        /run topics         - Run topic modeling
+        /run themes         - Run theme analysis
+        /run query          - Enter interactive query mode
+    
+      Interpretation:
+        /explain            - Get LLM interpretation of analysis
+    
+      Operations:
+        /load               - Load workspace
+        /save               - Start/stop saving session or buffer
+        /config             - Set runtime configuration
+        /show               - Show active information and data sources
+        /clear              - Clear logs, vector database, or cache files
+        /inspect            - Check/verify status of data stores 
+        /quit, /exit        - Exit the application
+        /help [command]     - Display help information
+    
+      Aliases:
+        /q - /quit, /c - /config, /l - /load, /r - /run
+        /s - /save, /h - /help, /i - /inspect, /e - /explain
+        /cl - /clear
     """
-}
-
-# Main help overview text
-HELP_OVERVIEW = """
-Available Commands:
-
-  Run Modes:
-    /run grind          - Process files in workspace to create initial database
-    /run update         - Update workspace with new or modified files
-    /run scan           - Scan workspace for new or updated files
-    /run merge          - Merge workspaces
-    /run sentiment      - Run sentiment analysis
-    /run topics         - Run topic modeling
-    /run themes         - Run theme analysis
-    /run query          - Enter interactive query mode
-
-  Interpretation:
-    /explain            - Get LLM interpretation of analysis
-
-  Operations:
-    /load               - Load workspace
-    /save               - Start/stop saving session or buffer
-    /config             - Set runtime configuration
-    /show               - Show active information and data sources
-    /clear              - Clear logs, vector database, or cache files
-    /inspect            - Check/verify status of data stores 
-    /quit, /exit        - Exit the application
-    /help [command]     - Display help information
-
-  Aliases:
-    /q - /quit, /c - /config, /l - /load, /r - /run
-    /s - /save, /h - /help, /i - /inspect, /e - /explain
-    /cl - /clear
-"""
