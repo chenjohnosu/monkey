@@ -18,54 +18,92 @@ _tui_ready = False
 # Buffer for messages that arrive before TUI is ready
 _pre_tui_buffer = queue.Queue()
 
+
+
+logging.TRACE = 5
+logging.addLevelName(logging.TRACE, "TRACE")
+
+
 class FormattedLogHandler(logging.Handler):
-    """Custom handler that formats logs consistently for both console and TUI"""
+    """Custom handler that formats logs consistently for console and TUI"""
 
     def __init__(self):
         super().__init__()
+        self.tui_mode = False  # Track TUI mode status
+
+    def set_tui_mode(self, enabled=False):
+        """Set whether we're in TUI mode"""
+        global _in_tui_mode
+        self.tui_mode = enabled
+        _in_tui_mode = enabled
+
+        # If disabling TUI mode, ensure any buffered messages are processed
+        if not enabled:
+            while not _pre_tui_buffer.empty():
+                msg = _pre_tui_buffer.get()
+                print(msg, file=sys.stderr)
 
     def emit(self, record):
         try:
-            # Determine message color and formatting for TUI
-            color_map = {
-                logging.DEBUG: "[dim]DEBUG[/dim]",
-                logging.INFO: "[white]INFO[/white]",
-                logging.WARNING: "[yellow]WARNING[/yellow]",
-                logging.ERROR: "[bold red]ERROR[/bold red]",
-                logging.CRITICAL: "[bold red]CRITICAL[/bold red]"
-            }
+            # Format the basic message
+            msg = self.format(record)
 
-            # Get the message from the formatter
-            raw_message = self.format(record)
+            # Check if we're in TUI mode and TUI is not ready
+            if self.tui_mode and not _tui_ready:
+                # Buffer messages before TUI is ready
+                _pre_tui_buffer.put(msg)
+                return
 
-            # Timestamp for context
-            timestamp = datetime.datetime.now().strftime('%H:%M:%S')
+            # Determine message color and formatting for TUI or console
+            if self.tui_mode:
+                color_map = {
+                    logging.DEBUG: "[dim]DEBUG[/dim]",
+                    logging.INFO: "[white]INFO[/white]",
+                    logging.WARNING: "[yellow]WARNING[/yellow]",
+                    logging.ERROR: "[bold red]ERROR[/bold red]",
+                    logging.CRITICAL: "[bold red]CRITICAL[/bold red]"
+                }
 
-            # Determine log level display (use color mapping)
-            level_display = color_map.get(record.levelno, f"[{record.levelname}]")
+                # TUI-specific formatting with colored levels and timestamp
+                timestamp = datetime.datetime.now().strftime('%H:%M:%S')
+                level_display = color_map.get(record.levelno, f"[{record.levelname}]")
 
-            # Format the message with timestamp and level
-            # Use square bracket indent for multiline messages
-            lines = raw_message.split('\n')
-            if len(lines) > 1:
-                formatted_lines = [f"[{timestamp}] {level_display}: {lines[0]}"]
-                formatted_lines.extend([f"          {line}" for line in lines[1:]])
-                formatted = '\n'.join(formatted_lines)
-            else:
-                formatted = f"[{timestamp}] {level_display}: {raw_message}"
-
-            if _in_tui_mode:
-                if _tui_ready:
-                    # Add to the main TUI message queue if TUI is ready
-                    tui_message_queue.put(formatted)
+                # Format the message with timestamp and level
+                lines = msg.split('\n')
+                if len(lines) > 1:
+                    formatted_lines = [f"[{timestamp}] {level_display}: {lines[0]}"]
+                    formatted_lines.extend([f"          {line}" for line in lines[1:]])
+                    formatted = '\n'.join(formatted_lines)
                 else:
-                    # Add to pre-TUI buffer if TUI is not ready yet
-                    _pre_tui_buffer.put(formatted)
-            else:
-                # Print directly to stderr (standard for logging)
+                    formatted = f"[{timestamp}] {level_display}: {msg}"
+
+                # Add to TUI message queue if TUI is ready
+                if _tui_ready:
+                    tui_message_queue.put(formatted)
+                # Otherwise, continue to stderr
                 print(formatted, file=sys.stderr)
+            else:
+                # Simple console output without markup or timestamp
+                print(msg, file=sys.stderr)
         except Exception:
             self.handleError(record)
+
+def set_tui_ready(ready=True):
+    """
+    Set whether the TUI is fully initialized and ready for messages
+
+    Args:
+        ready: Whether TUI is ready
+    """
+    global _tui_ready
+    _tui_ready = ready
+
+    # If TUI is now ready, transfer any buffered messages to the main queue
+    if ready:
+        while not _pre_tui_buffer.empty():
+            tui_message_queue.put(_pre_tui_buffer.get())
+
+    return _tui_ready
 
 def configure_root_logger(level=logging.INFO):
     """Configure the root logger with standard formatting"""
@@ -92,38 +130,6 @@ def configure_root_logger(level=logging.INFO):
 
     return root_logger
 
-# Add TRACE level to the logging module
-logging.TRACE = 5
-logging.addLevelName(logging.TRACE, "TRACE")
-
-def set_tui_mode(enabled=False):
-    """
-    Set whether we're in TUI mode
-
-    Args:
-        enabled: Whether TUI mode is enabled
-    """
-    global _in_tui_mode
-    _in_tui_mode = enabled
-    return _in_tui_mode
-
-def set_tui_ready(ready=True):
-    """
-    Set whether the TUI is fully initialized and ready for messages
-
-    Args:
-        ready: Whether TUI is ready
-    """
-    global _tui_ready
-    _tui_ready = ready
-
-    # If TUI is now ready, transfer any buffered messages to the main queue
-    if ready:
-        while not _pre_tui_buffer.empty():
-            tui_message_queue.put(_pre_tui_buffer.get())
-
-    return _tui_ready
-
 def get_tui_message():
     """
     Get the next message from the TUI message queue
@@ -135,7 +141,6 @@ def get_tui_message():
         return None
     return tui_message_queue.get()
 
-# Define logging functions before LogManager
 def get_logger(name):
     """
     Get a logger instance with the specified name
@@ -219,26 +224,42 @@ class LogManager:
     Compatibility wrapper for logging functions to maintain existing code structure
     """
     _debug_enabled = False
+    _log_handler = None
 
-    @staticmethod
-    def set_tui_mode(enabled=False):
-        """Set TUI mode"""
-        return set_tui_mode(enabled)
+    @classmethod
+    def _get_log_handler(cls):
+        """Get the first FormattedLogHandler from root logger"""
+        if not cls._log_handler:
+            root_logger = logging.getLogger()
+            for handler in root_logger.handlers:
+                if isinstance(handler, FormattedLogHandler):
+                    cls._log_handler = handler
+                    break
+        return cls._log_handler
 
+    @classmethod
+    def set_tui_mode(cls, enabled=False):
+        """Set TUI mode for logging"""
+        handler = cls._get_log_handler()
+        if handler:
+            handler.set_tui_mode(enabled)
+        return enabled
+
+    # Keep other existing methods the same
     @staticmethod
     def set_tui_ready(ready=True):
-        """Set TUI readiness"""
-        return set_tui_ready(ready)
+        """Signal if TUI is ready - kept for compatibility"""
+        return ready
 
     @staticmethod
     def get_tui_message():
-        """Get TUI message"""
-        return get_tui_message()
+        """Placeholder for TUI message retrieval"""
+        return None
 
-    @staticmethod
-    def set_debug(enabled=False):
+    @classmethod
+    def set_debug(cls, enabled=False):
         """Set debug mode"""
-        LogManager._debug_enabled = enabled
+        cls._debug_enabled = enabled
         root_logger = logging.getLogger()
 
         if enabled:
