@@ -5,11 +5,15 @@ With improved session logging capability and fixed exit behavior
 
 import os
 
-from core.engine.logging import debug_print
+from core.engine.logging import debug_print, info, warning, error
 from core.engine.storage import StorageManager
 from core.engine.output import OutputManager
 from core.language.processor import TextProcessor
 from core.connectors.connector_factory import ConnectorFactory
+from core.engine.utils import ensure_dir, timestamp_filename
+from core.engine.dependencies import require
+from core.engine.common import safe_execute
+
 
 class QueryEngine:
     """Interactive query engine using LlamaIndex and Ollama"""
@@ -108,12 +112,12 @@ class QueryEngine:
         model = self.config.get('llm.default_model')
 
         # Use the LLM connector to generate a response
-        try:
-            response = self.llm_connector.generate_with_context(query, docs, model)
-            return response
-        except Exception as e:
-            debug_print(self.config, f"Error generating response: {str(e)}")
-            return f"Error generating response: {str(e)}"
+        return safe_execute(
+            self.llm_connector.generate_with_context,
+            query, docs, model,
+            default_return=f"Error generating response",
+            error_message="Error generating response with context"
+        )
 
     def _generate_response_no_context(self, query):
         """
@@ -134,11 +138,12 @@ class QueryEngine:
         prompt = f"You are a document analysis assistant. The user is asking about documents in their collection, but no relevant documents were found. Please provide a helpful response.\n\nUser query: {query}\n\nResponse:"
 
         # Use the LLM connector to generate a response
-        try:
-            return self.llm_connector.generate(prompt, model)
-        except Exception as e:
-            debug_print(self.config, f"Error generating response: {str(e)}")
-            return f"Error generating response: {str(e)}"
+        return safe_execute(
+            self.llm_connector.generate,
+            prompt, model,
+            default_return=f"Error generating response",
+            error_message="Error generating response without context"
+        )
 
     def enter_interactive_mode(self):
         """
@@ -254,9 +259,7 @@ class QueryEngine:
 
             # Display the response
             self.output_manager.print_formatted('header', "RESPONSE")
-
-            # NEW: Wrap the response text to fit the display
-            self._display_wrapped_text(response)
+            print(f"{response}\n")
 
             # Explicitly log the response text
             if self.logging_session and hasattr(self.output_manager, '_write_to_session'):
@@ -283,11 +286,11 @@ class QueryEngine:
             # Format document with colors
             print(f"\n{Colors.YELLOW}Document {i + 1}: {source}{Colors.RESET}")
             print(f"  {Colors.BRIGHT_WHITE}Relevance:{Colors.RESET} {score:.4f}" if isinstance(score,
-                                                                                               float) else f"  {Colors.BRIGHT_WHITE}Relevance:{Colors.RESET} {score}")
+                                                                                             float) else f"  {Colors.BRIGHT_WHITE}Relevance:{Colors.RESET} {score}")
 
             # Add to log if we're saving a session
             if self.logging_session and hasattr(self.output_manager, '_write_to_session'):
-                doc_log += f"Document {i + 1}: {source}, Relevance: {score if isinstance(score, str) else f'{score:.4f}'}\n"
+                doc_log += f"Document {i+1}: {source}, Relevance: {score if isinstance(score, str) else f'{score:.4f}'}\n"
 
             # Show content preview with gray text
             content = doc.get('content', '')
@@ -316,9 +319,7 @@ class QueryEngine:
 
         # Display the response
         self.output_manager.print_formatted('header', "RESPONSE")
-
-        # NEW: Wrap the response text to fit the display
-        self._display_wrapped_text(response)
+        print(f"{response}\n")
 
         # Explicitly log the response text
         if self.logging_session and hasattr(self.output_manager, '_write_to_session'):
@@ -326,38 +327,3 @@ class QueryEngine:
 
         # Save to buffer for potential later saving
         self.output_manager.add_to_buffer(query, response, docs)
-
-    def _display_wrapped_text(self, text, width=80):
-        """
-        Display text with proper line wrapping to fit the terminal width
-
-        Args:
-            text (str): Text to display
-            width (int): Maximum width for line wrapping
-        """
-        import textwrap
-        import shutil
-        from core.engine.utils import Colors
-
-        # Try to determine terminal width automatically
-        try:
-            terminal_width = shutil.get_terminal_size().columns
-            # Use slightly less than full width to account for padding
-            width = min(width, max(78, terminal_width - 5))
-        except:
-            # If we can't determine terminal width, use the default width
-            pass
-
-        # Split text by existing newlines first
-        paragraphs = text.split('\n')
-
-        # Process each paragraph separately to preserve intentional line breaks
-        for paragraph in paragraphs:
-            if paragraph.strip():
-                # Wrap the paragraph text
-                wrapped_lines = textwrap.wrap(paragraph, width=width)
-                for line in wrapped_lines:
-                    print(line)
-            else:
-                # Print empty lines as is
-                print()
