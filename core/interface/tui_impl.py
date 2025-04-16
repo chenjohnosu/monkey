@@ -23,10 +23,10 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core.engine.logging import get_logger, error, warning, info, debug, trace
+from core.engine.logging import error, warning, info, debug, trace
+import logging
 
-logger = get_logger("tui_impl")
-
+logger = logging.getLogger("tui_impl")
 class StatusBar(Static):
     """Status bar for Monkey"""
 

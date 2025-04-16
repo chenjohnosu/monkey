@@ -20,7 +20,6 @@ class QueryEngine:
 
     def __init__(self, config, storage_manager=None, output_manager=None, text_processor=None):
         """Initialize the query engine"""
-
         self.config = config
         self.storage_manager = storage_manager or StorageManager(config)
         self.output_manager = output_manager or OutputManager(config)
