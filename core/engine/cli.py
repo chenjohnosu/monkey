@@ -756,6 +756,14 @@ class CommandProcessor:
         except Exception as e:
             error(f"Error: {str(e)}")
 
+    """
+    Refactored display functions for the CLI module to use formatting utilities consistently.
+    File: core/engine/cli.py
+
+    Replace the existing implementations of _show_status, _show_workspace, and _show_files 
+    with these refactored versions.
+    """
+
     def _show_status(self):
         """Show system status with compact colored formatting"""
         debug_print(self.config, "Showing system status")
@@ -792,9 +800,10 @@ class CommandProcessor:
         # Get additional workspace stats if available
         if hasattr(self, 'storage_manager'):
             stats = self.storage_manager.get_workspace_stats(self.current_workspace)
-            if stats:
+            if stats and isinstance(stats, dict):
                 self.output_manager.print_formatted('subheader', f"Details for {self.current_workspace}")
 
+                # Use dict.get() to safely retrieve values with defaults if keys don't exist
                 self.output_manager.print_formatted('kv', stats.get('doc_count', 0), key="Document Count", indent=2)
                 self.output_manager.print_formatted('kv', stats.get('embedding_count', 0), key="Embeddings", indent=2)
                 self.output_manager.print_formatted('kv', stats.get('last_updated', 'Unknown'), key="Last Updated",
@@ -814,6 +823,7 @@ class CommandProcessor:
         debug_print(self.config, "Showing workspace files")
 
         import os
+        import datetime
         doc_dir = os.path.join("body", self.current_workspace)
 
         if not os.path.exists(doc_dir):
@@ -836,14 +846,18 @@ class CommandProcessor:
 
         if not files:
             self.output_manager.print_formatted('feedback', "No files found", success=False)
-        else:
-            # Print compact file list with colors
-            from core.engine.utils import Colors
-            print(
-                f"\n  {Colors.CYAN}Filename{Colors.RESET}  {Colors.CYAN}Size{Colors.RESET}  {Colors.CYAN}Modified{Colors.RESET}")
+            return
 
-            for file_path, size, mod_time in sorted(files):
-                print(f"  {Colors.BRIGHT_WHITE}{file_path}{Colors.RESET}  {self._format_size(size)}  {mod_time}")
+        # Print file list header
+        self.output_manager.print_formatted('kv', "Filename", key="Path", indent=2)
+        self.output_manager.print_formatted('kv', "Size", key="Size", indent=2)
+        self.output_manager.print_formatted('kv', "Modified", key="Last Modified", indent=2)
+        print()  # Add a blank line for readability
+
+        # Print each file with consistent formatting
+        for file_path, size, mod_time in sorted(files):
+            self.output_manager.print_formatted('list', f"{file_path} ({self._format_size(size)}) - {mod_time}",
+                                                indent=2)
 
     def _format_command(self, command_string):
         """Format a command string for display in logs and feedback"""
