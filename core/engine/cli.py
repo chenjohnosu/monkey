@@ -138,190 +138,18 @@ class CommandProcessor:
         self.running = False
 
     def _cmd_help(self, args):
-        """Display help information with the new clear command"""
+        """Display help information with structured help topics"""
         debug_print(self.config, f"Help command with args: {args}")
 
         if not args:
-            print("""
-        Available Commands:
-
-          Run Modes:
-            /run grind          - Process files in workspace to create initial database
-            /run update         - Update workspace with new or modified files
-            /run scan           - Scan workspace for new or updated files
-            /run merge          - Merge workspaces
-            /run sentiment      - Run sentiment analysis
-            /run topics         - Run topic modeling
-            /run themes         - Run theme analysis
-            /run query          - Enter interactive query mode
-          
-          Interpretation:
-            /explain            - Get LLM interpretation of analysis
- 
-          Operations:
-            /load               - Load workspace
-            /save               - Start/stop saving session or buffer
-            /config             - Set runtime configuration
-            /show               - Show active information and data sources
-            /clear              - Clear logs, vector database, or cache files
-            /inspect            - Check/verify status of data stores 
-            /quit, /exit        - Exit the application
-            /help [command]     - Display help information
-            
-          Aliases:
-            /q - /quit, /c - /config, /l - /load, /r - /run
-            /s - /save, /h - /help, /i - /inspect, /e - /explain
-            /cl - /clear
-        """)
-        elif args[0] in ['run', 'load', 'config', 'save', 'show', 'inspect', 'explain', 'clear']:
-            self._show_specific_help(args[0])
+            # Display main help overview
+            print(self.HELP_OVERVIEW)
+        elif args[0] in self.HELP_TOPICS:
+            # Display specific help topic
+            print(self.HELP_TOPICS[args[0]])
         else:
             print(f"No specific help available for '{args[0]}'")
-
-    def _show_specific_help(self, topic):
-        """Show help for a specific topic, with comprehensive run command documentation"""
-        if topic == 'run':
-            print("""
-            Run Commands:
-              /run themes [method]     - Run theme analysis
-                Methods: all, nfm, net, key, lsa, cluster
-                  all    - Run all theme analysis methods
-                  nfm    - Named entity-based theme extraction
-                  net    - Content network analysis
-                  key    - Keyword-based theme identification
-                  lsa    - Latent semantic analysis
-                  cluster - Document clustering
-
-              /run query             - Enter interactive query mode with context-aware responses
-
-              /run grind             - Process files in workspace to create initial database
-
-              /run update            - Update workspace with new or modified files
-
-              /run scan [detailed]   - Scan workspace for new or updated files
-                detailed - Show additional file information
-
-              /run merge <source_ws> - Merge source workspace into current workspace
-
-              /run sentiment [method] - Run sentiment analysis
-                Methods: all, basic, advanced
-                  all     - Run all sentiment analysis methods
-                  basic   - Simple sentiment classification
-                  advanced - In-depth analysis with aspect extraction
-
-              /run topics [method]    - Run topic modeling
-                Methods: all, lda, nmf, cluster
-                  all    - Run all topic modeling methods
-                  lda    - Latent Dirichlet Allocation
-                  nmf    - Non-Negative Matrix Factorization
-                  cluster - Clustering-based topic modeling
-
-            Examples:
-              /run themes nfm        - Run named entity-based theme extraction
-              /run sentiment advanced - Run advanced sentiment analysis
-              /run topics lda         - Run LDA topic modeling
-            """)
-        elif topic == 'clear':
-            print("""
-            Clear Commands:
-              /clear logs [workspace]    - Clear log files for a workspace
-              /clear vdb [workspace]     - Clear vector database files for a workspace
-              /clear cache [workspace]   - Clear cached data and intermediary files
-              /clear all [workspace]     - Clear all logs, vector database, and cache files
-
-            Notes:
-              - If workspace is not specified, the current workspace is used
-              - Clearing vector database will require rebuilding indexes
-              - A backup is created before clearing the vector database
-              - All clear operations require confirmation
-            """)
-        elif topic == 'load':
-            print("""
-            Load Commands:
-              /load ws <workspace>  - Load or create a workspace
-
-            Notes:
-              - If the workspace doesn't exist, you'll be prompted to create it
-              - Loading a workspace sets it as the current active workspace
-              - All commands will operate on the current workspace
-            """)
-        elif topic == 'config':
-            print("""
-            Config Commands:
-              /config llm <model>                - Set LLM model (e.g., mistral, llama2)
-              /config embed <model>              - Set embedding model (e.g., multilingual-e5, mixbread)
-              /config storage <backend>          - Set storage backend (llama_index, haystack, or chroma)
-              /config kval <n>                   - Set k value for retrieval (number of docs to return)
-              /config debug [on|off]             - Enable or disable debug mode
-              /config output [txt|md|json]       - Set output format for saved files
-              /config guide <guide>              - Set guide from guides.txt
-
-            Examples:
-              /config llm mistral                - Set LLM model to mistral
-              /config embed multilingual-e5      - Set embedding model to multilingual-e5
-              /config kval 5                     - Set retrieval to return 5 documents
-            """)
-        elif topic == 'save':
-            print("""
-            Save Commands:
-              /save start                - Start saving session (all commands and outputs)
-              /save stop                 - Stop saving session and write to file
-              /save buffer               - Save last command output to file
-
-            Notes:
-              - Session logs are saved to logs/<workspace>/ directory
-              - Output format depends on your config.output_format setting
-              - The buffer contains the most recent command output
-            """)
-        elif topic == 'show':
-            print("""
-            Show Commands:
-              /show status               - Show system status (current settings)
-              /show cuda                 - Show CUDA status and GPU information
-              /show config               - Show detailed configuration settings
-              /show ws                   - Show workspace details and statistics
-              /show files                - Show files in current workspace
-              /show guide                - Show available guides from guides.txt
-
-            Examples:
-              /show status               - View current workspace and model settings
-              /show files                - List all files in the current workspace
-            """)
-        elif topic == 'inspect':
-            print("""
-            Inspect Commands:
-              /inspect workspace [ws]         - Inspect workspace metadata and vector store
-              /inspect ws [ws]                - Alias for workspace inspect
-              /inspect documents [ws] [limit] - Dump document content in workspace
-                Optional: Specify number of documents to show (default: 5)
-              /inspect vectorstore [ws]       - Dump vector store metadata
-              /inspect vdb [ws]               - Alias for vectorstore inspect
-              /inspect query [ws] [query]     - Test query pipeline with optional test query
-              /inspect rebuild [ws]           - Rebuild vector store from existing documents
-              /inspect fix [ws]               - Fix common vector store issues
-              /inspect metadata [ws] [query]  - Inspect raw metadata returned from vector store
-              /inspect migrate [ws]           - Fix inconsistent vector store naming
-
-            Examples:
-              /inspect documents default 10   - Show content of 10 documents in default workspace
-              /inspect query research         - Test query pipeline with the term "research"
-            """)
-        elif topic == 'explain':
-            print("""
-            Interpretation Commands:
-              /explain themes [question]    - Get LLM interpretation of theme analysis
-              /explain topics [question]    - Get LLM interpretation of topic modeling 
-              /explain sentiment [question] - Get LLM interpretation of sentiment analysis
-              /explain session [question]   - Get LLM interpretation of query session
-
-            Examples:
-              /explain themes What are the most significant themes?
-              /explain topics How do the topics relate to each other?
-              /explain sentiment What emotions are most prominent?
-              /explain session What were the main research directions?
-            """)
-        else:
-            print(f"No specific help available for '{topic}'")
+            print("Available help topics: " + ", ".join(self.HELP_TOPICS.keys()))
 
     def _cmd_show(self, args):
         """Handle the show command"""
@@ -1144,3 +972,172 @@ class CommandProcessor:
                     debug_print(self.config, f"Error removing file {file}: {str(e)}")
 
         print(f"Cleared {cleared_count} cache files for workspace '{workspace}'")
+
+
+HELP_TOPICS = {
+    "run": """
+    Run Commands:
+      /run themes [method]     - Run theme analysis
+        Methods: all, nfm, net, key, lsa, cluster
+          all    - Run all theme analysis methods
+          nfm    - Named entity-based theme extraction
+          net    - Content network analysis
+          key    - Keyword-based theme identification
+          lsa    - Latent semantic analysis
+          cluster - Document clustering
+
+      /run query             - Enter interactive query mode with context-aware responses
+
+      /run grind             - Process files in workspace to create initial database
+
+      /run update            - Update workspace with new or modified files
+
+      /run scan [detailed]   - Scan workspace for new or updated files
+        detailed - Show additional file information
+
+      /run merge <source_ws> - Merge source workspace into current workspace
+
+      /run sentiment [method] - Run sentiment analysis
+        Methods: all, basic, advanced
+          all     - Run all sentiment analysis methods
+          basic   - Simple sentiment classification
+          advanced - In-depth analysis with aspect extraction
+
+      /run topics [method]    - Run topic modeling
+        Methods: all, lda, nmf, cluster
+          all    - Run all topic modeling methods
+          lda    - Latent Dirichlet Allocation
+          nmf    - Non-Negative Matrix Factorization
+          cluster - Clustering-based topic modeling
+
+    Examples:
+      /run themes nfm        - Run named entity-based theme extraction
+      /run sentiment advanced - Run advanced sentiment analysis
+      /run topics lda         - Run LDA topic modeling
+    """,
+    "clear": """
+    Clear Commands:
+      /clear logs [workspace]    - Clear log files for a workspace
+      /clear vdb [workspace]     - Clear vector database files for a workspace
+      /clear cache [workspace]   - Clear cached data and intermediary files
+      /clear all [workspace]     - Clear all logs, vector database, and cache files
+
+    Notes:
+      - If workspace is not specified, the current workspace is used
+      - Clearing vector database will require rebuilding indexes
+      - A backup is created before clearing the vector database
+      - All clear operations require confirmation
+    """,
+    "load": """
+    Load Commands:
+      /load ws <workspace>  - Load or create a workspace
+
+    Notes:
+      - If the workspace doesn't exist, you'll be prompted to create it
+      - Loading a workspace sets it as the current active workspace
+      - All commands will operate on the current workspace
+    """,
+    "config": """
+    Config Commands:
+      /config llm <model>                - Set LLM model (e.g., mistral, llama2)
+      /config embed <model>              - Set embedding model (e.g., multilingual-e5, mixbread)
+      /config storage <backend>          - Set storage backend (llama_index, haystack, or chroma)
+      /config kval <n>                   - Set k value for retrieval (number of docs to return)
+      /config debug [on|off]             - Enable or disable debug mode
+      /config output [txt|md|json]       - Set output format for saved files
+      /config guide <guide>              - Set guide from guides.txt
+
+    Examples:
+      /config llm mistral                - Set LLM model to mistral
+      /config embed multilingual-e5      - Set embedding model to multilingual-e5
+      /config kval 5                     - Set retrieval to return 5 documents
+    """,
+    "save": """
+    Save Commands:
+      /save start                - Start saving session (all commands and outputs)
+      /save stop                 - Stop saving session and write to file
+      /save buffer               - Save last command output to file
+
+    Notes:
+      - Session logs are saved to logs/<workspace>/ directory
+      - Output format depends on your config.output_format setting
+      - The buffer contains the most recent command output
+    """,
+    "show": """
+    Show Commands:
+      /show status               - Show system status (current settings)
+      /show cuda                 - Show CUDA status and GPU information
+      /show config               - Show detailed configuration settings
+      /show ws                   - Show workspace details and statistics
+      /show files                - Show files in current workspace
+      /show guide                - Show available guides from guides.txt
+
+    Examples:
+      /show status               - View current workspace and model settings
+      /show files                - List all files in the current workspace
+    """,
+    "inspect": """
+    Inspect Commands:
+      /inspect workspace [ws]         - Inspect workspace metadata and vector store
+      /inspect ws [ws]                - Alias for workspace inspect
+      /inspect documents [ws] [limit] - Dump document content in workspace
+        Optional: Specify number of documents to show (default: 5)
+      /inspect vectorstore [ws]       - Dump vector store metadata
+      /inspect vdb [ws]               - Alias for vectorstore inspect
+      /inspect query [ws] [query]     - Test query pipeline with optional test query
+      /inspect rebuild [ws]           - Rebuild vector store from existing documents
+      /inspect fix [ws]               - Fix common vector store issues
+      /inspect metadata [ws] [query]  - Inspect raw metadata returned from vector store
+      /inspect migrate [ws]           - Fix inconsistent vector store naming
+
+    Examples:
+      /inspect documents default 10   - Show content of 10 documents in default workspace
+      /inspect query research         - Test query pipeline with the term "research"
+    """,
+    "explain": """
+    Interpretation Commands:
+      /explain themes [question]    - Get LLM interpretation of theme analysis
+      /explain topics [question]    - Get LLM interpretation of topic modeling 
+      /explain sentiment [question] - Get LLM interpretation of sentiment analysis
+      /explain session [question]   - Get LLM interpretation of query session
+
+    Examples:
+      /explain themes What are the most significant themes?
+      /explain topics How do the topics relate to each other?
+      /explain sentiment What emotions are most prominent?
+      /explain session What were the main research directions?
+    """
+}
+
+# Main help overview text
+HELP_OVERVIEW = """
+Available Commands:
+
+  Run Modes:
+    /run grind          - Process files in workspace to create initial database
+    /run update         - Update workspace with new or modified files
+    /run scan           - Scan workspace for new or updated files
+    /run merge          - Merge workspaces
+    /run sentiment      - Run sentiment analysis
+    /run topics         - Run topic modeling
+    /run themes         - Run theme analysis
+    /run query          - Enter interactive query mode
+
+  Interpretation:
+    /explain            - Get LLM interpretation of analysis
+
+  Operations:
+    /load               - Load workspace
+    /save               - Start/stop saving session or buffer
+    /config             - Set runtime configuration
+    /show               - Show active information and data sources
+    /clear              - Clear logs, vector database, or cache files
+    /inspect            - Check/verify status of data stores 
+    /quit, /exit        - Exit the application
+    /help [command]     - Display help information
+
+  Aliases:
+    /q - /quit, /c - /config, /l - /load, /r - /run
+    /s - /save, /h - /help, /i - /inspect, /e - /explain
+    /cl - /clear
+"""
