@@ -342,18 +342,6 @@ class MonkeyTUI(App):
 
     def on_mount(self):
         """Handle app mount event"""
-        # Prevent multiple initializations
-        if hasattr(self, '_mounted'):
-            return
-        self._mounted = True
-
-        # Signal that TUI is ready to display messages
-        from core.engine.logging import LogManager
-        LogManager.set_tui_ready(True)
-
-        # Consolidated logging
-        logger.info("TUI interface mounted and ready")
-
         try:
             self.query_one("#command_input").focus()
 
