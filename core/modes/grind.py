@@ -3,14 +3,20 @@ File processing module for scanning directories and creating vector databases
 """
 
 import os
-import time
-import hashlib
-import json
-from core.engine.utils import is_supported_file, get_file_content, ensure_dir
-from core.engine.logging import debug_print
-from core.engine.storage import StorageManager
-from core.language.processor import TextProcessor
 import datetime
+import hashlib
+from collections import Counter
+from typing import Dict, List, Optional
+
+from core.engine.utils import (
+    ensure_dir, get_file_content, format_size, is_supported_file,
+    create_timestamped_backup, timestamp_filename
+)
+from core.engine.logging import debug_print, warning, info
+from core.engine.storage import StorageManager
+from core.engine.common import safe_execute, get_workspace_dirs, ensure_workspace_dirs
+from core.language.processor import TextProcessor
+
 
 class FileProcessor:
     """Processes files for document analysis"""
@@ -31,24 +37,24 @@ class FileProcessor:
         """
         debug_print(self.config, f"Processing workspace: {workspace}")
 
-        # Ensure workspace directories exist
-        data_dir = os.path.join("data", workspace)
-        body_dir = os.path.join("body", workspace)
+        # Get standard workspace directories using common.py function
+        dirs = get_workspace_dirs(workspace)
+        data_dir = dirs['data']
+        body_dir = dirs['body']
+        vector_dir = dirs['vector_store']
 
         if not os.path.exists(body_dir):
             print(f"Document directory does not exist: {body_dir}")
             return
 
         # Check if vector store already exists
-        vector_store_dir = os.path.join(data_dir, "vector_store")
-        if os.path.exists(vector_store_dir):
+        if os.path.exists(vector_dir):
             print(f"Vector store already exists for workspace '{workspace}'.")
             print("To add new files or update existing ones, please use the /run update command.")
             return
 
         # Create data directory if it doesn't exist
-        if not os.path.exists(data_dir):
-            os.makedirs(data_dir)
+        ensure_dir(data_dir)
 
         # Get all files in the workspace
         files_to_process = self._get_all_files(workspace)
@@ -99,7 +105,8 @@ class FileProcessor:
         existing_paths = set(existing_files.keys())
 
         # Get list of all files currently in the file system
-        body_dir = os.path.join("body", workspace)
+        dirs = get_workspace_dirs(workspace)
+        body_dir = dirs['body']
         current_files = set()
 
         if os.path.exists(body_dir):
@@ -195,7 +202,8 @@ class FileProcessor:
         """
         debug_print(self.config, f"Scanning workspace: {workspace}")
 
-        body_dir = os.path.join("body", workspace)
+        dirs = get_workspace_dirs(workspace)
+        body_dir = dirs['body']
 
         if not os.path.exists(body_dir):
             print(f"Document directory does not exist: {body_dir}")
@@ -234,7 +242,7 @@ class FileProcessor:
                         'abs_path': filepath,
                         'status': file_status,
                         'modified': modified_time.strftime('%Y-%m-%d %H:%M:%S'),
-                        'size': self._format_size(size)
+                        'size': format_size(size)
                     })
 
         # Sort by path
@@ -263,7 +271,9 @@ class FileProcessor:
         """
         debug_print(self.config, f"Getting all files in workspace: {workspace}")
 
-        body_dir = os.path.join("body", workspace)
+        dirs = get_workspace_dirs(workspace)
+        body_dir = dirs['body']
+
         if not os.path.exists(body_dir):
             return []
 
@@ -285,7 +295,7 @@ class FileProcessor:
                     'abs_path': filepath,
                     'status': 'Force',
                     'modified': modified_time.strftime('%Y-%m-%d %H:%M:%S'),
-                    'size': self._format_size(size)
+                    'size': format_size(size)
                 })
 
         return sorted(all_files, key=lambda x: x['rel_path'])
@@ -325,22 +335,18 @@ class FileProcessor:
         Returns:
             str: Content hash
         """
-        try:
-            content = get_file_content(filepath)
-            if content:
-                return hashlib.md5(content.encode('utf-8')).hexdigest()
-        except Exception:
-            pass
+        content = safe_execute(
+            get_file_content,
+            filepath,
+            error_message=f"Error reading file for hashing: {filepath}",
+            default_return=None
+        )
+
+        if content:
+            return hashlib.md5(content.encode('utf-8')).hexdigest()
 
         # Fallback to modification time if content extraction fails
         return str(os.path.getmtime(filepath))
-
-    def _format_size(self, size_bytes):
-        """Format file size in a human-readable format"""
-        for unit in ['B', 'KB', 'MB', 'GB']:
-            if size_bytes < 1024 or unit == 'GB':
-                return f"{size_bytes:.2f} {unit}"
-            size_bytes /= 1024
 
     def _process_file(self, workspace, rel_path, filepath):
         """
