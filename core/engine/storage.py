@@ -10,7 +10,7 @@ import datetime
 from typing import List, Dict, Any, Optional
 
 from core.engine.utils import ensure_dir, save_json, load_json, create_timestamped_backup, format_size
-from core.engine.logging import debug_print, info, error, warning, debug
+from core.engine.logging import debug, info, error, warning, debug
 from core.engine.common import safe_execute, get_workspace_dirs, ensure_workspace_dirs
 from core.connectors.connector_factory import ConnectorFactory
 
@@ -24,7 +24,7 @@ class StorageManager:
         self.vector_stores = {}  # Cache for loaded vector stores
         self.factory = ConnectorFactory(config)
         self.connector = self.factory.get_vector_store_connector()
-        debug_print(config, f"Storage manager initialized with connector type: {self.config.get('storage.vector_store')}")
+        debug(config, f"Storage manager initialized with connector type: {self.config.get('storage.vector_store')}")
 
     def add_document(self, workspace, source_path, content, processed_content, metadata):
         """
@@ -37,7 +37,7 @@ class StorageManager:
             processed_content (str): Processed document content
             metadata (dict): Document metadata
         """
-        debug_print(self.config, f"Adding document to workspace: {workspace}, source: {source_path}")
+        debug(self.config, f"Adding document to workspace: {workspace}, source: {source_path}")
 
         # Use get_workspace_dirs from common.py to get standard directory paths
         dirs = get_workspace_dirs(workspace)
@@ -59,7 +59,7 @@ class StorageManager:
         save_json(filepath, document)
 
         # Add to vector store
-        debug_print(self.config, f"Adding document to vector store: {source_path}")
+        debug(self.config, f"Adding document to vector store: {source_path}")
         return safe_execute(
             self._add_to_vector_store,
             workspace, document,
@@ -77,7 +77,7 @@ class StorageManager:
         Returns:
             bool: Success flag
         """
-        debug_print(self.config, f"Removing document from workspace: {workspace}, source: {source_path}")
+        debug(self.config, f"Removing document from workspace: {workspace}, source: {source_path}")
 
         # Create safe filename from source path
         filename = hashlib.md5(source_path.encode('utf-8')).hexdigest() + '.json'
@@ -88,13 +88,13 @@ class StorageManager:
         if os.path.exists(filepath):
             try:
                 os.remove(filepath)
-                debug_print(self.config, f"Removed document file: {filepath}")
+                debug(self.config, f"Removed document file: {filepath}")
                 return True
             except Exception as e:
-                debug_print(self.config, f"Error removing document file: {str(e)}")
+                debug(self.config, f"Error removing document file: {str(e)}")
                 return False
         else:
-            debug_print(self.config, f"Document file not found: {filepath}")
+            debug(self.config, f"Document file not found: {filepath}")
             return False
 
     def _add_to_vector_store(self, workspace, document):
@@ -106,7 +106,7 @@ class StorageManager:
             document (dict): Document object
         """
         vector_store_type = self.config.get('storage.vector_store')
-        debug_print(self.config, f"Adding document to {vector_store_type} vector store")
+        debug(self.config, f"Adding document to {vector_store_type} vector store")
 
         # Create list with single document
         documents = [document]
@@ -115,12 +115,12 @@ class StorageManager:
         try:
             success = self.connector.add_documents(workspace, documents)
             if not success:
-                debug_print(self.config, "Failed to add document to vector store")
+                debug(self.config, "Failed to add document to vector store")
             return success
         except Exception as e:
-            debug_print(self.config, f"Error adding document to vector store: {str(e)}")
+            debug(self.config, f"Error adding document to vector store: {str(e)}")
             import traceback
-            debug_print(self.config, traceback.format_exc())
+            debug(self.config, traceback.format_exc())
             return False
 
     def update_vector_store(self, workspace, documents=None):
@@ -134,7 +134,7 @@ class StorageManager:
         Returns:
             bool: Success flag
         """
-        debug_print(self.config, f"Updating vector store for workspace: {workspace}")
+        debug(self.config, f"Updating vector store for workspace: {workspace}")
 
         try:
             # Get documents to update (either provided or load all)
@@ -176,7 +176,7 @@ class StorageManager:
         Returns:
             list: Document objects
         """
-        debug_print(self.config, f"Getting documents from workspace: {workspace}")
+        debug(self.config, f"Getting documents from workspace: {workspace}")
 
         # Get standard directory paths using common.py function
         dirs = get_workspace_dirs(workspace)
@@ -249,7 +249,7 @@ class StorageManager:
         Returns:
             list: Relevant documents
         """
-        debug_print(self.config, f"Querying workspace '{workspace}' with k={k}")
+        debug(self.config, f"Querying workspace '{workspace}' with k={k}")
 
         # Use the appropriate connector
         return safe_execute(
@@ -280,7 +280,7 @@ class StorageManager:
         Returns:
             dict: Dictionary mapping file paths to metadata
         """
-        debug_print(self.config, f"Getting processed files for workspace: {workspace}")
+        debug(self.config, f"Getting processed files for workspace: {workspace}")
 
         processed_files = {}
         documents = self.get_documents(workspace)
@@ -311,7 +311,7 @@ class StorageManager:
         Returns:
             bool: Success flag
         """
-        debug_print(self.config, f"Creating vector store for workspace: {workspace}")
+        debug(self.config, f"Creating vector store for workspace: {workspace}")
 
         # Get all documents
         documents = self.get_documents(workspace)
@@ -329,7 +329,7 @@ class StorageManager:
             # Create backup using utils.py function
             backup_dir = create_timestamped_backup(vector_dir)
             if backup_dir:
-                debug_print(self.config, f"Backed up existing vector store to {backup_dir}")
+                debug(self.config, f"Backed up existing vector store to {backup_dir}")
 
             # Remove existing directory and recreate
             import shutil
@@ -389,11 +389,11 @@ class StorageManager:
         Returns:
             bool: Success flag
         """
-        debug_print(self.config, f"Loading vector store for workspace: {workspace}")
+        debug(self.config, f"Loading vector store for workspace: {workspace}")
 
         # Check if already loaded
         if workspace in self.vector_stores:
-            debug_print(self.config, f"Vector store for workspace '{workspace}' already loaded")
+            debug(self.config, f"Vector store for workspace '{workspace}' already loaded")
             return True
 
         # For LlamaIndex and Haystack, we need to initialize the store
@@ -420,7 +420,7 @@ class StorageManager:
 
             return success
         except Exception as e:
-            debug_print(self.config, f"Error loading vector store: {str(e)}")
+            debug(self.config, f"Error loading vector store: {str(e)}")
             return False
 
     def get_workspace_stats(self, workspace):
@@ -433,7 +433,7 @@ class StorageManager:
         Returns:
             dict: Workspace statistics
         """
-        debug_print(self.config, f"Getting statistics for workspace: {workspace}")
+        debug(self.config, f"Getting statistics for workspace: {workspace}")
 
         # Get directories using common.py function
         dirs = get_workspace_dirs(workspace)
@@ -475,7 +475,7 @@ class StorageManager:
 
             return stats
         except Exception as e:
-            debug_print(self.config, f"Error getting workspace stats: {str(e)}")
+            debug(self.config, f"Error getting workspace stats: {str(e)}")
             return None
 
     def delete_workspace(self, workspace):
@@ -488,7 +488,7 @@ class StorageManager:
         Returns:
             bool: Success flag
         """
-        debug_print(self.config, f"Deleting workspace: {workspace}")
+        debug(self.config, f"Deleting workspace: {workspace}")
 
         try:
             # Get directories using common.py function
@@ -563,7 +563,7 @@ class VectorStoreInspector:
 
         self.config = config
         self.storage_manager = storage_manager or StorageManager(config)
-        debug_print(config, "Vector store inspector initialized")
+        debug(config, "Vector store inspector initialized")
 
     def inspect_workspace(self, workspace):
         """
@@ -572,7 +572,7 @@ class VectorStoreInspector:
         Args:
             workspace (str): Workspace to inspect
         """
-        debug_print(self.config, f"Inspecting workspace: {workspace}")
+        debug(self.config, f"Inspecting workspace: {workspace}")
 
         # Get directories using common.py function
         dirs = get_workspace_dirs(workspace)

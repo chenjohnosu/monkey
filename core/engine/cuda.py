@@ -2,11 +2,11 @@
 CUDA utilities for the document analysis toolkit
 """
 
-from core.engine.logging import debug_print, warning, info, debug, trace, error
+from core.engine.logging import debug, warning, info, debug, trace, error
 
 def check_cuda_status(config):
     """Check for CUDA availability and configuration"""
-    debug_print(config, "Checking CUDA status")
+    debug(config, "Checking CUDA status")
     
     try:
         # Try to import torch

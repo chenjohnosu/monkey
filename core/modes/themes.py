@@ -18,7 +18,7 @@ from core.engine.utils import (
     ensure_dir, get_file_content, timestamp_filename, format_size,
     split_text_into_chunks, configure_vectorizer, extract_keywords
 )
-from core.engine.logging import debug_print, warning, info, error
+from core.engine.logging import debug, warning, info, error
 from core.engine.storage import StorageManager
 from core.engine.output import OutputManager
 from core.language.processor import TextProcessor
@@ -65,9 +65,9 @@ class ThemeAnalyzer:
         try:
             from core.connectors.connector_factory import ConnectorFactory
             self.factory = ConnectorFactory(config)
-            debug_print(config, "LLM connector factory initialized for theme analysis")
+            debug(config, "LLM connector factory initialized for theme analysis")
         except Exception as e:
-            debug_print(config, f"Error initializing ConnectorFactory: {str(e)}")
+            debug(config, f"Error initializing ConnectorFactory: {str(e)}")
             self.factory = None
 
         # Prepare Chinese and English stopwords
@@ -77,9 +77,9 @@ class ThemeAnalyzer:
         from core.language.tokenizer import JIEBA_AVAILABLE, initialize_jieba
         if JIEBA_AVAILABLE:
             initialize_jieba()  # Initialize once using our centralized function
-            debug_print(config, "Jieba initialized for Chinese text processing")
+            debug(config, "Jieba initialized for Chinese text processing")
 
-        debug_print(config, "Theme analyzer initialized")
+        debug(config, "Theme analyzer initialized")
 
     def _prepare_stopwords(self):
         """Prepare stopwords for processing"""
@@ -114,7 +114,7 @@ class ThemeAnalyzer:
         Returns:
             Dict: Analyzed themes
         """
-        debug_print(self.config, f"Analyzing themes in workspace '{workspace}' using method '{method}'")
+        debug(self.config, f"Analyzing themes in workspace '{workspace}' using method '{method}'")
 
         # Validate method
         valid_methods = ['all', 'nfm', 'net', 'key', 'lsa', 'cluster']
@@ -152,7 +152,7 @@ class ThemeAnalyzer:
                 except Exception as e:
                     error(f"Error in {analysis_method} analysis: {str(e)}")
                     import traceback
-                    debug_print(self.config, traceback.format_exc())
+                    debug(self.config, traceback.format_exc())
 
         # Output results
         self._output_results(workspace, results, method)
@@ -197,7 +197,7 @@ class ThemeAnalyzer:
                     "processed_content": processed['processed']
                 })
             except Exception as e:
-                debug_print(self.config, f"Error preprocessing document: {str(e)}")
+                debug(self.config, f"Error preprocessing document: {str(e)}")
 
         return doc_contents, doc_languages
 
@@ -571,7 +571,7 @@ class ThemeAnalyzer:
         Returns:
             Dict: Analysis results
         """
-        debug_print(self.config, "Analyzing content keywords")
+        debug(self.config, "Analyzing content keywords")
 
         # Group documents by language
         docs_by_language = defaultdict(list)
@@ -635,7 +635,7 @@ class ThemeAnalyzer:
         Returns:
             Dict: Analysis results
         """
-        debug_print(self.config, "Analyzing content relationships between documents")
+        debug(self.config, "Analyzing content relationships between documents")
 
         # Check if we have enough documents
         if len(doc_contents) < 2:
@@ -766,9 +766,9 @@ class ThemeAnalyzer:
             }
 
         except Exception as e:
-            debug_print(self.config, f"Error in content network analysis: {str(e)}")
+            debug(self.config, f"Error in content network analysis: {str(e)}")
             import traceback
-            debug_print(self.config, traceback.format_exc())
+            debug(self.config, traceback.format_exc())
 
             return {
                 "method": "Content Network Analysis",
@@ -786,7 +786,7 @@ class ThemeAnalyzer:
         Returns:
             Dict: Named entity analysis results
         """
-        debug_print(self.config, "Analyzing named entities")
+        debug(self.config, "Analyzing named entities")
 
         # Detailed logging of input documents
         print(f"Total input documents: {len(doc_contents)}")
@@ -1049,7 +1049,7 @@ class ThemeAnalyzer:
         Returns:
             Dict: Latent semantic analysis results
         """
-        debug_print(self.config, "Analyzing latent semantic themes")
+        debug(self.config, "Analyzing latent semantic themes")
 
         # Extract document texts and sources
         doc_texts = [doc["processed_content"] for doc in doc_contents]
@@ -1126,9 +1126,9 @@ class ThemeAnalyzer:
             }
 
         except Exception as e:
-            debug_print(self.config, f"Error in latent semantic analysis: {str(e)}")
+            debug(self.config, f"Error in latent semantic analysis: {str(e)}")
             import traceback
-            debug_print(self.config, traceback.format_exc())
+            debug(self.config, traceback.format_exc())
 
             return {
                 "method": "Latent Semantic Analysis",
@@ -1146,7 +1146,7 @@ class ThemeAnalyzer:
         Returns:
             Dict: Document clustering results
         """
-        debug_print(self.config, "Clustering documents")
+        debug(self.config, "Clustering documents")
 
         # Extract document texts and sources
         doc_texts = [doc["processed_content"] for doc in doc_contents]
@@ -1229,9 +1229,9 @@ class ThemeAnalyzer:
             }
 
         except Exception as e:
-            debug_print(self.config, f"Error in document clustering: {str(e)}")
+            debug(self.config, f"Error in document clustering: {str(e)}")
             import traceback
-            debug_print(self.config, traceback.format_exc())
+            debug(self.config, traceback.format_exc())
 
             return {
                 "method": "Document Clustering",

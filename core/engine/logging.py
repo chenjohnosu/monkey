@@ -179,4 +179,4 @@ def trace(message): logging.log(logging.TRACE, message)
 LogManager.configure()
 
 # Legacy alias for backward compatibility
-debug_print = debug
+debug = debug

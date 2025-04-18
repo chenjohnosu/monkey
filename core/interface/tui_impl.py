@@ -291,7 +291,7 @@ class MonkeyTUI(App):
         self.log_handler = TUILogHandler(self)
         self.query_mode = False  # Track query mode status
 
-        # Set up log handler for debug_print
+        # Set up log handler for debug
         root_logger = logging.getLogger()
         root_logger.addHandler(self.log_handler)
 
@@ -301,20 +301,20 @@ class MonkeyTUI(App):
         # Set up periodic status update timer
         self._status_timer_running = False
 
-        # Store reference to debug_print for monitoring
-        from core.engine.logging import debug_print
-        self.original_debug_print = debug_print
+        # Store reference to debug for monitoring
+        from core.engine.logging import debug
+        self.original_debug = debug
 
-        # Override debug_print to capture to system log
-        def tui_debug_print(config, message):
+        # Override debug to capture to system log
+        def tui_debug(config, message):
             # Call the original function
-            self.original_debug_print(config, message)
+            self.original_debug(config, message)
             # Also capture to our log
             self.log_handler.log_queue.put(f"[dim]DEBUG: {message}[/dim]")
 
-        # Replace the debug_print function
+        # Replace the debug function
         import core.engine.logging
-        core.engine.logging.debug_print = tui_debug_print
+        core.engine.logging.debug = tui_debug
 
     def compose(self):
         """Compose the TUI layout with vertical split first, then horizontal divisions on left side"""
@@ -709,6 +709,6 @@ class MonkeyTUI(App):
         if self.log_handler in root_logger.handlers:
             root_logger.removeHandler(self.log_handler)
 
-        # Restore original debug_print
+        # Restore original debug
         import core.engine.logging
-        core.engine.logging.debug_print = self.original_debug_print
+        core.engine.logging.debug = self.original_debug

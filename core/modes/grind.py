@@ -12,7 +12,7 @@ from core.engine.utils import (
     ensure_dir, get_file_content, format_size, is_supported_file,
     create_timestamped_backup, timestamp_filename
 )
-from core.engine.logging import debug_print, warning, info
+from core.engine.logging import debug, warning, info
 from core.engine.storage import StorageManager
 from core.engine.common import safe_execute, get_workspace_dirs, ensure_workspace_dirs
 from core.language.processor import TextProcessor
@@ -26,7 +26,7 @@ class FileProcessor:
         self.config = config
         self.storage_manager = storage_manager or StorageManager(config)
         self.text_processor = text_processor or TextProcessor(config)
-        debug_print(config, "File processor initialized")
+        debug(config, "File processor initialized")
 
     def process_workspace(self, workspace):
         """
@@ -35,7 +35,7 @@ class FileProcessor:
         Args:
             workspace (str): The workspace to process
         """
-        debug_print(self.config, f"Processing workspace: {workspace}")
+        debug(self.config, f"Processing workspace: {workspace}")
 
         # Get standard workspace directories using common.py function
         dirs = get_workspace_dirs(workspace)
@@ -98,7 +98,7 @@ class FileProcessor:
         Args:
             workspace (str): The workspace to update
         """
-        debug_print(self.config, f"Updating workspace: {workspace}")
+        debug(self.config, f"Updating workspace: {workspace}")
 
         # Get list of all currently processed files in the database
         existing_files = self.storage_manager.get_processed_files(workspace)
@@ -200,7 +200,7 @@ class FileProcessor:
         Returns:
             list: Files to process (if return_files=True) or None
         """
-        debug_print(self.config, f"Scanning workspace: {workspace}")
+        debug(self.config, f"Scanning workspace: {workspace}")
 
         dirs = get_workspace_dirs(workspace)
         body_dir = dirs['body']
@@ -269,7 +269,7 @@ class FileProcessor:
         Returns:
             list: All files in the workspace
         """
-        debug_print(self.config, f"Getting all files in workspace: {workspace}")
+        debug(self.config, f"Getting all files in workspace: {workspace}")
 
         dirs = get_workspace_dirs(workspace)
         body_dir = dirs['body']
@@ -357,7 +357,7 @@ class FileProcessor:
             rel_path (str): Relative path within the workspace
             filepath (str): Full file path
         """
-        debug_print(self.config, f"Processing file: {rel_path}")
+        debug(self.config, f"Processing file: {rel_path}")
 
         # Get file content
         content = get_file_content(filepath)
@@ -393,7 +393,7 @@ class FileProcessor:
         # Add special indicator for Chinese documents using Jina model
         if processed['language'] == 'zh' and embedding_model == 'jina-zh':
             metadata['using_specialized_chinese_model'] = True
-            debug_print(self.config, f"Using specialized jina-zh model for Chinese document: {rel_path}")
+            debug(self.config, f"Using specialized jina-zh model for Chinese document: {rel_path}")
 
         # Add to storage
         self.storage_manager.add_document(workspace, rel_path, content, processed['processed'], metadata)

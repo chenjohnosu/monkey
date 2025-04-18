@@ -3,7 +3,7 @@ Vector store merging module
 """
 
 import os
-from core.engine.logging import debug_print
+from core.engine.logging import debug
 from core.engine.storage import StorageManager
 
 class VectorStoreMerger:
@@ -13,7 +13,7 @@ class VectorStoreMerger:
         """Initialize the vector store merger"""
         self.config = config
         self.storage_manager = storage_manager or StorageManager(config)
-        debug_print(config, "Vector store merger initialized")
+        debug(config, "Vector store merger initialized")
 
     def merge(self, source_workspace, dest_workspace):
         """
@@ -23,7 +23,7 @@ class VectorStoreMerger:
             source_workspace (str): Source workspace name
             dest_workspace (str): Destination workspace name
         """
-        debug_print(self.config, f"Merging workspace '{source_workspace}' into '{dest_workspace}'")
+        debug(self.config, f"Merging workspace '{source_workspace}' into '{dest_workspace}'")
 
         # Check if source workspace exists
         source_data_dir = os.path.join("data", source_workspace)
@@ -68,7 +68,7 @@ class VectorStoreMerger:
             # Check for duplicates by path
             if source_path in dest_paths:
                 duplicate_count += 1
-                debug_print(self.config, f"Skipping duplicate document: {source_path}")
+                debug(self.config, f"Skipping duplicate document: {source_path}")
                 continue
 
             # Update metadata

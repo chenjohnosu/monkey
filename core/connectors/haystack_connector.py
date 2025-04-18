@@ -5,7 +5,7 @@ Haystack integration for pipeline-based document processing
 import os
 from typing import List, Dict, Any, Optional
 from core.engine.utils import ensure_dir
-from core.engine.logging import debug_print
+from core.engine.logging import debug
 
 class HaystackConnector:
     """Provides integration with Haystack for pipeline-based document processing"""
@@ -14,7 +14,7 @@ class HaystackConnector:
         """Initialize Haystack connector with configuration"""
         self.config = config
         self.pipelines = {}
-        debug_print(config, "Haystack connector initialized")
+        debug(config, "Haystack connector initialized")
         
     def init_document_store(self, workspace: str) -> bool:
         """
@@ -26,7 +26,7 @@ class HaystackConnector:
         Returns:
             bool: Success flag
         """
-        debug_print(self.config, f"Initializing Haystack document store for workspace: {workspace}")
+        debug(self.config, f"Initializing Haystack document store for workspace: {workspace}")
         
         try:
             # Import Haystack components
@@ -67,7 +67,7 @@ class HaystackConnector:
             return True
             
         except Exception as e:
-            debug_print(self.config, f"Error initializing Haystack document store: {str(e)}")
+            debug(self.config, f"Error initializing Haystack document store: {str(e)}")
             print(f"Error initializing document store: {str(e)}")
             return False
 
@@ -82,7 +82,7 @@ class HaystackConnector:
         Returns:
             bool: Success flag
         """
-        debug_print(self.config, f"Adding {len(documents)} documents to Haystack document store")
+        debug(self.config, f"Adding {len(documents)} documents to Haystack document store")
 
         # Initialize document store if needed
         if not hasattr(self, 'document_store'):
@@ -129,7 +129,7 @@ class HaystackConnector:
             return True
 
         except Exception as e:
-            debug_print(self.config, f"Error adding documents to Haystack document store: {str(e)}")
+            debug(self.config, f"Error adding documents to Haystack document store: {str(e)}")
             print(f"Error adding documents: {str(e)}")
             return False
             
@@ -164,7 +164,7 @@ class HaystackConnector:
             return True
             
         except Exception as e:
-            debug_print(self.config, f"Error building Haystack retrieval pipeline: {str(e)}")
+            debug(self.config, f"Error building Haystack retrieval pipeline: {str(e)}")
             print(f"Error building retrieval pipeline: {str(e)}")
             return False
     
@@ -180,7 +180,7 @@ class HaystackConnector:
         Returns:
             List[Dict]: Retrieved documents with relevance scores
         """
-        debug_print(self.config, f"Querying Haystack document store with k={k}")
+        debug(self.config, f"Querying Haystack document store with k={k}")
         
         # Initialize retrieval pipeline if needed
         if workspace not in self.pipelines or "retrieval" not in self.pipelines[workspace]:
@@ -220,7 +220,7 @@ class HaystackConnector:
             return results
             
         except Exception as e:
-            debug_print(self.config, f"Error querying Haystack document store: {str(e)}")
+            debug(self.config, f"Error querying Haystack document store: {str(e)}")
             print(f"Error during query: {str(e)}")
             return []
     

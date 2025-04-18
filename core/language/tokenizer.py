@@ -5,7 +5,7 @@ core/language/tokenizer.py - Central place for jieba initialization
 # Create a new global initialization management for jieba
 # We'll use this file as the central place for jieba management
 
-from core.engine.logging import debug_print, warning
+from core.engine.logging import warning, debug
 
 # Global flag and instance to track Jieba initialization
 _JIEBA_INITIALIZED = False
@@ -30,7 +30,7 @@ def initialize_jieba():
         return None
 
     if not _JIEBA_INITIALIZED:
-        debug_print(None, "Initializing Jieba dictionary (first time)")
+        debug(None, "Initializing Jieba dictionary (first time)")
         # Redirect stdout to suppress jieba's initialization messages
         import sys
         import io
@@ -64,7 +64,7 @@ class Tokenizer:
     def __init__(self, config):
         """Initialize the tokenizer"""
         self.config = config
-        debug_print(config, "Tokenizer initialized")
+        debug(config, "Tokenizer initialized")
 
         # Initialize Jieba once during tokenizer initialization
         if JIEBA_AVAILABLE:
@@ -81,7 +81,7 @@ class Tokenizer:
         Returns:
             list: Tokens
         """
-        debug_print(self.config, f"Tokenizing text with language: {language}")
+        debug(self.config, f"Tokenizing text with language: {language}")
 
         # Skip empty text
         if not text or len(text.strip()) == 0:
@@ -101,7 +101,7 @@ class Tokenizer:
 
     def _tokenize_english(self, text):
         """Tokenize English text"""
-        debug_print(self.config, "Tokenizing English text")
+        debug(self.config, "Tokenizing English text")
 
         # Simple whitespace tokenization for English
         import re
@@ -114,11 +114,11 @@ class Tokenizer:
 
     def _tokenize_chinese(self, text):
         """Tokenize Chinese text"""
-        debug_print(self.config, "Tokenizing Chinese text")
+        debug(self.config, "Tokenizing Chinese text")
 
         # Use jieba for word segmentation if available
         if JIEBA_AVAILABLE:
-            debug_print(self.config, "Using jieba for Chinese word segmentation")
+            debug(self.config, "Using jieba for Chinese word segmentation")
 
             # Get the initialized jieba instance
             jieba_instance = get_jieba_instance()
@@ -131,7 +131,7 @@ class Tokenizer:
 
             return tokens
         else:
-            debug_print(self.config, "Falling back to character-based tokenization for Chinese")
+            debug(self.config, "Falling back to character-based tokenization for Chinese")
 
             # Character-based tokenization as fallback
             tokens = []

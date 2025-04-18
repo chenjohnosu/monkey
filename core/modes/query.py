@@ -6,7 +6,7 @@ With improved session logging capability and fixed exit behavior
 import os
 import textwrap
 
-from core.engine.logging import debug_print, info, warning, error
+from core.engine.logging import debug, info, warning, error
 from core.engine.storage import StorageManager
 from core.engine.output import OutputManager
 from core.language.processor import TextProcessor
@@ -30,7 +30,7 @@ class QueryEngine:
         self.active = False
         self.current_workspace = None
         self.logging_session = False  # Explicitly add logging_session attribute
-        debug_print(config, "Query engine initialized")
+        debug(config, "Query engine initialized")
 
     def activate(self, workspace):
         """
@@ -39,7 +39,7 @@ class QueryEngine:
         Args:
             workspace (str): The workspace to query
         """
-        debug_print(self.config, f"Activating query mode for workspace '{workspace}'")
+        debug(self.config, f"Activating query mode for workspace '{workspace}'")
 
         # Check if workspace exists
         data_dir = os.path.join("data", workspace)
@@ -65,7 +65,7 @@ class QueryEngine:
 
     def deactivate(self):
         """Deactivate query mode"""
-        debug_print(self.config, "Deactivating query mode")
+        debug(self.config, "Deactivating query mode")
 
         # Store the workspace name for the message
         workspace = self.current_workspace
@@ -85,7 +85,7 @@ class QueryEngine:
 
     def _verify_llm_connection(self):
         """Verify connection to LLM"""
-        debug_print(self.config, "Verifying LLM connection")
+        debug(self.config, "Verifying LLM connection")
 
         # Check if connector supports connection verification
         if hasattr(self.llm_connector, 'check_connection'):
@@ -105,13 +105,13 @@ class QueryEngine:
         Returns:
             str: The generated response
         """
-        debug_print(self.config, "Generating response with LLM")
+        debug(self.config, "Generating response with LLM")
         model = self.config.get('llm.default_model')
 
         try:
             return self.llm_connector.generate_with_context(query, docs, model)
         except Exception as e:
-            debug_print(self.config, f"Error generating response: {str(e)}")
+            debug(self.config, f"Error generating response: {str(e)}")
             return f"Error generating response: {str(e)}"
 
     def _generate_response_no_context(self, query):
@@ -124,7 +124,7 @@ class QueryEngine:
         Returns:
             str: The generated response
         """
-        debug_print(self.config, "Generating response with LLM (no context)")
+        debug(self.config, "Generating response with LLM (no context)")
         model = self.config.get('llm.default_model')
 
         # Create a prompt for no-context scenario
@@ -133,7 +133,7 @@ class QueryEngine:
         try:
             return self.llm_connector.generate(prompt, model)
         except Exception as e:
-            debug_print(self.config, f"Error generating response: {str(e)}")
+            debug(self.config, f"Error generating response: {str(e)}")
             return f"Error generating response: {str(e)}"
 
     def enter_interactive_mode(self):
@@ -174,7 +174,7 @@ class QueryEngine:
 
     def _start_session_logging(self):
         """Start logging query session to a file"""
-        debug_print(self.config, "Starting query session logging")
+        debug(self.config, "Starting query session logging")
 
         # Check if output_manager has session functionality
         if hasattr(self.output_manager, 'start_session_saving'):
@@ -184,15 +184,15 @@ class QueryEngine:
                 print("Query session logging started. All queries and responses will be saved.")
                 self.session_logger = True
             except Exception as e:
-                debug_print(self.config, f"Error starting query session logging: {str(e)}")
+                debug(self.config, f"Error starting query session logging: {str(e)}")
                 self.session_logger = False
         else:
-            debug_print(self.config, "OutputManager doesn't support session saving")
+            debug(self.config, "OutputManager doesn't support session saving")
             self.session_logger = False
 
     def _stop_session_logging(self):
         """Stop logging query session"""
-        debug_print(self.config, "Stopping query session logging")
+        debug(self.config, "Stopping query session logging")
 
         # Check if we're logging and output_manager has the functionality
         if self.session_logger and hasattr(self.output_manager, 'stop_session_saving'):
@@ -201,7 +201,7 @@ class QueryEngine:
                 print(f"Query session logging stopped. Session log saved to: {filepath}")
                 self.session_logger = False
             except Exception as e:
-                debug_print(self.config, f"Error stopping query session logging: {str(e)}")
+                debug(self.config, f"Error stopping query session logging: {str(e)}")
                 print(f"Warning: Could not properly save session log: {str(e)}")
                 self.session_logger = False
 
@@ -215,7 +215,7 @@ class QueryEngine:
         Process a user query with output to main screen only for response
         and logging everything else to system message log
         """
-        debug_print(self.config, f"Processing query: {query}")
+        debug(self.config, f"Processing query: {query}")
 
         if not self.active:
             self.output_manager.print_formatted('feedback', "Query mode is not active", success=False)

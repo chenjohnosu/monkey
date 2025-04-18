@@ -4,7 +4,7 @@ core/language/processor.py - Update TextProcessor initialization
 
 import os
 import re  # Ensure re is imported for the regex operations
-from core.engine.logging import debug_print,warning
+from core.engine.logging import debug,warning
 from core.language.detector import LanguageDetector
 
 # Import the centralized jieba availability constant and helper functions
@@ -27,7 +27,7 @@ class TextProcessor:
         self.config = config
         self.language_detector = LanguageDetector(config)
         self.stopwords = self._load_stopwords()
-        debug_print(config, "Text processor initialized")
+        debug(config, "Text processor initialized")
 
     def _load_stopwords(self):
         """Load stopwords for supported languages"""
@@ -37,25 +37,25 @@ class TextProcessor:
         lexicon_dir = 'lexicon'
         if not os.path.exists(lexicon_dir):
             os.makedirs(lexicon_dir)
-            debug_print(self.config, f"Created lexicon directory: {lexicon_dir}")
+            debug(self.config, f"Created lexicon directory: {lexicon_dir}")
 
         # Load English stopwords
         try:
             with open(os.path.join(lexicon_dir, 'stopwords_en.txt'), 'r', encoding='utf-8') as file:
                 stopwords['en'] = set(line.strip() for line in file if line.strip())
-            debug_print(self.config, f"Loaded {len(stopwords['en'])} English stopwords")
+            debug(self.config, f"Loaded {len(stopwords['en'])} English stopwords")
         except FileNotFoundError:
             stopwords['en'] = set()
-            debug_print(self.config, "English stopwords file not found")
+            debug(self.config, "English stopwords file not found")
 
         # Load Chinese stopwords
         try:
             with open(os.path.join(lexicon_dir, 'stopwords_zh.txt'), 'r', encoding='utf-8') as file:
                 stopwords['zh'] = set(line.strip() for line in file if line.strip())
-            debug_print(self.config, f"Loaded {len(stopwords['zh'])} Chinese stopwords")
+            debug(self.config, f"Loaded {len(stopwords['zh'])} Chinese stopwords")
         except FileNotFoundError:
             stopwords['zh'] = set()
-            debug_print(self.config, "Chinese stopwords file not found")
+            debug(self.config, "Chinese stopwords file not found")
 
         return stopwords
 
@@ -69,7 +69,7 @@ class TextProcessor:
         Returns:
             dict: Processed text information
         """
-        debug_print(self.config, "Preprocessing text")
+        debug(self.config, "Preprocessing text")
 
         # Skip empty text
         if not text or len(text.strip()) == 0:
@@ -113,7 +113,7 @@ class TextProcessor:
 
     def _preprocess_english(self, text):
         """Preprocess English text"""
-        debug_print(self.config, "Preprocessing English text")
+        debug(self.config, "Preprocessing English text")
 
         # Convert to lowercase
         text = text.lower()
@@ -132,7 +132,7 @@ class TextProcessor:
 
     def _preprocess_chinese(self, text):
         """Preprocess Chinese text"""
-        debug_print(self.config, "Preprocessing Chinese text")
+        debug(self.config, "Preprocessing Chinese text")
 
         # Remove non-Chinese characters, keeping Chinese punctuation
         # This regex keeps Chinese characters, punctuation and some common symbols

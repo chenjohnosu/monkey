@@ -6,7 +6,7 @@ import os
 import datetime
 from collections import Counter, defaultdict
 from core.engine.utils import ensure_dir
-from core.engine.logging import debug_print
+from core.engine.logging import debug
 
 
 def enhance_theme_analysis_with_diagnostics(self, workspace, method='all', original_results=None):
@@ -20,7 +20,7 @@ def enhance_theme_analysis_with_diagnostics(self, workspace, method='all', origi
     Returns:
         Dict: Analysis results with enhanced diagnostics
     """
-    debug_print(self.config, f"Analyzing themes in workspace '{workspace}' with enhanced diagnostics")
+    debug(self.config, f"Analyzing themes in workspace '{workspace}' with enhanced diagnostics")
 
     # Make a copy of the original analyze method
     original_analyze = self.analyze

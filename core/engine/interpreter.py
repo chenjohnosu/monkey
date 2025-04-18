@@ -4,7 +4,7 @@ Analysis interpreter using LLMs to explain results
 
 import os
 import datetime
-from core.engine.logging import debug_print
+from core.engine.logging import debug
 
 class AnalysisInterpreter:
     """Interprets analysis results using LLMs"""
@@ -21,13 +21,13 @@ class AnalysisInterpreter:
             from core.connectors.connector_factory import ConnectorFactory
             self.factory = ConnectorFactory(config)
             self.llm_connector = self.factory.get_llm_connector()
-            debug_print(config, "LLM connector initialized for analysis interpretation")
+            debug(config, "LLM connector initialized for analysis interpretation")
         except Exception as e:
-            debug_print(config, f"Error initializing LLM connector: {str(e)}")
+            debug(config, f"Error initializing LLM connector: {str(e)}")
             self.factory = None
             self.llm_connector = None
 
-        debug_print(config, "Analysis interpreter initialized")
+        debug(config, "Analysis interpreter initialized")
 
     def interpret_analysis(self, workspace, analysis_type, query=None):
         """
@@ -41,7 +41,7 @@ class AnalysisInterpreter:
         Returns:
             str: Interpretation results
         """
-        debug_print(self.config, f"Interpreting {analysis_type} analysis for workspace '{workspace}'")
+        debug(self.config, f"Interpreting {analysis_type} analysis for workspace '{workspace}'")
 
         # Map analysis_type to the standardized form expected by the helper methods
         # This will ensure compatibility with both singular and plural forms
@@ -80,7 +80,7 @@ class AnalysisInterpreter:
         Returns:
             str: Interpretation of theme analysis
         """
-        debug_print(self.config, f"Interpreting theme analysis for workspace '{workspace}'")
+        debug(self.config, f"Interpreting theme analysis for workspace '{workspace}'")
 
         # Find the most recent theme analysis results
         results_file = self._find_latest_analysis_file(workspace, 'themes')
@@ -106,7 +106,7 @@ class AnalysisInterpreter:
         Returns:
             str: Interpretation of topic modeling
         """
-        debug_print(self.config, f"Interpreting topic modeling for workspace '{workspace}'")
+        debug(self.config, f"Interpreting topic modeling for workspace '{workspace}'")
 
         # Find the most recent topic analysis results
         results_file = self._find_latest_analysis_file(workspace, 'topic')
@@ -132,7 +132,7 @@ class AnalysisInterpreter:
         Returns:
             str: Interpretation of sentiment analysis
         """
-        debug_print(self.config, f"Interpreting sentiment analysis for workspace '{workspace}'")
+        debug(self.config, f"Interpreting sentiment analysis for workspace '{workspace}'")
 
         # Find the most recent sentiment analysis results
         results_file = self._find_latest_analysis_file(workspace, 'sentiment')
@@ -158,7 +158,7 @@ class AnalysisInterpreter:
         Returns:
             str: Interpretation of session logs
         """
-        debug_print(self.config, f"Interpreting session logs for workspace '{workspace}'")
+        debug(self.config, f"Interpreting session logs for workspace '{workspace}'")
 
         # Find the most recent session log
         results_file = self._find_latest_analysis_file(workspace, 'session')
@@ -184,13 +184,13 @@ class AnalysisInterpreter:
         Returns:
             str: Path to the analysis file, or None if not found
         """
-        debug_print(self.config, f"Finding latest {analysis_type} analysis file for '{workspace}'")
+        debug(self.config, f"Finding latest {analysis_type} analysis file for '{workspace}'")
 
         try:
             # Create logs directory path
             logs_dir = os.path.join('logs', workspace)
             if not os.path.exists(logs_dir):
-                debug_print(self.config, f"Logs directory not found: {logs_dir}")
+                debug(self.config, f"Logs directory not found: {logs_dir}")
                 return None
 
             # Pattern matching for different analysis types
@@ -220,14 +220,14 @@ class AnalysisInterpreter:
 
             # Return the newest file
             if matching_files:
-                debug_print(self.config, f"Found latest file: {matching_files[0][0]}")
+                debug(self.config, f"Found latest file: {matching_files[0][0]}")
                 return matching_files[0][0]
 
-            debug_print(self.config, f"No matching files found for {analysis_type} analysis")
+            debug(self.config, f"No matching files found for {analysis_type} analysis")
             return None
 
         except Exception as e:
-            debug_print(self.config, f"Error finding analysis file: {str(e)}")
+            debug(self.config, f"Error finding analysis file: {str(e)}")
             return None
 
     def _read_analysis_file(self, filepath):
@@ -240,14 +240,14 @@ class AnalysisInterpreter:
         Returns:
             str: File content, or None if error
         """
-        debug_print(self.config, f"Reading analysis file: {filepath}")
+        debug(self.config, f"Reading analysis file: {filepath}")
 
         try:
             with open(filepath, 'r', encoding='utf-8') as file:
                 content = file.read()
             return content
         except Exception as e:
-            debug_print(self.config, f"Error reading file: {str(e)}")
+            debug(self.config, f"Error reading file: {str(e)}")
             return None
 
     def _generate_interpretation(self, analysis_content, analysis_type, query=None):
@@ -262,7 +262,7 @@ class AnalysisInterpreter:
         Returns:
             str: Interpretation from LLM
         """
-        debug_print(self.config, f"Generating interpretation for {analysis_type}")
+        debug(self.config, f"Generating interpretation for {analysis_type}")
 
         # Verify LLM connector is available
         if not self.llm_connector:
@@ -272,7 +272,7 @@ class AnalysisInterpreter:
             # Limit content length for LLM processing (avoid token limits)
             max_content_length = 6000
             if len(analysis_content) > max_content_length:
-                debug_print(self.config, f"Content too large ({len(analysis_content)} chars), truncating")
+                debug(self.config, f"Content too large ({len(analysis_content)} chars), truncating")
                 shortened_content = analysis_content[:max_content_length] + "\n...[content truncated]..."
             else:
                 shortened_content = analysis_content
@@ -305,14 +305,14 @@ Please interpret these results and provide insights about:
 Organize your response in a clear, structured way focusing on the most significant aspects of the analysis."""
 
             # Generate interpretation with LLM
-            debug_print(self.config, "Sending analysis to LLM for interpretation")
+            debug(self.config, "Sending analysis to LLM for interpretation")
             model = self.config.get('llm.default_model')
             interpretation = self.llm_connector.generate(prompt, model=model, max_tokens=1000)
 
             return interpretation.strip()
 
         except Exception as e:
-            debug_print(self.config, f"Error generating interpretation: {str(e)}")
+            debug(self.config, f"Error generating interpretation: {str(e)}")
             import traceback
-            debug_print(self.config, traceback.format_exc())
+            debug(self.config, traceback.format_exc())
             return f"Error generating interpretation: {str(e)}"

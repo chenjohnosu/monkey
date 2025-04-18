@@ -6,7 +6,7 @@ import os
 import json
 import requests
 from typing import List, Dict, Any, Optional
-from core.engine.logging import debug_print
+from core.engine.logging import debug
 
 class OllamaConnector:
     """Provides integration with Ollama for local LLM inference"""
@@ -18,7 +18,7 @@ class OllamaConnector:
         self.port = config.get('llm.ollama_port')
         self.base_url = f"{self.host}:{self.port}"
         self.available_models = None
-        debug_print(config, f"Ollama connector initialized with base URL: {self.base_url}")
+        debug(config, f"Ollama connector initialized with base URL: {self.base_url}")
         
     def check_connection(self) -> bool:
         """
@@ -27,20 +27,20 @@ class OllamaConnector:
         Returns:
             bool: Connection status
         """
-        debug_print(self.config, "Checking connection to Ollama server")
+        debug(self.config, "Checking connection to Ollama server")
         
         try:
             response = requests.get(f"{self.base_url}/api/tags", timeout=5)
             if response.status_code == 200:
                 self.available_models = response.json().get('models', [])
                 model_names = [model.get('name') for model in self.available_models]
-                debug_print(self.config, f"Connected to Ollama. Available models: {model_names}")
+                debug(self.config, f"Connected to Ollama. Available models: {model_names}")
                 return True
             else:
-                debug_print(self.config, f"Failed to connect to Ollama. Status code: {response.status_code}")
+                debug(self.config, f"Failed to connect to Ollama. Status code: {response.status_code}")
                 return False
         except Exception as e:
-            debug_print(self.config, f"Error connecting to Ollama: {str(e)}")
+            debug(self.config, f"Error connecting to Ollama: {str(e)}")
             return False
             
     def list_models(self) -> List[str]:
@@ -70,7 +70,7 @@ class OllamaConnector:
         Returns:
             str: Generated text
         """
-        debug_print(self.config, f"Generating text with Ollama")
+        debug(self.config, f"Generating text with Ollama")
         
         # Use default model from config if not specified
         if model is None:
@@ -79,7 +79,7 @@ class OllamaConnector:
         # Check if model is available
         if not self.check_model_availability(model):
             fallback_model = "mistral"  # Safe fallback
-            debug_print(self.config, f"Model {model} not available. Falling back to {fallback_model}")
+            debug(self.config, f"Model {model} not available. Falling back to {fallback_model}")
             model = fallback_model
             
         try:
@@ -105,11 +105,11 @@ class OllamaConnector:
                 result = response.json()
                 return result.get('response', '')
             else:
-                debug_print(self.config, f"Error from Ollama API: {response.status_code}")
+                debug(self.config, f"Error from Ollama API: {response.status_code}")
                 return f"Error generating text: HTTP {response.status_code}"
                 
         except Exception as e:
-            debug_print(self.config, f"Error generating text with Ollama: {str(e)}")
+            debug(self.config, f"Error generating text with Ollama: {str(e)}")
             return f"Error generating text: {str(e)}"
             
     def generate_with_context(self, query: str, context_docs: List[Dict[str, Any]], 
@@ -126,7 +126,7 @@ class OllamaConnector:
         Returns:
             str: Generated response
         """
-        debug_print(self.config, f"Generating text with context using Ollama")
+        debug(self.config, f"Generating text with context using Ollama")
         
         # Build prompt with context
         prompt = "You are a document analysis assistant. Answer the query based on the provided context documents.\n\n"

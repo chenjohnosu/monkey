@@ -6,7 +6,7 @@ import os
 import json
 import datetime
 from core.engine.utils import timestamp_filename, ensure_dir
-from core.engine.logging import debug_print
+from core.engine.logging import debug
 
 class OutputManager:
     """Manages output formatting and saving"""
@@ -17,7 +17,7 @@ class OutputManager:
         self.buffer = None
         self.session_file = None
         ensure_dir('logs')
-        debug_print(config, "Output manager initialized")
+        debug(config, "Output manager initialized")
     
     def add_to_buffer(self, query, response, docs=None):
         """
@@ -28,7 +28,7 @@ class OutputManager:
             response (str): System response
             docs (list, optional): Retrieved documents
         """
-        debug_print(self.config, "Adding to output buffer")
+        debug(self.config, "Adding to output buffer")
         
         self.buffer = {
             'timestamp': datetime.datetime.now().isoformat(),
@@ -47,7 +47,7 @@ class OutputManager:
         Returns:
             str: Path to the saved file, or None if buffer is empty
         """
-        debug_print(self.config, "Saving output buffer")
+        debug(self.config, "Saving output buffer")
         
         if not self.buffer:
             return None
@@ -86,7 +86,7 @@ class OutputManager:
         Returns:
             str: Path to the saved file
         """
-        debug_print(self.config, "Saving theme analysis results")
+        debug(self.config, "Saving theme analysis results")
         
         # Create logs directory if it doesn't exist
         logs_dir = os.path.join('logs', workspace)
@@ -125,7 +125,7 @@ class OutputManager:
         Args:
             workspace (str): Current workspace
         """
-        debug_print(self.config, "Starting session saving")
+        debug(self.config, "Starting session saving")
         
         # Create logs directory if it doesn't exist
         logs_dir = os.path.join('logs', workspace)
@@ -166,7 +166,7 @@ class OutputManager:
         Returns:
             str: Path to the saved file
         """
-        debug_print(self.config, "Stopping session saving")
+        debug(self.config, "Stopping session saving")
         
         if not self.session_file:
             return None
@@ -431,7 +431,7 @@ class OutputManager:
         Returns:
             str: Path to the saved file
         """
-        debug_print(self.config, "Saving sentiment analysis results")
+        debug(self.config, "Saving sentiment analysis results")
 
         # Create logs directory if it doesn't exist
         logs_dir = os.path.join('logs', workspace)
@@ -476,7 +476,7 @@ class OutputManager:
         Returns:
             str: Path to the saved file
         """
-        debug_print(self.config, "Saving topic modeling results")
+        debug(self.config, "Saving topic modeling results")
 
         # Create logs directory if it doesn't exist
         logs_dir = os.path.join('logs', workspace)

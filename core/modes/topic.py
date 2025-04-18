@@ -3,18 +3,22 @@ Topic modeling module for extracting main topics from document collections
 """
 
 import os
-import re
 from collections import Counter, defaultdict
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 
-from core.engine.utils import ensure_dir
-from core.engine.logging import debug_print,warning,info
+from core.engine.utils import (
+    ensure_dir, extract_keywords, configure_vectorizer, format_feedback,
+    split_text_into_chunks
+)
+from core.engine.logging import debug, warning, info, error, trace
 from core.engine.storage import StorageManager
 from core.engine.output import OutputManager
 from core.language.processor import TextProcessor
-from core.language.tokenizer import ChineseTokenizer, JIEBA_AVAILABLE
+from core.language.tokenizer import JIEBA_AVAILABLE, get_jieba_instance
+from core.engine.common import safe_execute
 
+# Check scikit-learn availability
 try:
     from sklearn.decomposition import LatentDirichletAllocation, NMF
     from sklearn.feature_extraction.text import TfidfVectorizer
@@ -24,6 +28,7 @@ except ImportError:
     SKLEARN_AVAILABLE = False
     warning("scikit-learn not available, falling back to simplified topic modeling")
 
+# Check clustering libraries availability
 try:
     import umap
     import hdbscan
@@ -33,6 +38,7 @@ except ImportError:
     warning("umap and/or hdbscan not available, some clustering features will be limited")
 
 class TopicModeler:
+    """Topic modeling for document collections with enhanced language support"""
 
     def __init__(self, config, storage_manager=None, output_manager=None, text_processor=None):
         """Initialize the topic modeler"""
@@ -42,21 +48,24 @@ class TopicModeler:
         self.text_processor = text_processor or TextProcessor(config)
 
         # Initialize LLM connector for topic interpretation
-        try:
-            from core.connectors.connector_factory import ConnectorFactory
-            self.factory = ConnectorFactory(config)
-            self.llm_connector = self.factory.get_llm_connector()
-            debug_print(config, "LLM connector initialized for topic modeling")
-        except Exception as e:
-            debug_print(config, f"Error initializing LLM connector: {str(e)}")
-            self.factory = None
-            self.llm_connector = None
+        self.llm_connector = safe_execute(
+            self._init_llm_connector,
+            error_message="Error initializing LLM connector for topic modeling"
+        )
 
         # Load stopwords
         self.chinese_stopwords = self._load_stopwords('chinese')
         self.english_stopwords = self._load_stopwords('english')
 
-        debug_print(config, "Topic modeler initialized")
+        debug(config, "Topic modeler initialized")
+
+    def _init_llm_connector(self):
+        """Initialize LLM connector for topic interpretation"""
+        from core.connectors.connector_factory import ConnectorFactory
+        factory = ConnectorFactory(self.config)
+        llm_connector = factory.get_llm_connector()
+        debug(self.config, "LLM connector initialized for topic modeling")
+        return llm_connector
 
     def _load_stopwords(self, language):
         """
@@ -78,9 +87,9 @@ class TopicModeler:
         try:
             with open(filepath, 'r', encoding='utf-8') as file:
                 stopwords = set(line.strip() for line in file if line.strip())
-            debug_print(self.config, f"Loaded {len(stopwords)} {language} stopwords")
+            debug(self.config, f"Loaded {len(stopwords)} {language} stopwords")
         except FileNotFoundError:
-            debug_print(self.config, f"No {language} stopwords file found")
+            debug(self.config, f"No {language} stopwords file found")
 
             # Fallback to default stopwords
             if language == 'english':
@@ -104,14 +113,16 @@ class TopicModeler:
         Returns:
             Dict: Topic analysis results
         """
-        debug_print(self.config, f"Analyzing topics in workspace '{workspace}' using method '{method}'")
+        debug(self.config, f"Analyzing topics in workspace '{workspace}' using method '{method}'")
 
         # Validate method - case insensitive matching
         valid_methods = ['all', 'lda', 'nmf', 'cluster']
         lower_method = method.lower() if isinstance(method, str) else ''
 
         if lower_method not in valid_methods:
-            print(f"Invalid method: {method}. Must be one of: {', '.join(valid_methods)}")
+            self.output_manager.print_formatted('feedback',
+                f"Invalid method: {method}. Must be one of: {', '.join(valid_methods)}",
+                success=False)
             return {}
 
         # Convert to lowercase for consistent handling
@@ -120,7 +131,9 @@ class TopicModeler:
         # Validate workspace and load documents
         docs = self._validate_and_load_documents(workspace)
         if not docs:
-            print(f"ERROR: No documents found in workspace '{workspace}'")
+            self.output_manager.print_formatted('feedback',
+                f"No documents found in workspace '{workspace}'",
+                success=False)
             return {
                 "method": "Topic Modeling",
                 "error": "No documents found in workspace",
@@ -131,7 +144,7 @@ class TopicModeler:
         try:
             doc_contents, language_counts = self._preprocess_documents(docs)
         except Exception as e:
-            print(f"ERROR: Failed to preprocess documents: {str(e)}")
+            error(f"Failed to preprocess documents: {str(e)}")
             return {
                 "method": "Topic Modeling",
                 "error": f"Preprocessing failed: {str(e)}",
@@ -141,22 +154,13 @@ class TopicModeler:
         # Display language distribution
         self._display_language_stats(language_counts)
 
-        # Print preprocessing details for debugging
-        print(f"Preprocessed documents: {len(doc_contents)}")
-        if doc_contents:
-            print("Sample document:")
-            sample_doc = doc_contents[0]
-            print(f"  Source: {sample_doc.get('source', 'Unknown')}")
-            print(f"  Language: {sample_doc.get('language', 'Unknown')}")
-            print(f"  Content preview: {sample_doc.get('content', '')[:200]}...")
-
         # Run topic modeling
         try:
             results = self._run_topic_modeling(doc_contents, method)
         except Exception as e:
-            print(f"ERROR: Topic modeling failed: {str(e)}")
+            error(f"Topic modeling failed: {str(e)}")
             import traceback
-            traceback.print_exc()
+            trace(traceback.format_exc())
             return {
                 "method": "Topic Modeling",
                 "error": f"Topic modeling failed: {str(e)}",
@@ -165,7 +169,7 @@ class TopicModeler:
 
         # Verify results
         if not results:
-            print("WARNING: No topic modeling results generated")
+            warning("No topic modeling results generated")
             return {
                 "method": "Topic Modeling",
                 "error": "No topics could be generated",
@@ -185,44 +189,44 @@ class TopicModeler:
         Returns:
             List[Dict]: Documents in the workspace
         """
-        debug_print(self.config, f"Validating and loading documents for workspace: {workspace}")
+        debug(self.config, f"Validating and loading documents for workspace: {workspace}")
 
         # Check if workspace exists
         data_dir = os.path.join("data", workspace)
         if not os.path.exists(data_dir):
-            print(f"Workspace '{workspace}' does not exist")
+            error(f"Workspace '{workspace}' does not exist")
             return []
 
         # Load documents from storage
         docs = self.storage_manager.get_documents(workspace)
 
         # Print initial document loading details
-        print(f"\nDocument Loading:")
-        print(f"  Workspace: {workspace}")
-        print(f"  Total documents found: {len(docs)}")
+        self.output_manager.print_formatted('subheader', "Document Loading")
+        self.output_manager.print_formatted('kv', workspace, key="Workspace")
+        self.output_manager.print_formatted('kv', len(docs), key="Total documents found")
 
         if not docs:
-            print("  WARNING: No documents found in workspace")
+            warning("No documents found in workspace")
 
         # Detailed document info logging
         if docs:
-            print("  Sample Document Details:")
+            self.output_manager.print_formatted('mini_header', "Sample Document Details")
             sample_doc = docs[0]
             source = sample_doc.get('metadata', {}).get('source', 'Unknown')
             language = sample_doc.get('metadata', {}).get('language', 'unknown')
             content_length = len(sample_doc.get('content', ''))
             processed_content_length = len(sample_doc.get('processed_content', ''))
 
-            print(f"    Source: {source}")
-            print(f"    Language: {language}")
-            print(f"    Raw Content Length: {content_length}")
-            print(f"    Processed Content Length: {processed_content_length}")
+            self.output_manager.print_formatted('kv', source, key="Source", indent=2)
+            self.output_manager.print_formatted('kv', language, key="Language", indent=2)
+            self.output_manager.print_formatted('kv', content_length, key="Raw Content Length", indent=2)
+            self.output_manager.print_formatted('kv', processed_content_length, key="Processed Content Length", indent=2)
 
         return docs
 
     def _preprocess_documents(self, docs):
         """
-        Preprocess documents for topic modeling, incorporating original files from body directory
+        Preprocess documents for topic modeling, incorporating original files
 
         Args:
             docs (List[Dict]): Raw input documents from data directory
@@ -246,31 +250,26 @@ class TopicModeler:
             # Try to get original content from body directory if needed
             if not content or self.config.get('topic.use_originals', True):
                 try:
-                    # Construct path to original file in body directory
-                    original_path = os.path.join("body", workspace, source_path)
+                    from core.engine.utils import get_file_content
+                    from core.engine.common import load_original_document
 
-                    if os.path.exists(original_path):
-                        debug_print(self.config, f"Loading original content from: {original_path}")
-                        from core.engine.utils import get_file_content
-                        original_content = get_file_content(original_path)
+                    original_content = load_original_document(self.config, workspace, source_path)
 
-                        if original_content:
-                            # Use original content if available
-                            content = original_content
-                            debug_print(self.config, f"Using original content for: {source_path}")
-                        else:
-                            debug_print(self.config, f"Failed to load original content, using stored content")
+                    if original_content:
+                        # Use original content if available
+                        content = original_content
+                        debug(self.config, f"Using original content for: {source_path}")
                     else:
-                        debug_print(self.config, f"Original file not found: {original_path}")
+                        debug(self.config, f"Failed to load original content, using stored content")
                 except Exception as e:
-                    debug_print(self.config, f"Error loading original file: {str(e)}")
+                    debug(self.config, f"Error loading original file: {str(e)}")
 
             # Prefer processed content for better topic modeling results
             text_to_use = processed_content if processed_content else content
 
             # Skip empty documents
             if not text_to_use:
-                debug_print(self.config, f"Empty document skipped: {source_path}")
+                debug(self.config, f"Empty document skipped: {source_path}")
                 continue
 
             # Track language
@@ -283,18 +282,20 @@ class TopicModeler:
                 "original_content": content  # Store original content for reference
             })
 
-        print(f"\nPreprocessing Summary:")
-        print(f"  Total Input Documents: {len(docs)}")
-        print(f"  Processed Documents: {len(processed_docs)}")
+        self.output_manager.print_formatted('subheader', "Preprocessing Summary")
+        self.output_manager.print_formatted('kv', len(docs), key="Total Input Documents")
+        self.output_manager.print_formatted('kv', len(processed_docs), key="Processed Documents")
+
         if processed_docs:
-            print("  Sample Processed Document:")
+            self.output_manager.print_formatted('mini_header', "Sample Processed Document")
             sample_doc = processed_docs[0]
-            print(f"    Source: {sample_doc['source']}")
-            print(f"    Language: {sample_doc['language']}")
-            print(f"    Content Preview: {sample_doc['content'][:200]}...")
+            self.output_manager.print_formatted('kv', sample_doc['source'], key="Source", indent=2)
+            self.output_manager.print_formatted('kv', sample_doc['language'], key="Language", indent=2)
+            content_preview = f"{sample_doc['content'][:200]}..."
+            self.output_manager.print_formatted('kv', content_preview, key="Content Preview", indent=2)
 
         if not processed_docs:
-            print("ERROR: No documents could be preprocessed")
+            error("No documents could be preprocessed")
 
         return processed_docs, language_counts
 
@@ -305,11 +306,14 @@ class TopicModeler:
         Args:
             language_counts (Counter): Language distribution
         """
-        print("\nDocument Language Distribution:")
+        self.output_manager.print_formatted('subheader', "Document Language Distribution")
         total = sum(language_counts.values())
+
         for lang, count in language_counts.most_common():
             percentage = (count / total) * 100
-            print(f"  {lang}: {count} documents ({percentage:.1f}%)")
+            self.output_manager.print_formatted('kv',
+                f"{count} documents ({percentage:.1f}%)",
+                key=lang, indent=2)
 
     def _run_topic_modeling(self, docs, method):
         """
@@ -331,11 +335,11 @@ class TopicModeler:
 
         # Check library availability
         if not SKLEARN_AVAILABLE:
-            print("scikit-learn not available. Using simple extraction.")
+            warning("scikit-learn not available. Using simple extraction.")
             method = 'simple'
 
         # Log which method we're executing
-        print(f"\nExecuting topic modeling method: {method}")
+        self.output_manager.print_formatted('subheader', f"Executing topic modeling method: {method}")
 
         # Run topic modeling for each language
         for language, language_docs in docs_by_language.items():
@@ -345,99 +349,30 @@ class TopicModeler:
 
             # Run specific methods based on what was requested
             if method == 'all' or method == 'lda':
-                print(f"Running LDA topic modeling for language: {language}")
-                results[f'lda_{language}'] = self._lda_topic_modeling(language_docs, language)
+                info(f"Running LDA topic modeling for language: {language}")
+                results[f'lda_{language}'] = safe_execute(
+                    self._lda_topic_modeling,
+                    language_docs, language,
+                    error_message=f"Error in LDA topic modeling for {language}"
+                )
 
             if method == 'all' or method == 'nmf':
-                print(f"Running NMF topic modeling for language: {language}")
-                results[f'nmf_{language}'] = self._nmf_topic_modeling(language_docs, language)
+                info(f"Running NMF topic modeling for language: {language}")
+                results[f'nmf_{language}'] = safe_execute(
+                    self._nmf_topic_modeling,
+                    language_docs, language,
+                    error_message=f"Error in NMF topic modeling for {language}"
+                )
 
             if (method == 'all' or method == 'cluster') and CLUSTERING_AVAILABLE:
-                print(f"Running clustering-based topic modeling for language: {language}")
-                results[f'cluster_{language}'] = self._cluster_topic_modeling(language_docs, language)
+                info(f"Running clustering-based topic modeling for language: {language}")
+                results[f'cluster_{language}'] = safe_execute(
+                    self._cluster_topic_modeling,
+                    language_docs, language,
+                    error_message=f"Error in clustering-based topic modeling for {language}"
+                )
 
         return results
-
-    def _process_and_save_results(self, workspace, results, method):
-        """
-        Process and save topic modeling results
-
-        Args:
-            workspace (str): Workspace name
-            results (Dict): Topic modeling results
-            method (str): Analysis method
-
-        Returns:
-            Dict: Processed results
-        """
-        debug_print(self.config, "Processing and saving topic modeling results")
-        processed_results = {}
-
-        # Handle empty results or non-dictionary results
-        if not results:
-            print("No topic modeling results to process.")
-            return {}
-
-        # Process each result set
-        for key, result in results.items():
-            try:
-                # Ensure result is a dictionary
-                if not isinstance(result, dict):
-                    processed_result = {
-                        "method": "Unknown Topic Modeling",
-                        "error": f"Invalid result format for {key}",
-                        "topics": []
-                    }
-                else:
-                    # Use the existing result or create a default structure
-                    processed_result = result.copy()
-
-                    # Derive method if not present
-                    if 'method' not in processed_result:
-                        if 'lda' in key:
-                            processed_result['method'] = 'Latent Dirichlet Allocation'
-                        elif 'nmf' in key:
-                            processed_result['method'] = 'Non-Negative Matrix Factorization'
-                        elif 'cluster' in key:
-                            processed_result['method'] = 'Clustering-based Topic Modeling'
-                        else:
-                            processed_result['method'] = 'Topic Modeling'
-
-                    # Ensure topics exist
-                    if 'topics' not in processed_result:
-                        processed_result['topics'] = []
-
-                    # Add language if not present
-                    if 'language' not in processed_result:
-                        language_match = re.search(r'_(en|zh)$', key)
-                        processed_result['language'] = language_match.group(1) if language_match else 'unknown'
-
-                processed_results[key] = processed_result
-
-            except Exception as e:
-                debug_print(self.config, f"Error processing result for {key}: {str(e)}")
-                processed_results[key] = {
-                    "method": "Error Processing Result",
-                    "error": str(e),
-                    "topics": []
-                }
-
-        # Prepare data for saving
-        data = {
-            'timestamp': datetime.now().isoformat(),
-            'workspace': workspace,
-            'method': method,
-            'results': processed_results
-        }
-
-        # Save results using output manager
-        output_format = self.config.get('system.output_format', 'txt')
-        filepath = self.output_manager.save_topic_analysis(workspace, data, method, output_format)
-
-        # Print results summary
-        print(f"\nTopic Analysis Results saved to: {filepath}")
-
-        return processed_results
 
     def _lda_topic_modeling(self, docs, language):
         """
@@ -458,11 +393,11 @@ class TopicModeler:
             doc_texts = [doc["content"] for doc in docs]
 
             # Configure vectorization
-            vectorizer = TfidfVectorizer(
-                stop_words=list(self.chinese_stopwords) if language == 'zh' else 'english',
-                tokenizer=ChineseTokenizer() if language == 'zh' else None,
-                max_df=0.95,
-                min_df=2
+            vectorizer = configure_vectorizer(
+                self.config,
+                len(docs),
+                language,
+                self.chinese_stopwords if language == 'zh' else None
             )
 
             # Create document-term matrix
@@ -497,7 +432,7 @@ class TopicModeler:
                     "name": f"Topic {topic_idx + 1}",
                     "keywords": top_words,
                     "documents": top_docs,
-                    "score": topic.max() / topic.sum()
+                    "score": float(topic.max() / topic.sum())  # Convert to Python float
                 })
 
             return {
@@ -507,12 +442,12 @@ class TopicModeler:
             }
 
         except Exception as e:
-            debug_print(self.config, f"LDA Topic Modeling Error: {str(e)}")
+            error(f"LDA Topic Modeling Error: {str(e)}")
             return {"error": str(e)}
 
     def _nmf_topic_modeling(self, docs, language):
         """
-        Perform Non-Negative Matrix Factorization topic modeling with version compatibility
+        Perform Non-Negative Matrix Factorization topic modeling
 
         Args:
             docs (List[Dict]): Documents to analyze
@@ -529,12 +464,11 @@ class TopicModeler:
             doc_texts = [doc["content"] for doc in docs]
 
             # Configure vectorization
-            vectorizer = TfidfVectorizer(
-                stop_words=list(self.chinese_stopwords) if language == 'zh' else 'english',
-                tokenizer=ChineseTokenizer() if language == 'zh' else None,
-                max_df=0.95,  # Ignore terms that appear in more than 95% of documents
-                min_df=2,  # Ignore terms that appear in fewer than 2 documents
-                smooth_idf=True  # Smooth idf weights to prevent divide-by-zero
+            vectorizer = configure_vectorizer(
+                self.config,
+                len(docs),
+                language,
+                self.chinese_stopwords if language == 'zh' else None
             )
 
             # Create document-term matrix
@@ -542,10 +476,6 @@ class TopicModeler:
 
             # Determine number of topics dynamically
             n_topics = min(max(5, len(docs) // 3), 20)
-
-            # Try to detect scikit-learn version and use compatible parameters
-            from sklearn import __version__ as sklearn_version
-            debug_print(self.config, f"scikit-learn version: {sklearn_version}")
 
             # Initialize NMF with minimal parameters to ensure compatibility
             try:
@@ -555,15 +485,15 @@ class TopicModeler:
                     random_state=42,
                     max_iter=200
                 )
-                debug_print(self.config, "Using basic NMF parameters")
+                debug(self.config, "Using basic NMF parameters")
             except Exception as e1:
-                debug_print(self.config, f"Basic NMF initialization failed: {str(e1)}")
+                debug(self.config, f"Basic NMF initialization failed: {str(e1)}")
                 # If that fails, try with absolutely minimal parameters
                 try:
                     nmf_model = NMF(n_components=n_topics)
-                    debug_print(self.config, "Using minimal NMF parameters")
+                    debug(self.config, "Using minimal NMF parameters")
                 except Exception as e2:
-                    debug_print(self.config, f"Minimal NMF initialization failed: {str(e2)}")
+                    debug(self.config, f"Minimal NMF initialization failed: {str(e2)}")
                     # If even that fails, return an error
                     return {"error": f"Could not initialize NMF model: {str(e2)}"}
 
@@ -585,30 +515,14 @@ class TopicModeler:
                 top_docs = [docs[i]["source"] for i in top_docs_idx]
 
                 # Generate topic summary using LLM if available
-                summary = None
-                if self.llm_connector:
-                    try:
-                        prompt = f"""Analyze the following topic keywords and identify the core theme.
-                        What conceptual area do these words represent?
-                        Explain the interconnections between these keywords and their significance.
-
-                        Keywords: {', '.join(top_words)}"""
-
-                        model = self.config.get('llm.default_model', 'mistral')
-                        summary = self.llm_connector.generate(
-                            prompt,
-                            model=model,
-                            max_tokens=300
-                        )
-                    except Exception as e:
-                        debug_print(self.config, f"Error generating topic summary: {str(e)}")
+                summary = self._generate_topic_summary(top_words) if self.llm_connector else None
 
                 # Create topic representation
                 topics.append({
                     "name": f"NMF Topic {topic_idx + 1}",
                     "keywords": top_words,
                     "documents": top_docs,
-                    "score": topic.max() / topic.sum(),
+                    "score": round(float(topic.max() / topic.sum()), 2),
                     "summary": summary,
                     "language": language
                 })
@@ -627,7 +541,7 @@ class TopicModeler:
                     ) / len(topic['keywords'])
                     topic['coherence'] = uniqueness_score
             except Exception as e:
-                debug_print(self.config, f"Error computing topic coherence: {str(e)}")
+                debug(self.config, f"Error computing topic coherence: {str(e)}")
 
             return {
                 "method": "Non-Negative Matrix Factorization",
@@ -637,10 +551,31 @@ class TopicModeler:
             }
 
         except Exception as e:
-            debug_print(self.config, f"NMF Topic Modeling Error: {str(e)}")
-            import traceback
-            debug_print(self.config, traceback.format_exc())
+            error(f"NMF Topic Modeling Error: {str(e)}")
             return {"error": str(e)}
+
+    def _generate_topic_summary(self, keywords):
+        """Generate a summary for a topic using LLM"""
+        if not self.llm_connector:
+            return None
+
+        try:
+            prompt = f"""Analyze the following topic keywords and identify the core theme.
+            What conceptual area do these words represent?
+            Explain the interconnections between these keywords and their significance.
+
+            Keywords: {', '.join(keywords)}"""
+
+            model = self.config.get('llm.default_model', 'mistral')
+            summary = self.llm_connector.generate(
+                prompt,
+                model=model,
+                max_tokens=300
+            )
+            return summary
+        except Exception as e:
+            debug(self.config, f"Error generating topic summary: {str(e)}")
+            return None
 
     def _cluster_topic_modeling(self, docs, language):
         """
@@ -662,11 +597,11 @@ class TopicModeler:
             doc_sources = [doc["source"] for doc in docs]
 
             # Configure vectorization
-            vectorizer = TfidfVectorizer(
-                stop_words=list(self.chinese_stopwords) if language == 'zh' else 'english',
-                tokenizer=ChineseTokenizer() if language == 'zh' else None,
-                max_df=0.95,
-                min_df=2
+            vectorizer = configure_vectorizer(
+                self.config,
+                len(docs),
+                language,
+                self.chinese_stopwords if language == 'zh' else None
             )
 
             # Create document-term matrix
@@ -674,8 +609,6 @@ class TopicModeler:
 
             # Determine number of clusters dynamically
             n_docs = len(doc_texts)
-
-            # Define number of clusters based on document count
             if n_docs <= 5:
                 n_clusters = 2
             elif n_docs <= 10:
@@ -685,9 +618,12 @@ class TopicModeler:
             else:
                 n_clusters = min(int(n_docs / 5), 10)  # 1 cluster per 5 docs, max 10
 
-            # Perform clustering using K-Means
+            # Ensure at least 2 clusters but not more than n_docs-1
+            n_clusters = min(max(2, n_clusters), n_docs - 1)
+
+            # Perform clustering
             kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-            cluster_labels = kmeans.fit_predict(X)
+            clusters = kmeans.fit_predict(X)
 
             # Extract feature names
             feature_names = vectorizer.get_feature_names_out()
@@ -696,12 +632,24 @@ class TopicModeler:
             topics = []
             for cluster_id in range(n_clusters):
                 # Get documents in this cluster
-                cluster_mask = (cluster_labels == cluster_id)
-                cluster_docs = [doc_texts[i] for i in range(len(doc_texts)) if cluster_mask[i]]
-                cluster_sources = [doc_sources[i] for i in range(len(doc_texts)) if cluster_mask[i]]
+                cluster_mask = (clusters == cluster_id)
+                cluster_doc_indices = [i for i, mask in enumerate(cluster_mask) if mask]
+
+                if not cluster_doc_indices:
+                    continue
+
+                # Extract documents and sources for this cluster
+                cluster_texts = [doc_texts[i] for i in cluster_doc_indices]
+                cluster_sources = [doc_sources[i] for i in cluster_doc_indices]
 
                 # Extract keywords for this cluster
-                keywords = self._extract_cluster_keywords(cluster_docs, language)
+                keywords = extract_keywords(
+                    self.config,
+                    cluster_texts,
+                    language=language,
+                    top_n=5,
+                    stopwords=self.chinese_stopwords if language == 'zh' else self.english_stopwords
+                )
 
                 # Calculate top words for the cluster
                 cluster_vector = kmeans.cluster_centers_[cluster_id]
@@ -713,15 +661,15 @@ class TopicModeler:
                     "name": f"Cluster {cluster_id + 1}",
                     "keywords": keywords,
                     "documents": cluster_sources,
-                    "document_count": len(cluster_docs),
-                    "score": cluster_vector.max() / cluster_vector.sum(),
+                    "document_count": len(cluster_sources),
+                    "score": float(cluster_vector.max() / cluster_vector.sum()),
                     "top_words": top_words
                 }
 
                 topics.append(topic)
 
-            # Sort topics by document count and score
-            topics.sort(key=lambda x: (x['document_count'], x['score']), reverse=True)
+            # Sort clusters by size
+            topics.sort(key=lambda x: x["document_count"], reverse=True)
 
             return {
                 "method": "Document Clustering",
@@ -731,54 +679,8 @@ class TopicModeler:
             }
 
         except Exception as e:
-            debug_print(self.config, f"Clustering Topic Modeling Error: {str(e)}")
-            import traceback
-            debug_print(self.config, traceback.format_exc())
+            error(f"Clustering Topic Modeling Error: {str(e)}")
             return {"error": str(e)}
-
-    def _extract_cluster_keywords(self, docs, language):
-        """
-        Extract keywords for a cluster of documents
-
-        Args:
-            docs (List[str]): Documents in the cluster
-            language (str): Language of documents
-
-        Returns:
-            List[str]: Top keywords for the cluster
-        """
-        try:
-            # Combine all documents
-            combined_text = " ".join(docs)
-
-            # Vectorize and extract top keywords
-            vectorizer = TfidfVectorizer(
-                stop_words=list(self.chinese_stopwords) if language == 'zh' else 'english',
-                tokenizer=ChineseTokenizer() if language == 'zh' else None,
-                max_df=0.95,
-                min_df=1
-            )
-
-            # Create a small corpus with just the combined text
-            X = vectorizer.fit_transform([combined_text])
-            feature_names = vectorizer.get_feature_names_out()
-
-            # Get TF-IDF scores
-            scores = X.toarray()[0]
-
-            # Sort words by score
-            scored_terms = sorted(
-                zip(feature_names, scores),
-                key=lambda x: x[1],
-                reverse=True
-            )
-
-            # Return top 10 keywords
-            return [term for term, score in scored_terms[:10]]
-
-        except Exception as e:
-            debug_print(self.config, f"Error extracting cluster keywords: {str(e)}")
-            return []
 
     def _output_results(self, workspace, results, method):
         """
@@ -792,84 +694,115 @@ class TopicModeler:
         Returns:
             Dict: Processed results
         """
-        debug_print(self.config, "Processing and saving topic modeling results")
+        debug(self.config, "Processing topic modeling results")
+
+        # Standardize results format
+        processed_results = self._process_results(results)
 
         # Print main header
         self.output_manager.print_formatted('header', "TOPIC MODELING RESULTS")
 
-        # Handle empty results or non-dictionary results
-        if not results:
-            print("No topic modeling results to process.")
-            return {}
-
         # Process each result set
-        for key, result in results.items():
-            try:
-                # Ensure result is a dictionary
-                if not isinstance(result, dict):
-                    print(f"Invalid result format for {key}")
-                    continue
+        for key, result in processed_results.items():
+            method_name = result.get('method', 'Unknown Topic Modeling')
+            language = result.get('language', 'unknown')
 
-                # Display method and language
-                method_name = result.get('method', 'Unknown Topic Modeling')
-                language = result.get('language', 'unknown')
+            # Print method header
+            self.output_manager.print_formatted('subheader', f"{method_name} ({language.upper()})")
 
-                # Print method header
-                self.output_manager.print_formatted('subheader', f"{method_name} ({language.upper()})")
+            # Handle potential error in results
+            if 'error' in result:
+                self.output_manager.print_formatted('feedback', f"Error: {result['error']}", success=False)
+                continue
 
-                # Handle potential error in results
-                if 'error' in result:
-                    self.output_manager.print_formatted('feedback', f"Error: {result['error']}", success=False)
-                    continue
+            # Display topics
+            topics = result.get('topics', [])
+            self.output_manager.print_formatted('kv', len(topics), key="Total Topics")
 
-                # Display topics
-                topics = result.get('topics', [])
-                print(f"Total Topics: {len(topics)}")
+            # Display each topic
+            for i, topic in enumerate(topics, 1):
+                # Print topic name
+                self.output_manager.print_formatted('mini_header', topic.get('name', f'Topic {i}'))
 
-                # Display each topic
-                for i, topic in enumerate(topics, 1):
-                    # Print topic name
-                    self.output_manager.print_formatted('mini_header', topic.get('name', f'Topic {i}'))
+                # Keywords
+                keywords = topic.get('keywords', [])
+                if keywords:
+                    self.output_manager.print_formatted('kv', ', '.join(keywords), key="Keywords")
 
-                    # Keywords
-                    keywords = topic.get('keywords', [])
-                    if keywords:
-                        self.output_manager.print_formatted('kv', ', '.join(keywords), key="Keywords")
+                # Score or Coherence
+                if 'score' in topic:
+                    self.output_manager.print_formatted('kv', f"{topic['score']:.4f}", key="Score")
+                elif 'coherence' in topic:
+                    self.output_manager.print_formatted('kv', f"{topic['coherence']:.4f}", key="Coherence")
 
-                    # Score or Coherence
-                    if 'score' in topic:
-                        self.output_manager.print_formatted('kv', f"{topic['score']:.4f}", key="Score")
-                    elif 'coherence' in topic:
-                        self.output_manager.print_formatted('kv', f"{topic['coherence']:.4f}", key="Coherence")
+                # Documents
+                documents = topic.get('documents', [])
+                if documents:
+                    self.output_manager.print_formatted('kv', len(documents), key="Documents")
 
-                    # Documents
-                    documents = topic.get('documents', [])
-                    if documents:
-                        self.output_manager.print_formatted('kv', len(documents), key="Documents")
+                    # Show first few document sources
+                    print("  Document Sources:")
+                    for doc in documents[:5]:
+                        self.output_manager.print_formatted('list', doc, indent=4)
 
-                        # Show first few document sources
-                        print("  Document Sources:")
-                        for doc in documents[:5]:
-                            self.output_manager.print_formatted('list', doc, indent=4)
+                    if len(documents) > 5:
+                        print(f"  ... and {len(documents) - 5} more")
 
-                        if len(documents) > 5:
-                            print(f"  ... and {len(documents) - 5} more")
+                # Summary (if available)
+                summary = topic.get('summary')
+                if summary:
+                    print("\n  Summary:")
+                    self.output_manager.print_formatted('code', summary, indent=2)
 
-                    # Summary (if available)
-                    summary = topic.get('summary')
-                    if summary:
-                        print("\n  Summary:")
-                        self.output_manager.print_formatted('code', summary, indent=2)
-
-            except Exception as e:
-                debug_print(self.config, f"Error processing result for {key}: {str(e)}")
-                print(f"Error processing result: {str(e)}")
-
-        # Prepare data for saving
+        # Save results to file
         output_format = self.config.get('system.output_format', 'txt')
-        filepath = self.output_manager.save_topic_analysis(workspace, results, method, output_format)
+        filepath = self.output_manager.save_topic_analysis(workspace, processed_results, method, output_format)
 
         # Print save location
         self.output_manager.print_formatted('feedback', f"Results saved to: {filepath}")
 
-        return results
+        return processed_results
+
+    def _process_results(self, results):
+        """Process and standardize topic modeling results"""
+        if not results:
+            return {}
+
+        processed_results = {}
+
+        for key, result in results.items():
+            # Ensure result is a dictionary
+            if not isinstance(result, dict):
+                processed_result = {
+                    "method": "Unknown Topic Modeling",
+                    "error": f"Invalid result format for {key}",
+                    "topics": []
+                }
+            else:
+                # Use the existing result
+                processed_result = result.copy()
+
+                # Derive method if not present
+                if 'method' not in processed_result:
+                    if 'lda' in key:
+                        processed_result['method'] = 'Latent Dirichlet Allocation'
+                    elif 'nmf' in key:
+                        processed_result['method'] = 'Non-Negative Matrix Factorization'
+                    elif 'cluster' in key:
+                        processed_result['method'] = 'Clustering-based Topic Modeling'
+                    else:
+                        processed_result['method'] = 'Topic Modeling'
+
+                # Ensure topics exist
+                if 'topics' not in processed_result:
+                    processed_result['topics'] = []
+
+                # Add language if not present
+                if 'language' not in processed_result:
+                    import re
+                    language_match = re.search(r'_(en|zh)$', key)
+                    processed_result['language'] = language_match.group(1) if language_match else 'unknown'
+
+            processed_results[key] = processed_result
+
+        return processed_results

@@ -4,7 +4,7 @@ Command line interface for the document analysis toolkit
 
 import os
 import shlex
-from core.engine.logging import debug, error, warning, info, trace, debug_print
+from core.engine.logging import debug, error, warning, info, trace, debug
 from core.engine.storage import StorageManager, VectorStoreInspector
 from core.engine.output import OutputManager
 import datetime
@@ -77,11 +77,11 @@ class CommandProcessor:
         except KeyboardInterrupt:
             print("\nExiting...")
         finally:
-            debug_print(self.config, "Command processing loop ended")
+            debug(self.config, "Command processing loop ended")
 
     def _handle_system_command(self, command, args):
         """Handle system commands with the new clear command"""
-        debug_print(self.config, f"Handling system command: {command} with args: {args}")
+        debug(self.config, f"Handling system command: {command} with args: {args}")
 
         # Handle aliases
         command = self._resolve_alias(command)
@@ -89,7 +89,7 @@ class CommandProcessor:
         # Special handling for exit/quit in query mode
         if (command == 'exit' or command == 'quit') and hasattr(self, 'query_engine') and self.query_engine.is_active():
             # Just exit query mode, not the whole application
-            debug_print(self.config, "Exit/quit command in query mode - deactivating query mode")
+            debug(self.config, "Exit/quit command in query mode - deactivating query mode")
             self.query_engine.deactivate()
             return
 
@@ -134,12 +134,12 @@ class CommandProcessor:
 
     def _cmd_quit(self):
         """Handle the quit command"""
-        debug_print(self.config, "Quit command received")
+        debug(self.config, "Quit command received")
         self.running = False
 
     def _cmd_help(self, args):
         """Display help information with the new clear command"""
-        debug_print(self.config, f"Help command with args: {args}")
+        debug(self.config, f"Help command with args: {args}")
 
         if not args:
             print("""
@@ -325,7 +325,7 @@ class CommandProcessor:
 
     def _cmd_show(self, args):
         """Handle the show command"""
-        debug_print(self.config, f"Show command with args: {args}")
+        debug(self.config, f"Show command with args: {args}")
 
         if not args:
             print("Usage: /show [status|cuda|config|ws|files|guide]")
@@ -357,13 +357,13 @@ class CommandProcessor:
 
     def _show_cuda(self):
         """Show CUDA status"""
-        debug_print(self.config, "Showing CUDA status")
+        debug(self.config, "Showing CUDA status")
         from core.engine.cuda import check_cuda_status
         check_cuda_status(self.config)
 
     def _show_config(self):
         """Show configuration details"""
-        debug_print(self.config, "Showing configuration")
+        debug(self.config, "Showing configuration")
         self.config.display()
 
     def _format_size(self, size_bytes):
@@ -375,7 +375,7 @@ class CommandProcessor:
 
     def _cmd_run(self, args):
         """Handle the run command"""
-        debug_print(self.config, f"Run command with args: {args}")
+        debug(self.config, f"Run command with args: {args}")
 
         if not args:
             print("Usage: /run [themes|query|grind|update|scan|merge|sentiment|topic] [options]")
@@ -421,7 +421,7 @@ class CommandProcessor:
 
     def _cmd_load(self, args):
         """Handle the load command"""
-        debug_print(self.config, f"Load command with args: {args}")
+        debug(self.config, f"Load command with args: {args}")
 
         if not args:
             print("Usage: /load <workspace>")
@@ -468,7 +468,7 @@ class CommandProcessor:
         Args:
             workspace (str): The workspace to load
         """
-        debug_print(self.config, f"Loading workspace: {workspace}")
+        debug(self.config, f"Loading workspace: {workspace}")
 
         # Check if workspace directories exist
         import os
@@ -505,7 +505,7 @@ class CommandProcessor:
 
     def _load_guide(self, guide_name):
         """Load a guide from guides.txt"""
-        debug_print(self.config, f"Loading guide: {guide_name}")
+        debug(self.config, f"Loading guide: {guide_name}")
 
         try:
             with open("guides.txt", "r", encoding="utf-8") as file:
@@ -537,7 +537,7 @@ class CommandProcessor:
 
     def _cmd_save(self, args):
         """Handle the save command"""
-        debug_print(self.config, f"Save command with args: {args}")
+        debug(self.config, f"Save command with args: {args}")
 
         if not args:
             print("Usage: /save [start|stop|buffer]")
@@ -556,7 +556,7 @@ class CommandProcessor:
 
     def _start_saving(self):
         """Start saving session output"""
-        debug_print(self.config, "Starting session saving")
+        debug(self.config, "Starting session saving")
 
         if self.saving_session:
             print("Session saving is already active")
@@ -568,7 +568,7 @@ class CommandProcessor:
 
     def _stop_saving(self):
         """Stop saving session output"""
-        debug_print(self.config, "Stopping session saving")
+        debug(self.config, "Stopping session saving")
 
         if not self.saving_session:
             print("Session saving is not active")
@@ -580,7 +580,7 @@ class CommandProcessor:
 
     def _save_buffer(self):
         """Save last command output buffer"""
-        debug_print(self.config, "Saving output buffer")
+        debug(self.config, "Saving output buffer")
 
         filepath = self.output_manager.save_buffer(self.current_workspace)
         if filepath:
@@ -590,7 +590,7 @@ class CommandProcessor:
 
     def _cmd_config(self, args):
         """Handle the config command"""
-        debug_print(self.config, f"Config command with args: {args}")
+        debug(self.config, f"Config command with args: {args}")
 
         if not args:
             print("Usage: /config [llm|embed|kval|debug|storage|output] [value]")
@@ -656,7 +656,7 @@ class CommandProcessor:
 
     def _cmd_inspect(self, args):
         """Handle the inspect command"""
-        debug_print(self.config, f"Inspect command with args: {args}")
+        debug(self.config, f"Inspect command with args: {args}")
 
         if not args:
             print("Usage: /inspect [workspace|ws|documents|vectorstore|vdb|query|rebuild|fix]")
@@ -758,7 +758,7 @@ class CommandProcessor:
 
     def _show_status(self):
         """Show system status with compact colored formatting"""
-        debug_print(self.config, "Showing system status")
+        debug(self.config, "Showing system status")
 
         self.output_manager.print_formatted('header', "SYSTEM STATUS")
 
@@ -779,7 +779,7 @@ class CommandProcessor:
 
     def _show_workspace(self):
         """Show workspace details with compact colored formatting"""
-        debug_print(self.config, "Showing workspace details")
+        debug(self.config, "Showing workspace details")
 
         self.output_manager.print_formatted('header', "WORKSPACES")
 
@@ -811,7 +811,7 @@ class CommandProcessor:
 
     def _show_files(self):
         """Show files in the current workspace with compact colored formatting"""
-        debug_print(self.config, "Showing workspace files")
+        debug(self.config, "Showing workspace files")
 
         import os
         doc_dir = os.path.join("body", self.current_workspace)
@@ -866,7 +866,7 @@ class CommandProcessor:
         Args:
             command_string (str): The command to process
         """
-        debug_print(self.config, f"Processing command: {command_string}")
+        debug(self.config, f"Processing command: {command_string}")
 
         # Echo the command to the output manager with red color
         self.output_manager.print_formatted('command', command_string, color='red')
@@ -899,7 +899,7 @@ class CommandProcessor:
 
     def _cmd_explain(self, args):
         """Handle the explain command for analysis interpretation"""
-        debug_print(self.config, f"Explain command with args: {args}")
+        debug(self.config, f"Explain command with args: {args}")
 
         if not args:
             print("Usage: /explain [themes|topics|sentiment|session] [question]")
@@ -997,7 +997,7 @@ class CommandProcessor:
         Args:
             args (List[str]): Command arguments
         """
-        debug_print(self.config, f"Clear command with args: {args}")
+        debug(self.config, f"Clear command with args: {args}")
 
         if not args:
             print("Usage: /clear [logs|vdb|cache|all] [workspace]")
@@ -1054,9 +1054,9 @@ class CommandProcessor:
         for file in log_files:
             try:
                 os.remove(file)
-                debug_print(self.config, f"Removed log file: {file}")
+                debug(self.config, f"Removed log file: {file}")
             except Exception as e:
-                debug_print(self.config, f"Error removing file {file}: {str(e)}")
+                debug(self.config, f"Error removing file {file}: {str(e)}")
 
         print(f"Cleared {len(log_files)} log files for workspace '{workspace}'")
 
@@ -1084,7 +1084,7 @@ class CommandProcessor:
             shutil.copytree(vector_dir, backup_dir)
             print(f"Created backup of vector database at: {backup_dir}")
         except Exception as e:
-            debug_print(self.config, f"Error creating backup: {str(e)}")
+            debug(self.config, f"Error creating backup: {str(e)}")
             # Continue with deletion even if backup fails
 
         # Delete vector database
@@ -1093,7 +1093,7 @@ class CommandProcessor:
             os.makedirs(vector_dir)  # Recreate empty directory
             print(f"Cleared vector database for workspace '{workspace}'")
         except Exception as e:
-            debug_print(self.config, f"Error clearing vector database: {str(e)}")
+            debug(self.config, f"Error clearing vector database: {str(e)}")
             print(f"Error clearing vector database: {str(e)}")
 
     def _clear_cache(self, workspace):
@@ -1125,8 +1125,8 @@ class CommandProcessor:
                 try:
                     os.remove(file)
                     cleared_count += 1
-                    debug_print(self.config, f"Removed cache file: {file}")
+                    debug(self.config, f"Removed cache file: {file}")
                 except Exception as e:
-                    debug_print(self.config, f"Error removing file {file}: {str(e)}")
+                    debug(self.config, f"Error removing file {file}: {str(e)}")
 
         print(f"Cleared {cleared_count} cache files for workspace '{workspace}'")

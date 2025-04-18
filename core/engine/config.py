@@ -4,7 +4,7 @@ Configuration management for the document analysis toolkit
 
 import os
 import yaml
-from core.engine.logging import debug_print,error, info, warning
+from core.engine.logging import debug,error, info, warning
 
 class Config:
     """Configuration management class"""
@@ -13,7 +13,7 @@ class Config:
         """Initialize configuration from file"""
         self.config_path = config_path
         self.loaded_guides = {}
-        self.version = '0.8.5'
+        self.version = '0.8.8'
 
         # Load configuration
         try:
@@ -109,7 +109,7 @@ class Config:
         
         # Debug output
         if self.get('system.debug'):
-            debug_print(self, f"Configuration updated: {path} = {value}")
+            debug(self, f"Configuration updated: {path} = {value}")
     
     def _save_config(self):
         """Save the configuration to file"""

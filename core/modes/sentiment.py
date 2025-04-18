@@ -6,7 +6,7 @@ import os
 import numpy as np
 from collections import Counter, defaultdict
 from typing import Dict, List, Any, Optional
-from core.engine.logging import debug_print,warning,info
+from core.engine.logging import debug,warning,info
 from core.engine.storage import StorageManager
 from core.engine.output import OutputManager
 from core.language.processor import TextProcessor
@@ -51,9 +51,9 @@ class SentimentAnalyzer:
             from core.connectors.connector_factory import ConnectorFactory
             self.factory = ConnectorFactory(config)
             self.llm_connector = self.factory.get_llm_connector()
-            debug_print(config, "LLM connector factory initialized for sentiment analysis")
+            debug(config, "LLM connector factory initialized for sentiment analysis")
         except Exception as e:
-            debug_print(config, f"Error initializing ConnectorFactory: {str(e)}")
+            debug(config, f"Error initializing ConnectorFactory: {str(e)}")
             self.factory = None
             self.llm_connector = None
 
@@ -72,20 +72,20 @@ class SentimentAnalyzer:
                     model="distilbert-base-uncased-finetuned-sst-2-english",
                     truncation=True
                 )
-                debug_print(config, "Initialized English sentiment analyzer with transformers")
+                debug(config, "Initialized English sentiment analyzer with transformers")
             except Exception as e:
-                debug_print(config, f"Error initializing English sentiment analyzer: {str(e)}")
+                debug(config, f"Error initializing English sentiment analyzer: {str(e)}")
 
         # Initialize NLTK VADER sentiment analyzer for English if available
         self.vader_analyzer = None
         if NLTK_AVAILABLE:
             try:
                 self.vader_analyzer = SentimentIntensityAnalyzer()
-                debug_print(config, "Initialized VADER sentiment analyzer")
+                debug(config, "Initialized VADER sentiment analyzer")
             except Exception as e:
-                debug_print(config, f"Error initializing VADER sentiment analyzer: {str(e)}")
+                debug(config, f"Error initializing VADER sentiment analyzer: {str(e)}")
 
-        debug_print(config, "Sentiment analyzer initialized")
+        debug(config, "Sentiment analyzer initialized")
 
     def _load_chinese_sentiment_lexicon(self):
         """Load Chinese sentiment lexicon from file"""
@@ -99,7 +99,7 @@ class SentimentAnalyzer:
         lexicon_dir = 'lexicon'
         if not os.path.exists(lexicon_dir):
             os.makedirs(lexicon_dir)
-            debug_print(self.config, f"Created lexicon directory: {lexicon_dir}")
+            debug(self.config, f"Created lexicon directory: {lexicon_dir}")
 
         # Try to load custom Chinese sentiment lexicon if available
         try:
@@ -112,7 +112,7 @@ class SentimentAnalyzer:
                         if word:
                             lexicon['positive'].add(word)
                             lexicon['intensity'][word] = 1.0
-                debug_print(self.config, f"Loaded {len(lexicon['positive'])} Chinese positive sentiment words")
+                debug(self.config, f"Loaded {len(lexicon['positive'])} Chinese positive sentiment words")
 
             # Check for negative words
             negative_path = os.path.join(lexicon_dir, 'chinese_negative.txt')
@@ -123,11 +123,11 @@ class SentimentAnalyzer:
                         if word:
                             lexicon['negative'].add(word)
                             lexicon['intensity'][word] = -1.0
-                debug_print(self.config, f"Loaded {len(lexicon['negative'])} Chinese negative sentiment words")
+                debug(self.config, f"Loaded {len(lexicon['negative'])} Chinese negative sentiment words")
 
             # If no custom lexicon, use a small built-in lexicon
             if not lexicon['positive'] and not lexicon['negative']:
-                debug_print(self.config, "No Chinese sentiment lexicon found, using built-in minimal lexicon")
+                debug(self.config, "No Chinese sentiment lexicon found, using built-in minimal lexicon")
                 # Basic positive words
                 positive_words = ["好", "喜欢", "棒", "优秀", "满意", "快乐", "赞", "支持", "成功", "高兴"]
                 for word in positive_words:
@@ -140,7 +140,7 @@ class SentimentAnalyzer:
                     lexicon['negative'].add(word)
                     lexicon['intensity'][word] = -1.0
         except Exception as e:
-            debug_print(self.config, f"Error loading Chinese sentiment lexicon: {str(e)}")
+            debug(self.config, f"Error loading Chinese sentiment lexicon: {str(e)}")
             # Set up minimal default lexicon
             lexicon['positive'] = set(["好", "喜欢", "优秀", "满意"])
             lexicon['negative'] = set(["不", "坏", "差", "失败"])
@@ -159,7 +159,7 @@ class SentimentAnalyzer:
             workspace (str): The workspace to analyze
             method (str): Analysis method ('all', 'basic', 'advanced')
         """
-        debug_print(self.config, f"Performing sentiment analysis on workspace '{workspace}' using method '{method}'")
+        debug(self.config, f"Performing sentiment analysis on workspace '{workspace}' using method '{method}'")
 
         # Validate method
         valid_methods = ['all', 'basic', 'advanced']
@@ -213,7 +213,7 @@ class SentimentAnalyzer:
         Returns:
             Tuple: (processed documents, language counts)
         """
-        debug_print(self.config, "Extracting and preprocessing document content")
+        debug(self.config, "Extracting and preprocessing document content")
 
         doc_contents = []
         doc_languages = Counter()
@@ -229,7 +229,7 @@ class SentimentAnalyzer:
 
             # Skip empty documents
             if not content or len(content.strip()) == 0:
-                debug_print(self.config, f"Skipping empty document: {source}")
+                debug(self.config, f"Skipping empty document: {source}")
                 continue
 
             # Use raw content for sentiment analysis (better than processed content which removes stopwords)
@@ -269,7 +269,7 @@ class SentimentAnalyzer:
         Returns:
             Dict: Analysis results
         """
-        debug_print(self.config, "Performing basic sentiment analysis")
+        debug(self.config, "Performing basic sentiment analysis")
 
         # Initialize results structure
         results = {
@@ -360,7 +360,7 @@ class SentimentAnalyzer:
 
                 return sentiment_score, sentiment_label
             except Exception as e:
-                debug_print(self.config, f"Error in transformer sentiment analysis: {str(e)}")
+                debug(self.config, f"Error in transformer sentiment analysis: {str(e)}")
                 # Fall back to VADER or lexicon
 
         # Use VADER if available
@@ -381,7 +381,7 @@ class SentimentAnalyzer:
 
                 return compound_score, sentiment_label
             except Exception as e:
-                debug_print(self.config, f"Error in VADER sentiment analysis: {str(e)}")
+                debug(self.config, f"Error in VADER sentiment analysis: {str(e)}")
                 # Fall back to lexicon
 
         # Use simple lexicon as fallback
@@ -419,7 +419,7 @@ class SentimentAnalyzer:
 
                 return sentiment_score, sentiment_label
             except Exception as e:
-                debug_print(self.config, f"Error in Chinese transformer sentiment analysis: {str(e)}")
+                debug(self.config, f"Error in Chinese transformer sentiment analysis: {str(e)}")
                 # Fall back to lexicon
 
         # Use lexicon-based method as primary approach for Chinese
@@ -541,7 +541,7 @@ class SentimentAnalyzer:
         Returns:
             Dict: Analysis results
         """
-        debug_print(self.config, "Performing advanced sentiment analysis")
+        debug(self.config, "Performing advanced sentiment analysis")
 
         # Group documents by language
         docs_by_language = defaultdict(list)
@@ -650,7 +650,7 @@ class SentimentAnalyzer:
 
                 return avg_score, sentiment_label
             except Exception as e:
-                debug_print(self.config, f"Error in transformer sentiment analysis: {str(e)}")
+                debug(self.config, f"Error in transformer sentiment analysis: {str(e)}")
 
         # Try VADER if available
         if self.vader_analyzer:
@@ -682,7 +682,7 @@ class SentimentAnalyzer:
 
                 return avg_score, sentiment_label
             except Exception as e:
-                debug_print(self.config, f"Error in VADER sentiment analysis: {str(e)}")
+                debug(self.config, f"Error in VADER sentiment analysis: {str(e)}")
 
         # Fall back to lexicon approach
         return self._analyze_with_simple_lexicon(text, language)
@@ -751,7 +751,7 @@ class SentimentAnalyzer:
             try:
                 return self._extract_aspects_with_llm(text, language)
             except Exception as e:
-                debug_print(self.config, f"Error extracting aspects with LLM: {str(e)}")
+                debug(self.config, f"Error extracting aspects with LLM: {str(e)}")
 
         # Otherwise use rule-based extraction (simplified)
         if language == "zh":
@@ -842,11 +842,11 @@ Output only the list of aspects without any other explanation."""
                         "confidence": confidence
                     })
                 except Exception as e:
-                    debug_print(self.config, f"Error parsing aspect line: {line}, {str(e)}")
+                    debug(self.config, f"Error parsing aspect line: {line}, {str(e)}")
 
             return aspects
         except Exception as e:
-            debug_print(self.config, f"Error generating aspects with LLM: {str(e)}")
+            debug(self.config, f"Error generating aspects with LLM: {str(e)}")
             return []
 
     def _extract_chinese_aspects(self, text):
@@ -1114,7 +1114,7 @@ Please summarize the sentiment profile in 2-3 concise sentences, focusing on the
 
                 return summary.strip()
             except Exception as e:
-                debug_print(self.config, f"Error generating sentiment summary with LLM: {str(e)}")
+                debug(self.config, f"Error generating sentiment summary with LLM: {str(e)}")
 
         # Generate a template-based summary if LLM is not available
         try:
@@ -1142,7 +1142,7 @@ Please summarize the sentiment profile in 2-3 concise sentences, focusing on the
 
             return summary
         except Exception as e:
-            debug_print(self.config, f"Error generating template summary: {str(e)}")
+            debug(self.config, f"Error generating template summary: {str(e)}")
             return f"Document expresses {sentiment} sentiment with a {emotional_tone} emotional tone."
 
     def _output_results(self, workspace, results, method):
@@ -1154,7 +1154,7 @@ Please summarize the sentiment profile in 2-3 concise sentences, focusing on the
             results (Dict): Analysis results
             method (str): Analysis method
         """
-        debug_print(self.config, "Outputting sentiment analysis results")
+        debug(self.config, "Outputting sentiment analysis results")
 
         print("\nSentiment Analysis Results:")
 

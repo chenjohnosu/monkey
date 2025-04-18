@@ -3,7 +3,7 @@ Factory for creating and managing connectors
 """
 
 from typing import Dict, Any, Optional
-from core.engine.logging import debug_print,info
+from core.engine.logging import debug,info
 
 class ConnectorFactory:
     """Factory class for creating and managing connectors"""
@@ -12,7 +12,7 @@ class ConnectorFactory:
         """Initialize the connector factory"""
         self.config = config
         self.connectors = {}
-        debug_print(config, "Connector factory initialized")
+        debug(config, "Connector factory initialized")
         
     def get_vector_store_connector(self) -> Any:
         """
@@ -66,7 +66,7 @@ class ConnectorFactory:
             # Use LlamaIndex for LLM as well
             if 'llama_index_llm' not in self.connectors:
                 # Lazy import to avoid circular imports
-                debug_print(self.config, "Creating LlamaIndex LLM connector")
+                debug(self.config, "Creating LlamaIndex LLM connector")
                 
                 # Create a specialized LLM connector using LlamaIndex
                 try:
@@ -91,7 +91,7 @@ class ConnectorFactory:
                     # Store LLM instance for reuse
                     self.connectors['llama_index_llm'] = llm
                 except Exception as e:
-                    debug_print(self.config, f"Error creating LlamaIndex LLM connector: {str(e)}")
+                    debug(self.config, f"Error creating LlamaIndex LLM connector: {str(e)}")
                     # Fall back to Ollama connector
                     return self.get_llm_connector_by_name('ollama')
 
@@ -124,7 +124,7 @@ class ConnectorFactory:
             return self.connectors['llama_index_llm']
 
         else:
-            debug_print(self.config, f"Unknown LLM connector name: {name}")
+            debug(self.config, f"Unknown LLM connector name: {name}")
             return None
 
     def get_embedding_model(self, model_name=None):
@@ -165,7 +165,7 @@ class ConnectorFactory:
             return HuggingFaceEmbedding(model_name_or_path=model_path)
 
         except Exception as e:
-            debug_print(self.config, f"Error getting embedding model: {str(e)}")
+            debug(self.config, f"Error getting embedding model: {str(e)}")
             import traceback
-            debug_print(self.config, traceback.format_exc())
+            debug(self.config, traceback.format_exc())
             return None

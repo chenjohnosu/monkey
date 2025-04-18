@@ -8,7 +8,7 @@ import datetime
 import json
 from typing import List, Dict, Any, Optional
 from core.engine.utils import ensure_dir
-from core.engine.logging import debug_print,error,info,warning,trace,debug
+from core.engine.logging import debug,error,info,warning,trace,debug
 import shutil
 from datetime import datetime
 
@@ -24,7 +24,7 @@ class LlamaIndexConnector:
         # Explicitly configure embedding model to use local embeddings
         self._configure_local_embeddings()
 
-        debug_print(config, "LlamaIndex connector initialized")
+        debug(config, "LlamaIndex connector initialized")
 
     def _configure_local_embeddings(self):
         """

@@ -14,7 +14,7 @@ import sys
 import argparse
 from core.engine.cli import CommandProcessor
 from core.engine.config import Config
-from core.engine.logging import error, warning, info, trace, debug, debug_print
+from core.engine.logging import error, warning, info, trace, debug, debug
 
 def setup_directories():
     """Create necessary directories if they don't exist"""

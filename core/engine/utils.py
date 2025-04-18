@@ -14,8 +14,8 @@ import shutil
 import contextlib
 from functools import wraps
 
-# Import logging for debug_print usage
-from core.engine.logging import debug_print, error, warning, info, debug, trace
+# Import logging for debug usage
+from core.engine.logging import debug, error, warning, info, debug, trace
 
 
 # ===== FILE OPERATIONS =====
@@ -53,7 +53,7 @@ def get_file_content(filepath):
                 with open(filepath, 'r', encoding='latin-1') as file:
                     return file.read()
             except Exception as e:
-                debug_print(None, f"Failed to read file with latin-1 encoding: {filepath}, {str(e)}")
+                debug(None, f"Failed to read file with latin-1 encoding: {filepath}, {str(e)}")
                 return None
 
     # DOCX files
@@ -72,10 +72,10 @@ def get_file_content(filepath):
                         full_text.append(cell.text)
             return '\n'.join(full_text)
         except ImportError:
-            debug_print(None, f"python-docx library not installed. Install with: pip install python-docx")
+            debug(None, f"python-docx library not installed. Install with: pip install python-docx")
             return f"ERROR: python-docx not installed. Cannot extract DOCX content from {filepath}"
         except Exception as e:
-            debug_print(None, f"Failed to extract DOCX content: {filepath}, {str(e)}")
+            debug(None, f"Failed to extract DOCX content: {filepath}, {str(e)}")
             return None
 
     # PDF files
@@ -95,11 +95,11 @@ def get_file_content(filepath):
                 from pdfminer.high_level import extract_text
                 return extract_text(filepath)
             except ImportError:
-                debug_print(None,
+                debug(None,
                             f"PDF extraction libraries not installed. Install with: pip install PyPDF2 or pip install pdfminer.six")
                 return f"ERROR: PDF extraction libraries not installed. Cannot extract PDF content from {filepath}"
         except Exception as e:
-            debug_print(None, f"Failed to extract PDF content: {filepath}, {str(e)}")
+            debug(None, f"Failed to extract PDF content: {filepath}, {str(e)}")
             return None
 
     # HTML files
@@ -114,7 +114,7 @@ def get_file_content(filepath):
             text = re.sub('\\s+', ' ', text)
             return text.strip()
         except Exception as e:
-            debug_print(None, f"Failed to extract HTML content: {filepath}, {str(e)}")
+            debug(None, f"Failed to extract HTML content: {filepath}, {str(e)}")
             return None
     else:
         return None
@@ -211,7 +211,7 @@ def load_original_document(config, workspace, source_path):
     Returns:
         str: Original document content or None if not available
     """
-    debug_print(config, f"Loading original document: {source_path}")
+    debug(config, f"Loading original document: {source_path}")
 
     try:
         # Construct path to original file
@@ -221,14 +221,14 @@ def load_original_document(config, workspace, source_path):
             # Get content based on file type
             content = get_file_content(original_path)
             if content:
-                debug_print(config, f"Successfully loaded original content ({len(content)} chars)")
+                debug(config, f"Successfully loaded original content ({len(content)} chars)")
                 return content
             else:
-                debug_print(config, f"Failed to extract content from {original_path}")
+                debug(config, f"Failed to extract content from {original_path}")
         else:
-            debug_print(config, f"Original file not found: {original_path}")
+            debug(config, f"Original file not found: {original_path}")
     except Exception as e:
-        debug_print(config, f"Error loading original document: {str(e)}")
+        debug(config, f"Error loading original document: {str(e)}")
 
     return None
 
@@ -307,7 +307,7 @@ def configure_vectorizer(config, doc_count, language=None, chinese_stopwords=Non
         error("scikit-learn not available. Install with: pip install scikit-learn")
         return None
 
-    debug_print(config, f"Configuring TF-IDF vectorizer for {doc_count} documents in language: {language}")
+    debug(config, f"Configuring TF-IDF vectorizer for {doc_count} documents in language: {language}")
 
     # Determine if Chinese corpus
     is_chinese = language == "zh"
@@ -334,7 +334,7 @@ def configure_vectorizer(config, doc_count, language=None, chinese_stopwords=Non
         min_df = 2
         max_df = 0.7
 
-    debug_print(config, f"Using min_df={min_df}, max_df={max_df}")
+    debug(config, f"Using min_df={min_df}, max_df={max_df}")
 
     # Configure language-specific parameters
     if is_chinese:
@@ -385,7 +385,7 @@ def extract_keywords(config, texts, language="en", top_n=10, stopwords=None):
         error("scikit-learn not available. Install with: pip install scikit-learn")
         return []
 
-    debug_print(config, f"Extracting keywords from {len(texts)} texts in {language}")
+    debug(config, f"Extracting keywords from {len(texts)} texts in {language}")
 
     if not texts:
         return []
@@ -419,7 +419,7 @@ def extract_keywords(config, texts, language="en", top_n=10, stopwords=None):
 
         return keywords
     except Exception as e:
-        debug_print(config, f"Error extracting keywords: {str(e)}")
+        debug(config, f"Error extracting keywords: {str(e)}")
         return []
 
 
