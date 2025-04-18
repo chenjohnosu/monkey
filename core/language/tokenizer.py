@@ -1,11 +1,15 @@
 """
-Language-specific tokenization with enhanced Chinese support
+core/language/tokenizer.py - Central place for jieba initialization
 """
 
-from core.engine.logging import debug_print,warning
+# Create a new global initialization management for jieba
+# We'll use this file as the central place for jieba management
 
-# Global flag to track Jieba initialization
+from core.engine.logging import debug_print, warning
+
+# Global flag and instance to track Jieba initialization
 _JIEBA_INITIALIZED = False
+_JIEBA_INSTANCE = None
 
 # Import jieba for Chinese word segmentation if available
 try:
@@ -15,6 +19,45 @@ except ImportError:
     JIEBA_AVAILABLE = False
     warning("jieba not available, falling back to character-based tokenization for Chinese")
 
+def initialize_jieba():
+    """
+    Initialize jieba if it hasn't been initialized already.
+    This function should be called whenever jieba is needed.
+    """
+    global _JIEBA_INITIALIZED, _JIEBA_INSTANCE
+
+    if not JIEBA_AVAILABLE:
+        return None
+
+    if not _JIEBA_INITIALIZED:
+        debug_print(None, "Initializing Jieba dictionary (first time)")
+        # Redirect stdout to suppress jieba's initialization messages
+        import sys
+        import io
+        original_stdout = sys.stdout
+        sys.stdout = io.StringIO()  # Redirect to string buffer
+
+        try:
+            # Force loading the dictionary
+            jieba.lcut("初始化")
+            _JIEBA_INSTANCE = jieba
+            _JIEBA_INITIALIZED = True
+        finally:
+            # Restore stdout
+            sys.stdout = original_stdout
+
+    return _JIEBA_INSTANCE
+
+def get_jieba_instance():
+    """
+    Get the initialized jieba instance.
+    Always use this function instead of importing jieba directly.
+    """
+    if not JIEBA_AVAILABLE:
+        return None
+
+    return initialize_jieba()
+
 class Tokenizer:
     """Language-specific tokenization"""
 
@@ -23,9 +66,9 @@ class Tokenizer:
         self.config = config
         debug_print(config, "Tokenizer initialized")
 
-        # Initialize Jieba if needed
+        # Initialize Jieba once during tokenizer initialization
         if JIEBA_AVAILABLE:
-            self._ensure_jieba_initialized()
+            initialize_jieba()
 
     def tokenize(self, text, language=None):
         """
@@ -77,11 +120,11 @@ class Tokenizer:
         if JIEBA_AVAILABLE:
             debug_print(self.config, "Using jieba for Chinese word segmentation")
 
-            # Ensure Jieba is initialized
-            self._ensure_jieba_initialized()
+            # Get the initialized jieba instance
+            jieba_instance = get_jieba_instance()
 
             # Segment text into words
-            tokens = list(jieba.cut(text))
+            tokens = list(jieba_instance.cut(text))
 
             # Filter out empty tokens and spaces
             tokens = [token for token in tokens if token.strip()]
@@ -99,17 +142,6 @@ class Tokenizer:
                     tokens.append(char)
 
             return tokens
-
-    @staticmethod
-    def _ensure_jieba_initialized():
-        """Ensure Jieba is initialized only once"""
-        global _JIEBA_INITIALIZED
-
-        if not _JIEBA_INITIALIZED and JIEBA_AVAILABLE:
-            debug_print(None, "Initializing Jieba dictionary (first time)")
-            # Jieba is lazy-loaded, accessing any function will initialize it
-            jieba.lcut("初始化")  # This forces Jieba to load its dictionary
-            _JIEBA_INITIALIZED = True
 
     def get_ngrams(self, tokens, n=2):
         """
@@ -145,10 +177,9 @@ class ChineseTokenizer:
         else:
             self.stopwords = self.space_chars.copy()
 
-        # Initialize Jieba if needed
+        # Initialize Jieba once
         if self.use_jieba:
-            # Use the static method from Tokenizer
-            Tokenizer._ensure_jieba_initialized()
+            initialize_jieba()
 
     def __call__(self, text):
         """
@@ -165,7 +196,8 @@ class ChineseTokenizer:
 
         # Tokenize based on available libraries
         if self.use_jieba:
-            tokens = list(jieba.cut(text))
+            jieba_instance = get_jieba_instance()
+            tokens = list(jieba_instance.cut(text))
         else:
             # Character-based fallback
             tokens = [char for char in text if '\u4e00' <= char <= '\u9fff']

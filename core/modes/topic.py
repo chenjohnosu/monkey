@@ -4,7 +4,6 @@ Topic modeling module for extracting main topics from document collections
 
 import os
 import re
-import numpy as np
 from collections import Counter, defaultdict
 from typing import Dict, List, Any, Optional
 from datetime import datetime
@@ -32,13 +31,6 @@ try:
 except ImportError:
     CLUSTERING_AVAILABLE = False
     warning("umap and/or hdbscan not available, some clustering features will be limited")
-
-try:
-    import jieba
-    JIEBA_AVAILABLE = True
-except ImportError:
-    JIEBA_AVAILABLE = False
-    warning("jieba not available, falling back to character-based segmentation for Chinese")
 
 class TopicModeler:
 

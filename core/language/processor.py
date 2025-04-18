@@ -1,19 +1,22 @@
 """
-Text preprocessing module with enhanced Chinese language support
+core/language/processor.py - Update TextProcessor initialization
 """
 
 import os
-import re
+import re  # Ensure re is imported for the regex operations
 from core.engine.logging import debug_print,warning
 from core.language.detector import LanguageDetector
 
-# Import jieba for Chinese word segmentation if available
-try:
-    import jieba
-    JIEBA_AVAILABLE = True
-except ImportError:
-    JIEBA_AVAILABLE = False
-    warning("jieba not available, falling back to character-based segmentation for Chinese")
+# Import the centralized jieba availability constant and helper functions
+from core.language.tokenizer import JIEBA_AVAILABLE, get_jieba_instance
+
+# Remove the jieba import attempt here
+# try:
+#     import jieba
+#     JIEBA_AVAILABLE = True
+# except ImportError:
+#     JIEBA_AVAILABLE = False
+#     warning("jieba not available, falling back to character-based segmentation for Chinese")
 
 
 class TextProcessor:
@@ -90,7 +93,11 @@ class TextProcessor:
         # Count tokens appropriately based on language
         if language == 'zh':
             if JIEBA_AVAILABLE:
-                token_count = len(list(jieba.cut(processed_text)))
+                jieba_instance = get_jieba_instance()
+                if jieba_instance:
+                    token_count = len(list(jieba_instance.cut(processed_text)))
+                else:
+                    token_count = len(processed_text)  # Character count as fallback
             else:
                 token_count = len(processed_text)  # Character count as fallback
         else:
@@ -112,7 +119,6 @@ class TextProcessor:
         text = text.lower()
 
         # Remove punctuation and special characters
-        import re
         text = re.sub(r'[^\w\s]', ' ', text)
 
         # Remove extra whitespace
@@ -139,11 +145,17 @@ class TextProcessor:
         # Remove stopwords if available
         if 'zh' in self.stopwords and self.stopwords['zh']:
             if JIEBA_AVAILABLE:
-                # Use jieba for word segmentation
-                segments = list(jieba.cut(text))
-                # Filter out stopwords
-                segments = [word for word in segments if word not in self.stopwords['zh']]
-                text = ''.join(segments)
+                # Use jieba for word segmentation using our centralized instance
+                jieba_instance = get_jieba_instance()
+                if jieba_instance:
+                    segments = list(jieba_instance.cut(text))
+                    # Filter out stopwords
+                    segments = [word for word in segments if word not in self.stopwords['zh']]
+                    text = ''.join(segments)
+                else:
+                    # Character-based stopword removal as fallback
+                    for stopword in self.stopwords['zh']:
+                        text = text.replace(stopword, '')
             else:
                 # Character-based stopword removal as fallback
                 for stopword in self.stopwords['zh']:

@@ -73,24 +73,11 @@ class ThemeAnalyzer:
         # Prepare Chinese and English stopwords
         self._prepare_stopwords()
 
+        # Use the centralized jieba initialization
+        from core.language.tokenizer import JIEBA_AVAILABLE, initialize_jieba
         if JIEBA_AVAILABLE:
-            try:
-                # Redirect jieba's stdout to suppress initialization messages
-                import sys
-                import io
-                original_stdout = sys.stdout
-                sys.stdout = io.StringIO()  # Redirect to string buffer
-
-                # Pre-initialize jieba
-                import jieba
-                jieba.initialize()
-
-                # Restore stdout
-                sys.stdout = original_stdout
-
-                debug_print(config, "Jieba initialized for Chinese text processing")
-            except Exception as e:
-                debug_print(config, f"Error initializing jieba: {str(e)}")
+            initialize_jieba()  # Initialize once using our centralized function
+            debug_print(config, "Jieba initialized for Chinese text processing")
 
         debug_print(config, "Theme analyzer initialized")
 
@@ -523,40 +510,44 @@ class ThemeAnalyzer:
             print(f"Found {len(keywords)} keywords in Chinese documents (bigrams and trigrams)")
 
             # If jieba is available, try to extract word-based keywords
-            if JIEBA_AVAILABLE and jieba and len(docs) >= 2:
+            from core.language.tokenizer import JIEBA_AVAILABLE, get_jieba_instance
+            if JIEBA_AVAILABLE and len(docs) >= 2:
                 print("Using jieba for additional Chinese keyword extraction")
 
-                # Collect all text
-                all_text = " ".join([doc["processed_content"] for doc in docs if doc.get("processed_content")])
+                # Get the initialized jieba instance
+                jieba_instance = get_jieba_instance()
+                if jieba_instance:
+                    # Collect all text
+                    all_text = " ".join([doc["processed_content"] for doc in docs if doc.get("processed_content")])
 
-                # Tokenize with jieba - using the already initialized instance
-                words = list(jieba.cut(all_text))
-                word_counts = Counter(words)
+                    # Tokenize with jieba - using the centralized instance
+                    words = list(jieba_instance.cut(all_text))
+                    word_counts = Counter(words)
 
-                # Add top words
-                for word, count in word_counts.most_common(15):
-                    # Skip short words and stopwords
-                    if len(word) < 2 or word in self.chinese_stopwords:
-                        continue
+                    # Add top words
+                    for word, count in word_counts.most_common(15):
+                        # Skip short words and stopwords
+                        if len(word) < 2 or word in self.chinese_stopwords:
+                            continue
 
-                    # Skip non-Chinese words
-                    if not any('\u4e00' <= char <= '\u9fff' for char in word):
-                        continue
+                        # Skip non-Chinese words
+                        if not any('\u4e00' <= char <= '\u9fff' for char in word):
+                            continue
 
-                    score = count / len(words) if words else 0
+                        score = count / len(words) if words else 0
 
-                    # Determine which documents contain this word
-                    doc_sources_list = []
-                    for doc_idx, doc in enumerate(docs):
-                        if doc.get("processed_content") and word in doc["processed_content"]:
-                            doc_sources_list.append(doc_sources[doc_idx])
+                        # Determine which documents contain this word
+                        doc_sources_list = []
+                        for doc_idx, doc in enumerate(docs):
+                            if doc.get("processed_content") and word in doc["processed_content"]:
+                                doc_sources_list.append(doc_sources[doc_idx])
 
-                    keywords.append({
-                        "keyword": word,
-                        "score": float(score),
-                        "documents": len(doc_sources_list),
-                        "doc_sources": doc_sources_list
-                    })
+                        keywords.append({
+                            "keyword": word,
+                            "score": float(score),
+                            "documents": len(doc_sources_list),
+                            "doc_sources": doc_sources_list
+                        })
 
             # Sort keywords by score
             keywords.sort(key=lambda x: x["score"], reverse=True)
@@ -908,10 +899,15 @@ class ThemeAnalyzer:
             text = doc.get('processed_content', '')
 
             # Use jieba for word segmentation if available
-            # Note: jieba should already be initialized at this point
-            if JIEBA_AVAILABLE and jieba:
-                # Use the global jieba instance that was already initialized
-                words = list(jieba.cut(text))
+            from core.language.tokenizer import JIEBA_AVAILABLE, get_jieba_instance
+            if JIEBA_AVAILABLE:
+                # Get the centralized jieba instance
+                jieba_instance = get_jieba_instance()
+                if jieba_instance:
+                    words = list(jieba_instance.cut(text))
+                else:
+                    # Fallback to character-based extraction
+                    words = list(text)
             else:
                 # Fallback to character-based extraction
                 words = list(text)

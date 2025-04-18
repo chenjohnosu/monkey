@@ -10,6 +10,7 @@ from core.engine.logging import debug_print,warning,info
 from core.engine.storage import StorageManager
 from core.engine.output import OutputManager
 from core.language.processor import TextProcessor
+from core.language.tokenizer import JIEBA_AVAILABLE, get_jieba_instance
 
 # Try to import sentiment analysis libraries - use what's available
 try:
@@ -34,16 +35,6 @@ try:
 except ImportError:
     NLTK_AVAILABLE = False
     warning("NLTK not available, falling back to transformers or lexicon-based sentiment analysis")
-
-# Import jieba for Chinese text segmentation if available
-try:
-    import jieba
-
-    JIEBA_AVAILABLE = True
-except ImportError:
-    JIEBA_AVAILABLE = False
-    warning("jieba not available, Chinese sentiment analysis may be limited")
-
 
 class SentimentAnalyzer:
     """Analyzes sentiment in document content with support for English and Chinese"""
@@ -446,7 +437,12 @@ class SentimentAnalyzer:
         """
         # Segment text if jieba is available
         if JIEBA_AVAILABLE:
-            words = list(jieba.cut(text))
+            jieba_instance = get_jieba_instance()
+            if jieba_instance:
+                words = list(jieba_instance.cut(text))
+            else:
+                # Character-based approach as fallback
+                words = [char for char in text]
         else:
             # Character-based approach as fallback
             words = [char for char in text]
