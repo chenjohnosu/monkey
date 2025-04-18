@@ -8,7 +8,7 @@ import datetime
 import json
 from typing import List, Dict, Any, Optional
 from core.engine.utils import ensure_dir
-from core.engine.logging import debug_print,error,info,warning
+from core.engine.logging import debug_print,error,info,warning,trace,debug
 import shutil
 from datetime import datetime
 
@@ -56,19 +56,19 @@ class LlamaIndexConnector:
                 Settings.embed_model = embed_model
                 info(f"Successfully configured embedding model: {model_name}")
             except Exception as e:
-                print(f"Error creating main embedding model: {str(e)}")
+                error(f"Error creating main embedding model: {str(e)}")
                 # Fall back to a simpler model
                 try:
-                    print("Falling back to bge-small-en model")
+                    warning("Falling back to bge-small-en model")
                     Settings.embed_model = HuggingFaceEmbedding(model_name="BAAI/bge-small-en")
-                    print("Successfully configured fallback embedding model")
+                    info("Successfully configured fallback embedding model")
                 except Exception as e2:
-                    print(f"Error creating fallback embedding model: {str(e2)}")
+                    error(f"Error creating fallback embedding model: {str(e2)}")
 
         except Exception as e:
-            print(f"Error configuring local embeddings: {str(e)}")
+            error(f"Error configuring local embeddings: {str(e)}")
             import traceback
-            print(traceback.format_exc())
+            trace(traceback.format_exc())
 
     def add_documents(self, workspace: str, documents: List[Dict[str, Any]]) -> bool:
         """
@@ -81,7 +81,7 @@ class LlamaIndexConnector:
         Returns:
             bool: Success flag
         """
-        print(f"Adding {len(documents)} documents to LlamaIndex vector store")
+        info(f"Adding {len(documents)} documents to LlamaIndex vector store")
 
         try:
             # Import necessary LlamaIndex components
@@ -94,14 +94,14 @@ class LlamaIndexConnector:
 
             # Ensure vector store is initialized
             if self.index is None:
-                print("Index not initialized, initializing now")
+                warning("Index not initialized, initializing now")
                 if not self.init_vector_store(workspace):
-                    print("Failed to initialize vector store")
+                    error("Failed to initialize vector store")
                     return False
 
             # Convert documents to LlamaIndex format with processed content
             llama_docs = []
-            print(f"Converting {len(documents)} documents to LlamaIndex format")
+            info(f"Converting {len(documents)} documents to LlamaIndex format")
 
             # Track source paths for deduplication
             document_sources = {}
@@ -127,18 +127,18 @@ class LlamaIndexConnector:
                 )
                 llama_docs.append(llama_doc)
 
-            print(f"Created {len(llama_docs)} LlamaIndex documents")
+            info(f"Created {len(llama_docs)} LlamaIndex documents")
 
             # Print document count before adding
             doc_count_before = 0
             if self.index and hasattr(self.index, 'docstore') and self.index.docstore:
                 doc_count_before = len(self.index.docstore.docs) if self.index.docstore.docs else 0
 
-            print(f"Documents in index before adding: {doc_count_before}")
+            info(f"Documents in index before adding: {doc_count_before}")
 
             # Check if we have a valid index with documents
             if doc_count_before > 0:
-                print(f"Adding documents to existing index with {doc_count_before} documents")
+                info(f"Adding documents to existing index with {doc_count_before} documents")
 
                 # Check for duplicate documents by source path
                 existing_sources = set()
@@ -152,7 +152,7 @@ class LlamaIndexConnector:
                     if doc.metadata.get('source') not in existing_sources:
                         new_docs_to_add.append(doc)
                     else:
-                        print(f"Skipping duplicate document: {doc.metadata.get('source')}")
+                        info(f"Skipping duplicate document: {doc.metadata.get('source')}")
 
                 print(f"Found {len(new_docs_to_add)} new documents out of {len(llama_docs)} total")
 
@@ -164,7 +164,7 @@ class LlamaIndexConnector:
                     print("No new documents to add")
 
             else:
-                print("Creating new index for documents")
+                info("Creating new index for documents")
                 # Use centralized storage context creation
                 self.storage_context = self._get_storage_context(workspace, create_new=True)
 
@@ -180,12 +180,12 @@ class LlamaIndexConnector:
             print(f"Documents in index after adding: {doc_count_after}")
 
             # Persist the updated index
-            print("Persisting index to disk")
+            info("Persisting index to disk")
             if self.storage_context:
                 self.storage_context.persist(persist_dir=vector_dir)
-                print(f"Index persisted successfully to {vector_dir}")
+                info(f"Index persisted successfully to {vector_dir}")
             else:
-                print("ERROR: No storage context available for persistence!")
+                error("ERROR: No storage context available for persistence!")
                 return False
 
             # Save additional metadata for debugging
@@ -207,9 +207,9 @@ class LlamaIndexConnector:
             return True
 
         except Exception as e:
-            print(f"Error adding documents to LlamaIndex vector store: {str(e)}")
+            error(f"Error adding documents to LlamaIndex vector store: {str(e)}")
             import traceback
-            print(traceback.format_exc())
+            trace(traceback.format_exc())
             return False
 
     def query(self, workspace: str, query_text: str, k: int = 5) -> List[Dict[str, Any]]:
@@ -224,31 +224,31 @@ class LlamaIndexConnector:
         Returns:
             List[Dict]: Retrieved documents with relevance scores
         """
-        print(f"Querying LlamaIndex vector store with k={k}, query: '{query_text}'")
+        info(f"Querying LlamaIndex vector store with k={k}, query: '{query_text}'")
 
         # Initialize or load the vector store if needed
         if self.index is None:
-            print("Index not initialized, loading vector store")
+            warning("Index not initialized, loading vector store")
             if not self.init_vector_store(workspace):
-                print("Failed to load vector store for query")
+                error("Failed to load vector store for query")
                 return []
 
         try:
             # Check if the index has documents
             if not hasattr(self.index, 'docstore') or not self.index.docstore.docs:
-                print("WARNING: Index has no documents!")
+                warning("WARNING: Index has no documents!")
                 return []
 
             doc_count = len(self.index.docstore.docs)
-            print(f"Index has {doc_count} documents")
+            info(f"Index has {doc_count} documents")
 
             # Perform the query
-            print(f"Creating retriever with similarity_top_k={k}")
+            info(f"Creating retriever with similarity_top_k={k}")
             retriever = self.index.as_retriever(similarity_top_k=k)
 
-            print("Retrieving nodes for query")
+            info("Retrieving nodes for query")
             nodes = retriever.retrieve(query_text)
-            print(f"Retrieved {len(nodes)} nodes")
+            info(f"Retrieved {len(nodes)} nodes")
 
             # Convert to output format
             results = []
@@ -262,16 +262,16 @@ class LlamaIndexConnector:
 
                 # Print sample node info
                 if i == 0:
-                    print(f"Sample node - Score: {node.score if hasattr(node, 'score') else 'N/A'}")
-                    print(f"Sample node - Metadata: {node.metadata}")
-                    print(f"Sample node - Text preview: {node.text[:100]}...")
+                    debug(f"Sample node - Score: {node.score if hasattr(node, 'score') else 'N/A'}")
+                    debug(f"Sample node - Metadata: {node.metadata}")
+                    debug(f"Sample node - Text preview: {node.text[:100]}...")
 
             return results
 
         except Exception as e:
-            print(f"Error querying LlamaIndex vector store: {str(e)}")
+            error(f"Error querying LlamaIndex vector store: {str(e)}")
             import traceback
-            print(traceback.format_exc())
+            trace(traceback.format_exc())
             return []
 
     def inspect_index_store(self, workspace):

@@ -522,9 +522,12 @@ class MonkeyTUI(App):
         self.command_running = True
         self.current_command = value
 
+        # Clear the main output log first
+        output_log = self.query_one(OutputLog)
+        output_log.clear()
+
         # Show the command being executed
-        log = self.query_one(OutputLog)
-        log.write(f"> {value}")
+        output_log.write(f"> {value}")
 
         # Run the command in a separate thread to prevent UI freezing
         def run_command():
@@ -541,10 +544,12 @@ class MonkeyTUI(App):
                 # Check query mode status after command executes
                 self._check_query_mode()
             except Exception as e:
-                logger.error(f"Error processing command: {str(e)}")
+                from core.engine.logging import error
+                error(f"Error processing command: {str(e)}")
                 import traceback
-                logger.debug(traceback.format_exc())
-                self.call_from_thread(lambda: log.write(f"Error processing command: {str(e)}"))
+                from core.engine.logging import debug
+                debug(traceback.format_exc())
+                self.call_from_thread(lambda: output_log.write(f"Error processing command: {str(e)}"))
             finally:
                 self.command_running = False
                 self.current_command = None
