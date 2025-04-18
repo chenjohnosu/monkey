@@ -4,6 +4,9 @@ Language-specific tokenization with enhanced Chinese support
 
 from core.engine.logging import debug_print,warning
 
+# Global flag to track Jieba initialization
+_JIEBA_INITIALIZED = False
+
 # Import jieba for Chinese word segmentation if available
 try:
     import jieba
@@ -19,6 +22,10 @@ class Tokenizer:
         """Initialize the tokenizer"""
         self.config = config
         debug_print(config, "Tokenizer initialized")
+
+        # Initialize Jieba if needed
+        if JIEBA_AVAILABLE:
+            self._ensure_jieba_initialized()
 
     def tokenize(self, text, language=None):
         """
@@ -69,6 +76,10 @@ class Tokenizer:
         # Use jieba for word segmentation if available
         if JIEBA_AVAILABLE:
             debug_print(self.config, "Using jieba for Chinese word segmentation")
+
+            # Ensure Jieba is initialized
+            self._ensure_jieba_initialized()
+
             # Segment text into words
             tokens = list(jieba.cut(text))
 
@@ -88,6 +99,17 @@ class Tokenizer:
                     tokens.append(char)
 
             return tokens
+
+    @staticmethod
+    def _ensure_jieba_initialized():
+        """Ensure Jieba is initialized only once"""
+        global _JIEBA_INITIALIZED
+
+        if not _JIEBA_INITIALIZED and JIEBA_AVAILABLE:
+            debug_print(None, "Initializing Jieba dictionary (first time)")
+            # Jieba is lazy-loaded, accessing any function will initialize it
+            jieba.lcut("初始化")  # This forces Jieba to load its dictionary
+            _JIEBA_INITIALIZED = True
 
     def get_ngrams(self, tokens, n=2):
         """
@@ -122,6 +144,11 @@ class ChineseTokenizer:
             self.stopwords.update(self.space_chars)
         else:
             self.stopwords = self.space_chars.copy()
+
+        # Initialize Jieba if needed
+        if self.use_jieba:
+            # Use the static method from Tokenizer
+            Tokenizer._ensure_jieba_initialized()
 
     def __call__(self, text):
         """

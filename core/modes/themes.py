@@ -3,6 +3,8 @@ Theme analysis module with enhanced content-based processing
 """
 
 import os
+import sys
+import io
 import numpy as np
 from collections import Counter, defaultdict
 from typing import Dict, List, Any, Tuple
@@ -23,10 +25,23 @@ from core.language.processor import TextProcessor
 from core.language.tokenizer import ChineseTokenizer, JIEBA_AVAILABLE
 from core.engine.common import safe_execute
 
-# Conditional imports
+# Conditional imports with improved handling
+JIEBA_AVAILABLE = False
+jieba = None
+
 try:
+    original_stdout = sys.stdout
+    sys.stdout = io.StringIO()  # Redirect to string buffer
+
     import jieba
+    jieba.initialize()  # Explicitly initialize once
+
+    # Restore stdout
+    sys.stdout = original_stdout
+
+    JIEBA_AVAILABLE = True
 except ImportError:
+    warning("jieba not available. Chinese text processing will be limited.")
     jieba = None
 
 try:
@@ -36,6 +51,8 @@ except ImportError:
 
 class ThemeAnalyzer:
     """Analyzes themes in document content with enhanced processing capabilities"""
+
+    # Add to ThemeAnalyzer's __init__ method in core/modes/themes.py
 
     def __init__(self, config, storage_manager=None, output_manager=None, text_processor=None):
         """Initialize the theme analyzer with shared components"""
@@ -55,6 +72,25 @@ class ThemeAnalyzer:
 
         # Prepare Chinese and English stopwords
         self._prepare_stopwords()
+
+        if JIEBA_AVAILABLE:
+            try:
+                # Redirect jieba's stdout to suppress initialization messages
+                import sys
+                import io
+                original_stdout = sys.stdout
+                sys.stdout = io.StringIO()  # Redirect to string buffer
+
+                # Pre-initialize jieba
+                import jieba
+                jieba.initialize()
+
+                # Restore stdout
+                sys.stdout = original_stdout
+
+                debug_print(config, "Jieba initialized for Chinese text processing")
+            except Exception as e:
+                debug_print(config, f"Error initializing jieba: {str(e)}")
 
         debug_print(config, "Theme analyzer initialized")
 
@@ -194,7 +230,7 @@ class ThemeAnalyzer:
 
     def _output_results(self, workspace: str, results: Dict, method: str):
         """
-        Output theme analysis results using output manager
+        Output theme analysis results using output manager with improved keyword handling
 
         Args:
             workspace (str): Workspace name
@@ -219,9 +255,35 @@ class ThemeAnalyzer:
                 self.output_manager.print_formatted('feedback', f"Error: {result['error']}", success=False)
 
             # Display themes
-            for theme in result.get('themes', []):
-                # Theme name
-                if 'name' in theme:
+            themes = result.get('themes', [])
+            if not themes:
+                self.output_manager.print_formatted('feedback', "No themes identified", success=False)
+                continue
+
+            print(f"\nFound {len(themes)} themes/keywords")
+
+            for theme in themes:
+                # Different handling based on theme type
+                if 'keyword' in theme:
+                    # This is a keyword theme from content keyword analysis
+                    self.output_manager.print_formatted('mini_header', f"Keyword: {theme['keyword']}")
+
+                    if 'score' in theme:
+                        self.output_manager.print_formatted('kv', f"{theme['score']:.4f}", key="Score")
+
+                    if 'documents' in theme:
+                        self.output_manager.print_formatted('kv', theme['documents'], key="Documents")
+
+                    # Show documents list if available
+                    if 'documents_list' in theme and isinstance(theme['documents_list'], list):
+                        print("\n  Document sources:")
+                        for doc in theme['documents_list'][:5]:
+                            self.output_manager.print_formatted('list', str(doc), indent=4)
+                        if len(theme['documents_list']) > 5:
+                            print(f"  ... and {len(theme['documents_list']) - 5} more")
+
+                elif 'name' in theme:
+                    # This is a standard theme
                     self.output_manager.print_formatted('mini_header', theme['name'])
 
                     # Keywords
@@ -247,6 +309,11 @@ class ThemeAnalyzer:
                         if len(theme['documents']) > 5:
                             print(f"  ... and {len(theme['documents']) - 5} more")
 
+                    # Descriptions
+                    if 'description' in theme and theme['description']:
+                        print("\n  Description:")
+                        print(f"  {theme['description']}")
+
         # Save results to file
         output_format = self.config.get('system.output_format', 'txt')
         filepath = self.output_manager.save_theme_analysis(workspace, results, method, output_format)
@@ -256,7 +323,7 @@ class ThemeAnalyzer:
 
     def _extract_english_keywords(self, docs: List[Dict]) -> List[Dict]:
         """
-        Extract keywords from English document content
+        Extract keywords from English document content with improved error handling
 
         Args:
             docs (List[Dict]): English documents
@@ -268,14 +335,22 @@ class ThemeAnalyzer:
         doc_texts = [doc["processed_content"] for doc in docs]
         doc_sources = [doc["source"] for doc in docs]
 
+        # Log extraction attempt
+        print(f"Extracting keywords from {len(doc_texts)} English documents")
+
         # Create mapping to store document sources for each keyword
         keyword_doc_mapping = defaultdict(list)
+
+        # Check if documents contain content
+        if not doc_texts or all(not text for text in doc_texts):
+            print("No valid content found in English documents")
+            return []
 
         try:
             # Use TF-IDF vectorizer to identify important terms
             vectorizer = TfidfVectorizer(
-                min_df=2,
-                max_df=0.85,
+                min_df=1,  # Lower min_df for small document sets
+                max_df=0.95,
                 stop_words="english"
             )
 
@@ -285,14 +360,20 @@ class ThemeAnalyzer:
             # Get feature names
             feature_names = vectorizer.get_feature_names_out()
 
+            print(f"Extracted {len(feature_names)} unique terms from English documents")
+
             # Calculate average TF-IDF scores across documents
             avg_scores = np.asarray(tfidf_matrix.mean(axis=0)).ravel()
 
             # Count documents containing each term
             term_doc_counts = defaultdict(int)
             for doc_id, doc_text in enumerate(doc_texts):
-                for term in set(doc_text.split()):
-                    if term in feature_names:
+                # Create a set of terms in this document
+                doc_terms = set(doc_text.split())
+
+                # Check each term in feature names
+                for term in feature_names:
+                    if term in doc_terms:
                         term_doc_counts[term] += 1
                         keyword_doc_mapping[term].append(doc_sources[doc_id])
 
@@ -306,25 +387,32 @@ class ThemeAnalyzer:
                 score = avg_scores[i]
                 doc_count = term_doc_counts.get(term, 0)
 
-                keywords.append({
-                    "keyword": term,
-                    "score": round(float(score), 2),
-                    "documents": doc_count,
-                    "doc_sources": keyword_doc_mapping.get(term, [])
-                })
+                # Only include terms that appear in at least one document
+                if doc_count > 0:
+                    keywords.append({
+                        "keyword": term,
+                        "score": float(score),  # Convert numpy float to Python float
+                        "documents": doc_count,
+                        "doc_sources": keyword_doc_mapping.get(term, [])
+                    })
 
             # Sort by score and document count
             keywords.sort(key=lambda x: (x["score"], x["documents"]), reverse=True)
 
-            return keywords[:20]
+            print(f"Found {len(keywords)} keywords in English documents")
+
+            # Limit to top keywords
+            return keywords[:30]  # Return more keywords to ensure we have enough after filtering
 
         except Exception as e:
-            debug_print(self.config, f"Error extracting English keywords: {str(e)}")
+            print(f"Error extracting English keywords: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
             return []
 
     def _extract_chinese_keywords(self, docs: List[Dict]) -> List[Dict]:
         """
-        Extract keywords from Chinese document content
+        Extract keywords from Chinese document content with improved error handling
 
         Args:
             docs (List[Dict]): Chinese documents
@@ -332,83 +420,155 @@ class ThemeAnalyzer:
         Returns:
             List[Dict]: Extracted keywords
         """
-        # Count frequencies of character and word n-grams
-        character_counts = Counter()
-        bigram_counts = Counter()
-        trigram_counts = Counter()
+        # Log extraction attempt
+        print(f"Extracting keywords from {len(docs)} Chinese documents")
 
-        # Document sources for tracking
-        doc_sources = [doc["source"] for doc in docs]
+        # Check if documents contain content
+        if not docs or all(not doc.get("processed_content") for doc in docs):
+            print("No valid content found in Chinese documents")
+            return []
 
-        # Count frequencies
-        for doc in docs:
-            text = doc["processed_content"]
+        try:
+            # Count frequencies of character and word n-grams
+            character_counts = Counter()
+            bigram_counts = Counter()
+            trigram_counts = Counter()
 
-            # Count characters
-            character_counts.update(text)
+            # Document sources for tracking
+            doc_sources = [doc["source"] for doc in docs]
 
-            # Count n-grams
-            for i in range(len(text) - 1):
-                # Bigrams
-                if i < len(text) - 1:
-                    bigram = text[i:i + 2]
-                    bigram_counts[bigram] += 1
+            # Count frequencies
+            for doc in docs:
+                text = doc["processed_content"]
+                if not text:
+                    continue
 
-                # Trigrams
-                if i < len(text) - 2:
-                    trigram = text[i:i + 3]
-                    trigram_counts[trigram] += 1
+                # Count characters
+                character_counts.update(text)
 
-        # Track document sources for each n-gram
-        bigram_doc_sources = defaultdict(list)
-        trigram_doc_sources = defaultdict(list)
+                # Count n-grams
+                for i in range(len(text) - 1):
+                    # Bigrams
+                    if i < len(text) - 1:
+                        bigram = text[i:i + 2]
+                        bigram_counts[bigram] += 1
 
-        for doc_idx, doc in enumerate(docs):
-            text = doc["processed_content"]
+                    # Trigrams
+                    if i < len(text) - 2:
+                        trigram = text[i:i + 3]
+                        trigram_counts[trigram] += 1
 
-            # Track bigrams
-            for i in range(len(text) - 1):
-                bigram = text[i:i + 2]
-                bigram_doc_sources[bigram].append(doc_sources[doc_idx])
+            # Track document sources for each n-gram
+            bigram_doc_sources = defaultdict(list)
+            trigram_doc_sources = defaultdict(list)
 
-            # Track trigrams
-            for i in range(len(text) - 2):
-                trigram = text[i:i + 3]
-                trigram_doc_sources[trigram].append(doc_sources[doc_idx])
+            for doc_idx, doc in enumerate(docs):
+                text = doc["processed_content"]
+                if not text:
+                    continue
 
-        # Combine and sort keywords
-        keywords = []
+                # Track bigrams
+                for i in range(len(text) - 1):
+                    if i < len(text) - 1:
+                        bigram = text[i:i + 2]
+                        bigram_doc_sources[bigram].append(doc_sources[doc_idx])
 
-        # Add top bigrams
-        for bigram, count in bigram_counts.most_common(10):
-            if count < 2:
-                continue
+                # Track trigrams
+                for i in range(len(text) - 2):
+                    if i < len(text) - 2:
+                        trigram = text[i:i + 3]
+                        trigram_doc_sources[trigram].append(doc_sources[doc_idx])
 
-            score = count / sum(bigram_counts.values())
-            keywords.append({
-                "keyword": bigram,
-                "score": round(score, 2),
-                "documents": len(set(bigram_doc_sources[bigram])),
-                "doc_sources": bigram_doc_sources[bigram]
-            })
+            # Combine and sort keywords
+            keywords = []
 
-        # Add top trigrams
-        for trigram, count in trigram_counts.most_common(10):
-            if count < 2:
-                continue
+            # Add top bigrams
+            for bigram, count in bigram_counts.most_common(15):
+                if len(bigram) < 2 or count < 2:
+                    continue
 
-            score = count / sum(trigram_counts.values())
-            keywords.append({
-                "keyword": trigram,
-                "score": round(score, 2),
-                "documents": len(set(trigram_doc_sources[trigram])),
-                "doc_sources": trigram_doc_sources[trigram]
-            })
+                # Check if bigram is in stopwords
+                if bigram in self.chinese_stopwords:
+                    continue
 
-        # Sort keywords by score
-        keywords.sort(key=lambda x: x["score"], reverse=True)
+                score = count / sum(bigram_counts.values()) if bigram_counts else 0
+                doc_sources_list = list(set(bigram_doc_sources[bigram]))
 
-        return keywords[:20]
+                keywords.append({
+                    "keyword": bigram,
+                    "score": float(score),  # Ensure we use a regular Python float
+                    "documents": len(doc_sources_list),
+                    "doc_sources": doc_sources_list
+                })
+
+            # Add top trigrams
+            for trigram, count in trigram_counts.most_common(15):
+                if len(trigram) < 3 or count < 2:
+                    continue
+
+                # Skip trigrams that are entirely in stopwords
+                if all(char in self.chinese_stopwords for char in trigram):
+                    continue
+
+                score = count / sum(trigram_counts.values()) if trigram_counts else 0
+                doc_sources_list = list(set(trigram_doc_sources[trigram]))
+
+                keywords.append({
+                    "keyword": trigram,
+                    "score": float(score),  # Ensure we use a regular Python float
+                    "documents": len(doc_sources_list),
+                    "doc_sources": doc_sources_list
+                })
+
+            print(f"Found {len(keywords)} keywords in Chinese documents (bigrams and trigrams)")
+
+            # If jieba is available, try to extract word-based keywords
+            if JIEBA_AVAILABLE and jieba and len(docs) >= 2:
+                print("Using jieba for additional Chinese keyword extraction")
+
+                # Collect all text
+                all_text = " ".join([doc["processed_content"] for doc in docs if doc.get("processed_content")])
+
+                # Tokenize with jieba - using the already initialized instance
+                words = list(jieba.cut(all_text))
+                word_counts = Counter(words)
+
+                # Add top words
+                for word, count in word_counts.most_common(15):
+                    # Skip short words and stopwords
+                    if len(word) < 2 or word in self.chinese_stopwords:
+                        continue
+
+                    # Skip non-Chinese words
+                    if not any('\u4e00' <= char <= '\u9fff' for char in word):
+                        continue
+
+                    score = count / len(words) if words else 0
+
+                    # Determine which documents contain this word
+                    doc_sources_list = []
+                    for doc_idx, doc in enumerate(docs):
+                        if doc.get("processed_content") and word in doc["processed_content"]:
+                            doc_sources_list.append(doc_sources[doc_idx])
+
+                    keywords.append({
+                        "keyword": word,
+                        "score": float(score),
+                        "documents": len(doc_sources_list),
+                        "doc_sources": doc_sources_list
+                    })
+
+            # Sort keywords by score
+            keywords.sort(key=lambda x: x["score"], reverse=True)
+
+            # Return top keywords
+            return keywords[:30]  # Return more keywords to ensure we have enough after filtering
+
+        except Exception as e:
+            print(f"Error extracting Chinese keywords: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
+            return []
 
     def _analyze_content_keywords(self, doc_contents: List[Dict]) -> Dict[str, Any]:
         """
@@ -430,12 +590,21 @@ class ThemeAnalyzer:
 
         # Extract keywords by language
         all_keywords = []
+
+        # Print information about document grouping
+        print(
+            f"Documents grouped by language: {', '.join([f'{lang}: {len(docs)}' for lang, docs in docs_by_language.items()])}")
+
+        # Process each language group
         for language, docs in docs_by_language.items():
             if language == "zh":
+                print(f"Processing {len(docs)} Chinese documents")
                 keywords = self._extract_chinese_keywords(docs)
             else:
+                print(f"Processing {len(docs)} documents in language: {language}")
                 keywords = self._extract_english_keywords(docs)
 
+            print(f"Extracted {len(keywords)} keywords for language: {language}")
             all_keywords.extend(keywords)
 
         # Sort keywords by score
@@ -444,9 +613,25 @@ class ThemeAnalyzer:
         # Take top keywords
         top_keywords = all_keywords[:20]
 
+        print(f"Final keyword count: {len(top_keywords)}")
+
+        # Create proper themes format with keyword info
+        formatted_keywords = []
+        for kw in top_keywords:
+            formatted_kw = {
+                "keyword": kw["keyword"],
+                "score": kw["score"],
+                "documents": kw["documents"]
+            }
+            # Include document sources if available
+            if "doc_sources" in kw:
+                formatted_kw["documents_list"] = kw["doc_sources"]
+
+            formatted_keywords.append(formatted_kw)
+
         return {
             "method": "Content Keyword Analysis",
-            "themes": top_keywords
+            "themes": formatted_keywords
         }
 
     def _analyze_content_network(self, doc_contents: List[Dict]) -> Dict[str, Any]:
@@ -723,7 +908,9 @@ class ThemeAnalyzer:
             text = doc.get('processed_content', '')
 
             # Use jieba for word segmentation if available
+            # Note: jieba should already be initialized at this point
             if JIEBA_AVAILABLE and jieba:
+                # Use the global jieba instance that was already initialized
                 words = list(jieba.cut(text))
             else:
                 # Fallback to character-based extraction
