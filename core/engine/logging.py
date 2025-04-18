@@ -6,7 +6,7 @@ import datetime
 import logging
 import queue
 import sys
-from typing import Optional
+from typing import Optional, Any
 
 # Message queue for TUI mode
 tui_message_queue = queue.Queue()
@@ -147,24 +147,36 @@ class FormattedLogHandler(logging.Handler):
         print(formatted, file=sys.stderr)
 
 # Helper functions for common logging operations
-def debug_print(config, message):
-    """Print a debug message if debug mode is enabled"""
-    debug_mode = False
-    if config:
+
+def debug(message: str, config: Any = None):
+    """
+    Log a debug message, respecting config settings if provided
+
+    Args:
+        message (str): The message to log
+        config (Any, optional): Configuration object that may contain debug settings
+    """
+    # Check if we should respect config settings
+    if config is not None:
         try:
             debug_mode = config.get('system.debug', False)
-        except Exception:
+            if not debug_mode:
+                return  # Skip logging if debug mode is disabled in config
+        except (AttributeError, KeyError):
+            # If we can't access config properly, fall back to regular debug
             pass
 
-    if debug_mode:
-        logging.debug(message)
+    # Log the message
+    logging.debug(message)
 
 # Convenience functions
 def error(message): logging.error(message)
 def warning(message): logging.warning(message)
 def info(message): logging.info(message)
-def debug(message): logging.debug(message)
 def trace(message): logging.log(logging.TRACE, message)
 
 # Initialize logging system
 LogManager.configure()
+
+# Legacy alias for backward compatibility
+debug_print = debug
