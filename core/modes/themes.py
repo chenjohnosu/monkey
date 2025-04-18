@@ -903,7 +903,7 @@ class ThemeAnalyzer:
 
             # Apply SVD to find latent semantic dimensions
             svd = TruncatedSVD(n_components=n_components)
-            svd = TruncatedSVD(n_components=n_components,n_jobs=-1)
+            svd = TruncatedSVD(n_components=n_components)
             X_svd = svd.fit_transform(X)
 
             # Process each semantic component
@@ -999,7 +999,7 @@ class ThemeAnalyzer:
             n_clusters = min(max_clusters, n_docs - 1)
 
             # Perform clustering
-            kmeans = kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10, n_jobs=-1)
+            kmeans = kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
             clusters = kmeans.fit_predict(X)
 
             # Extract cluster themes
