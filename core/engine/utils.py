@@ -525,10 +525,31 @@ def format_analysis_result(title: str, content: str) -> str:
 
 
 def format_code_block(content: str, indent: int = 0) -> str:
-    """Format a code block with slight background tint"""
+    """
+    Format a code block with appropriate styling based on mode (TUI or console)
+
+    Args:
+        content (str): The text content to format
+        indent (int): Indentation level
+
+    Returns:
+        str: Formatted text
+    """
+    # Check if we're running in TUI mode by checking a global flag from logging module
+    from core.engine.logging import _in_tui_mode
+
     spaces = " " * indent
     lines = content.split('\n')
-    formatted_lines = [f"{spaces}{Colors.GRAY}{line}{Colors.RESET}" for line in lines]
+
+    if _in_tui_mode:
+        # In TUI mode, don't use ANSI color codes directly
+        # Use markup that the textual library can interpret properly
+        formatted_lines = [f"{spaces}{line}" for line in lines]
+    else:
+        # In console mode, use ANSI color codes as before
+        from core.engine.utils import Colors
+        formatted_lines = [f"{spaces}{Colors.GRAY}{line}{Colors.RESET}" for line in lines]
+
     return '\n'.join(formatted_lines)
 
 
