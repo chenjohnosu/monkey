@@ -341,14 +341,13 @@ def configure_vectorizer(config, doc_count, language=None, chinese_stopwords=Non
         try:
             from core.language.tokenizer import ChineseTokenizer
             tokenizer = ChineseTokenizer()
-            stop_words = None  # Handle in preprocessing
 
             # Create vectorizer for Chinese text
             vectorizer = TfidfVectorizer(
                 min_df=min_df,
                 max_df=max_df,
                 stop_words=None,
-                token_pattern=r"(?u)\b\S+\b",  # Only match non-whitespace sequences
+                # Remove token_pattern when using custom tokenizer
                 tokenizer=tokenizer
             )
         except ImportError:
