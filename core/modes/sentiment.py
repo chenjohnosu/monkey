@@ -1,21 +1,23 @@
 """
 Sentiment analysis module with support for both English and Chinese text
+Optimized to use core engine utilities and reduce code size
 """
 
 import os
-import numpy as np
 from collections import Counter, defaultdict
 from typing import Dict, List, Any, Optional
-from core.engine.logging import debug,warning,info
+
+from core.engine.logging import debug, warning, info
 from core.engine.storage import StorageManager
 from core.engine.output import OutputManager
 from core.language.processor import TextProcessor
 from core.language.tokenizer import JIEBA_AVAILABLE, get_jieba_instance
+from core.engine.common import safe_execute
+from core.engine.utils import split_text_into_chunks, ensure_dir
 
 # Try to import sentiment analysis libraries - use what's available
 try:
     from transformers import pipeline, AutoModelForSequenceClassification, AutoTokenizer
-
     TRANSFORMERS_AVAILABLE = True
 except ImportError:
     TRANSFORMERS_AVAILABLE = False
@@ -47,15 +49,10 @@ class SentimentAnalyzer:
         self.text_processor = text_processor or TextProcessor(config)
 
         # Initialize LLM connector factory for summarization
-        try:
-            from core.connectors.connector_factory import ConnectorFactory
-            self.factory = ConnectorFactory(config)
-            self.llm_connector = self.factory.get_llm_connector()
-            debug(config, "LLM connector factory initialized for sentiment analysis")
-        except Exception as e:
-            debug(config, f"Error initializing ConnectorFactory: {str(e)}")
-            self.factory = None
-            self.llm_connector = None
+        self.llm_connector = safe_execute(
+            self._init_llm_connector,
+            error_message="Error initializing LLM connector for sentiment analysis"
+        )
 
         # Load Chinese sentiment lexicon if available
         self.chinese_sentiment_lexicon = self._load_chinese_sentiment_lexicon()
@@ -65,27 +62,40 @@ class SentimentAnalyzer:
         self.zh_sentiment_analyzer = None
 
         if TRANSFORMERS_AVAILABLE:
-            try:
-                # Use a smaller model for English sentiment
-                self.en_sentiment_analyzer = pipeline(
-                    "sentiment-analysis",
-                    model="distilbert-base-uncased-finetuned-sst-2-english",
-                    truncation=True
-                )
-                debug(config, "Initialized English sentiment analyzer with transformers")
-            except Exception as e:
-                debug(config, f"Error initializing English sentiment analyzer: {str(e)}")
+            self.en_sentiment_analyzer = safe_execute(
+                self._init_english_sentiment_analyzer,
+                error_message="Error initializing English sentiment analyzer"
+            )
 
         # Initialize NLTK VADER sentiment analyzer for English if available
         self.vader_analyzer = None
         if NLTK_AVAILABLE:
-            try:
-                self.vader_analyzer = SentimentIntensityAnalyzer()
-                debug(config, "Initialized VADER sentiment analyzer")
-            except Exception as e:
-                debug(config, f"Error initializing VADER sentiment analyzer: {str(e)}")
+            self.vader_analyzer = safe_execute(
+                self._init_vader_analyzer,
+                error_message="Error initializing VADER sentiment analyzer"
+            )
 
         debug(config, "Sentiment analyzer initialized")
+
+    def _init_llm_connector(self):
+        """Initialize LLM connector for sentiment interpretation"""
+        from core.connectors.connector_factory import ConnectorFactory
+        factory = ConnectorFactory(self.config)
+        connector = factory.get_llm_connector()
+        debug(self.config, "LLM connector initialized for sentiment analysis")
+        return connector
+
+    def _init_english_sentiment_analyzer(self):
+        """Initialize English sentiment analyzer with transformers"""
+        return pipeline(
+            "sentiment-analysis",
+            model="distilbert-base-uncased-finetuned-sst-2-english",
+            truncation=True
+        )
+
+    def _init_vader_analyzer(self):
+        """Initialize VADER sentiment analyzer"""
+        return SentimentIntensityAnalyzer()
 
     def _load_chinese_sentiment_lexicon(self):
         """Load Chinese sentiment lexicon from file"""
@@ -97,9 +107,7 @@ class SentimentAnalyzer:
 
         # Define lexicon directory
         lexicon_dir = 'lexicon'
-        if not os.path.exists(lexicon_dir):
-            os.makedirs(lexicon_dir)
-            debug(self.config, f"Created lexicon directory: {lexicon_dir}")
+        ensure_dir(lexicon_dir)
 
         # Try to load custom Chinese sentiment lexicon if available
         try:
@@ -164,19 +172,22 @@ class SentimentAnalyzer:
         # Validate method
         valid_methods = ['all', 'basic', 'advanced']
         if method not in valid_methods:
-            print(f"Invalid method: {method}. Must be one of: {', '.join(valid_methods)}")
+            self.output_manager.print_formatted('feedback',
+                f"Invalid method: {method}. Must be one of: {', '.join(valid_methods)}",
+                success=False)
             return
 
-        # Check if workspace exists
-        data_dir = os.path.join("data", workspace)
-        if not os.path.exists(data_dir):
-            print(f"Workspace '{workspace}' does not exist or has no documents")
-            return
+        # Load and validate documents
+        docs = safe_execute(
+            self.storage_manager.get_documents,
+            workspace,
+            error_message=f"Error loading documents from workspace '{workspace}'"
+        )
 
-        # Get documents from storage
-        docs = self.storage_manager.get_documents(workspace)
         if not docs:
-            print(f"No documents found in workspace '{workspace}'")
+            self.output_manager.print_formatted('feedback',
+                f"No documents found in workspace '{workspace}'",
+                success=False)
             return
 
         print(f"Analyzing sentiment in {len(docs)} documents from workspace '{workspace}'")
@@ -192,11 +203,19 @@ class SentimentAnalyzer:
 
         if method in ['all', 'basic']:
             print("\nRunning Basic Sentiment Analysis...")
-            results['basic'] = self._analyze_basic_sentiment(doc_contents)
+            results['basic'] = safe_execute(
+                self._analyze_basic_sentiment,
+                doc_contents,
+                error_message="Error in basic sentiment analysis"
+            )
 
         if method in ['all', 'advanced']:
             print("\nRunning Advanced Sentiment Analysis...")
-            results['advanced'] = self._analyze_advanced_sentiment(doc_contents)
+            results['advanced'] = safe_execute(
+                self._analyze_advanced_sentiment,
+                doc_contents,
+                error_message="Error in advanced sentiment analysis"
+            )
 
         # Output results
         self._output_results(workspace, results, method)
@@ -252,12 +271,15 @@ class SentimentAnalyzer:
         Args:
             language_counts (Counter): Counts of languages
         """
-        print("\nDocument Language Distribution:")
+        self.output_manager.print_formatted('subheader', "Document Language Distribution")
         total = sum(language_counts.values())
 
         for lang, count in language_counts.most_common():
             percentage = (count / total) * 100
-            print(f"  {lang}: {count} documents ({percentage:.1f}%)")
+            self.output_manager.print_formatted('kv',
+                f"{count} documents ({percentage:.1f}%)",
+                key=lang,
+                indent=2)
 
     def _analyze_basic_sentiment(self, doc_contents):
         """
@@ -567,16 +589,36 @@ class SentimentAnalyzer:
             source = doc["source"]
 
             # Extract aspects and their sentiment
-            aspects = self._extract_sentiment_aspects(text, language)
+            aspects = safe_execute(
+                self._extract_sentiment_aspects,
+                text, language,
+                error_message=f"Error extracting sentiment aspects for {source}",
+                default_return=[]
+            )
 
             # Analyze overall sentiment
-            sentiment_score, sentiment_label = self._analyze_document_sentiment(text, language)
+            sentiment_score, sentiment_label = safe_execute(
+                self._analyze_document_sentiment,
+                text, language,
+                error_message=f"Error analyzing document sentiment for {source}",
+                default_return=(0.0, "neutral")
+            )
 
             # Identify emotional tone
-            emotional_tone = self._identify_emotional_tone(text, language)
+            emotional_tone = safe_execute(
+                self._identify_emotional_tone,
+                text, language,
+                error_message=f"Error identifying emotional tone for {source}",
+                default_return="neutral"
+            )
 
             # Generate interpretive summary using LLM if available
-            summary = self._generate_sentiment_summary(text, aspects, sentiment_label, emotional_tone)
+            summary = safe_execute(
+                self._generate_sentiment_summary,
+                text, aspects, sentiment_label, emotional_tone,
+                error_message=f"Error generating sentiment summary for {source}",
+                default_return=f"Document expresses {sentiment_label} sentiment with a {emotional_tone} emotional tone."
+            )
 
             # Store document analysis
             doc_analysis = {
@@ -591,7 +633,12 @@ class SentimentAnalyzer:
             results["document_analysis"].append(doc_analysis)
 
         # Identify sentiment trends across documents
-        trends = self._identify_sentiment_trends(results["document_analysis"])
+        trends = safe_execute(
+            self._identify_sentiment_trends,
+            results["document_analysis"],
+            error_message="Error identifying sentiment trends",
+            default_return=[]
+        )
         results["sentiment_trends"] = trends
 
         return results
@@ -615,7 +662,7 @@ class SentimentAnalyzer:
         if self.en_sentiment_analyzer:
             try:
                 # Analyze chunks of text and average results
-                chunks = self._split_text_into_chunks(text, 512)
+                chunks = split_text_into_chunks(text, 512)
                 scores = []
 
                 for chunk in chunks:
@@ -656,7 +703,7 @@ class SentimentAnalyzer:
         if self.vader_analyzer:
             try:
                 # Analyze chunks of text and average results
-                chunks = self._split_text_into_chunks(text, 1000)
+                chunks = split_text_into_chunks(text, 1000)
                 scores = []
 
                 for chunk in chunks:
@@ -687,52 +734,6 @@ class SentimentAnalyzer:
         # Fall back to lexicon approach
         return self._analyze_with_simple_lexicon(text, language)
 
-    def _split_text_into_chunks(self, text, chunk_size=500):
-        """
-        Split text into chunks for processing
-
-        Args:
-            text (str): Text to split
-            chunk_size (int): Maximum chunk size
-
-        Returns:
-            List[str]: Text chunks
-        """
-        # Split by sentences first if possible
-        chunks = []
-        sentences = text.split('.')
-
-        current_chunk = ""
-
-        for sentence in sentences:
-            sentence = sentence.strip() + "."
-
-            if len(current_chunk) + len(sentence) <= chunk_size:
-                current_chunk += " " + sentence
-            else:
-                if current_chunk:
-                    chunks.append(current_chunk.strip())
-
-                # If sentence is longer than chunk_size, split it
-                if len(sentence) > chunk_size:
-                    words = sentence.split()
-                    current_chunk = ""
-
-                    for word in words:
-                        if len(current_chunk) + len(word) + 1 <= chunk_size:
-                            current_chunk += " " + word
-                        else:
-                            chunks.append(current_chunk.strip())
-                            current_chunk = word
-                else:
-                    current_chunk = sentence
-
-        # Add the last chunk if it exists
-        if current_chunk:
-            chunks.append(current_chunk.strip())
-
-        return chunks
-
     def _extract_sentiment_aspects(self, text, language):
         """
         Extract aspects and their associated sentiment
@@ -744,8 +745,6 @@ class SentimentAnalyzer:
         Returns:
             List[Dict]: Extracted aspects with sentiment
         """
-        aspects = []
-
         # Use LLM to extract aspects if available
         if self.llm_connector:
             try:
@@ -753,7 +752,7 @@ class SentimentAnalyzer:
             except Exception as e:
                 debug(self.config, f"Error extracting aspects with LLM: {str(e)}")
 
-        # Otherwise use rule-based extraction (simplified)
+        # Otherwise use rule-based extraction
         if language == "zh":
             # Extract aspects from Chinese text
             return self._extract_chinese_aspects(text)
@@ -792,62 +791,58 @@ Output only the list of aspects without any other explanation."""
 
         # Generate response
         model = self.config.get('llm.default_model')
-        try:
-            response = self.llm_connector.generate(prompt, model=model, max_tokens=500)
+        response = self.llm_connector.generate(prompt, model=model, max_tokens=500)
 
-            # Parse the response
-            aspects = []
-            lines = response.strip().split('\n')
+        # Parse the response
+        aspects = []
+        lines = response.strip().split('\n')
 
-            for line in lines:
-                if not line or ":" not in line:
+        for line in lines:
+            if not line or ":" not in line:
+                continue
+
+            try:
+                # Extract aspect name
+                if "Aspect" in line or "方面" in line:
+                    parts = line.split(":", 2)
+                    aspect_name = parts[1].split(",")[0].strip()
+                else:
                     continue
 
-                try:
-                    # Extract aspect name
-                    if "Aspect" in line or "方面" in line:
-                        parts = line.split(":", 2)
-                        aspect_name = parts[1].split(",")[0].strip()
-                    else:
-                        continue
+                # Extract sentiment
+                if "Sentiment:" in line or "情感:" in line:
+                    sentiment_part = line.split("Sentiment:")[1].split(",")[0].strip() if "Sentiment:" in line else \
+                    line.split("情感:")[1].split(",")[0].strip()
+                else:
+                    sentiment_part = ""
 
-                    # Extract sentiment
-                    if "Sentiment:" in line or "情感:" in line:
-                        sentiment_part = line.split("Sentiment:")[1].split(",")[0].strip() if "Sentiment:" in line else \
-                        line.split("情感:")[1].split(",")[0].strip()
-                    else:
-                        sentiment_part = ""
+                # Normalize sentiment
+                if sentiment_part.lower() in ["positive", "积极"]:
+                    sentiment = "positive"
+                elif sentiment_part.lower() in ["negative", "消极"]:
+                    sentiment = "negative"
+                else:
+                    sentiment = "neutral"
 
-                    # Normalize sentiment
-                    if sentiment_part.lower() in ["positive", "积极"]:
-                        sentiment = "positive"
-                    elif sentiment_part.lower() in ["negative", "消极"]:
-                        sentiment = "negative"
-                    else:
-                        sentiment = "neutral"
+                # Extract confidence if available
+                confidence = 0.7  # Default
+                if "Confidence:" in line or "置信度:" in line:
+                    try:
+                        conf_part = line.split("Confidence:")[1].strip() if "Confidence:" in line else \
+                        line.split("置信度:")[1].strip()
+                        confidence = float(conf_part)
+                    except:
+                        pass
 
-                    # Extract confidence if available
-                    confidence = 0.7  # Default
-                    if "Confidence:" in line or "置信度:" in line:
-                        try:
-                            conf_part = line.split("Confidence:")[1].strip() if "Confidence:" in line else \
-                            line.split("置信度:")[1].strip()
-                            confidence = float(conf_part)
-                        except:
-                            pass
+                aspects.append({
+                    "aspect": aspect_name,
+                    "sentiment": sentiment,
+                    "confidence": confidence
+                })
+            except Exception as e:
+                debug(self.config, f"Error parsing aspect line: {line}, {str(e)}")
 
-                    aspects.append({
-                        "aspect": aspect_name,
-                        "sentiment": sentiment,
-                        "confidence": confidence
-                    })
-                except Exception as e:
-                    debug(self.config, f"Error parsing aspect line: {line}, {str(e)}")
-
-            return aspects
-        except Exception as e:
-            debug(self.config, f"Error generating aspects with LLM: {str(e)}")
-            return []
+        return aspects
 
     def _extract_chinese_aspects(self, text):
         """
@@ -867,9 +862,10 @@ Output only the list of aspects without any other explanation."""
 
         # Check if jieba is available for word segmentation
         if JIEBA_AVAILABLE:
-            words = list(jieba.cut(text))
+            jieba_instance = get_jieba_instance()
+            words = list(jieba_instance.cut(text)) if jieba_instance else [char for char in text]
         else:
-            # Character-based approach as fallback
+                            # Character-based approach as fallback
             words = [char for char in text]
 
         # Find sentences or segments containing aspect keywords
@@ -1156,73 +1152,74 @@ Please summarize the sentiment profile in 2-3 concise sentences, focusing on the
         """
         debug(self.config, "Outputting sentiment analysis results")
 
-        print("\nSentiment Analysis Results:")
+        self.output_manager.print_formatted('header', "SENTIMENT ANALYSIS RESULTS")
 
         # Display results for each method
         for m, result in results.items():
-            print(f"\n{result['method']}:")
+            self.output_manager.print_formatted('subheader', result['method'])
 
             # Display sentiment distribution
             if "sentiment_distribution" in result:
-                print("\n  Sentiment Distribution:")
+                self.output_manager.print_formatted('mini_header', "Sentiment Distribution")
                 for sentiment, count in result["sentiment_distribution"].items():
-                    print(f"    {sentiment.capitalize()}: {count} documents")
+                    self.output_manager.print_formatted('kv', count, key=sentiment.capitalize(), indent=2)
 
             # Display overall distribution percentages
             if "overall_distribution" in result:
-                print("\n  Overall Distribution (%):")
+                self.output_manager.print_formatted('mini_header', "Overall Distribution (%)")
                 for sentiment, percentage in result["overall_distribution"].items():
-                    print(f"    {sentiment.capitalize()}: {percentage}%")
+                    self.output_manager.print_formatted('kv', f"{percentage}%", key=sentiment.capitalize(), indent=2)
 
             # Display sentiment by language
             if "sentiment_by_language" in result:
-                print("\n  Sentiment by Language:")
+                self.output_manager.print_formatted('mini_header', "Sentiment by Language")
                 for language, sentiments in result["sentiment_by_language"].items():
-                    print(f"    {language}:")
+                    self.output_manager.print_formatted('kv', language, key="Language", indent=2)
                     for sentiment, count in sentiments.items():
-                        print(f"      {sentiment.capitalize()}: {count}")
+                        self.output_manager.print_formatted('kv', count, key=sentiment.capitalize(), indent=4)
 
             # Display individual document sentiments (limited to first 5)
             if "document_sentiments" in result:
-                print("\n  Document Sentiments (first 5):")
+                self.output_manager.print_formatted('mini_header', "Document Sentiments (first 5)")
                 for i, doc in enumerate(result["document_sentiments"][:5]):
-                    print(f"    {doc['source']}: {doc['sentiment']} (score: {doc['score']:.2f})")
+                    self.output_manager.print_formatted('list',
+                        f"{doc['source']}: {doc['sentiment']} (score: {doc['score']:.2f})", indent=2)
 
                 if len(result["document_sentiments"]) > 5:
                     print(f"    ... and {len(result['document_sentiments']) - 5} more")
 
             # Display sentiment trends
             if "sentiment_trends" in result:
-                print("\n  Sentiment Trends (Across Documents):")
+                self.output_manager.print_formatted('mini_header', "Sentiment Trends (Across Documents)")
                 for trend in result["sentiment_trends"]:
-                    print(f"    Aspect: {trend['aspect']}")
-                    print(f"      Dominant Sentiment: {trend['dominant_sentiment']}")
-                    print(f"      Appears in {trend['document_count']} documents")
-                    print(
-                        f"      Distribution: {', '.join([f'{s.capitalize()} {p:.1f}%' for s, p in trend['sentiment_distribution'].items() if p > 0])}")
+                    self.output_manager.print_formatted('kv', trend['aspect'], key="Aspect", indent=2)
+                    self.output_manager.print_formatted('kv', trend['dominant_sentiment'], key="Dominant Sentiment", indent=4)
+                    self.output_manager.print_formatted('kv', trend['document_count'], key="Appears in documents", indent=4)
+                    distribution = ', '.join([f'{s.capitalize()} {p:.1f}%' for s, p in trend['sentiment_distribution'].items() if p > 0])
+                    self.output_manager.print_formatted('kv', distribution, key="Distribution", indent=4)
 
             # Display advanced document analysis (limited to first 3)
             if "document_analysis" in result:
-                print("\n  Detailed Document Analysis (first 3):")
+                self.output_manager.print_formatted('mini_header', "Detailed Document Analysis (first 3)")
                 for i, doc in enumerate(result["document_analysis"][:3]):
-                    print(f"\n    Document: {doc['source']}")
-                    print(f"      Overall Sentiment: {doc['overall_sentiment']}")
-                    print(f"      Emotional Tone: {doc['emotional_tone']}")
+                    self.output_manager.print_formatted('kv', doc['source'], key="Document", indent=2)
+                    self.output_manager.print_formatted('kv', doc['overall_sentiment'], key="Overall Sentiment", indent=4)
+                    self.output_manager.print_formatted('kv', doc['emotional_tone'], key="Emotional Tone", indent=4)
 
                     if doc.get("aspects"):
-                        print("      Key Aspects:")
+                        self.output_manager.print_formatted('kv', "Key Aspects:", indent=4)
                         for aspect in doc["aspects"]:
-                            print(
-                                f"        {aspect['aspect']}: {aspect['sentiment']} (confidence: {aspect['confidence']:.2f})")
+                            self.output_manager.print_formatted('list',
+                                f"{aspect['aspect']}: {aspect['sentiment']} (confidence: {aspect['confidence']:.2f})", indent=6)
 
                     if doc.get("summary"):
-                        print(f"      Summary: {doc['summary']}")
+                        self.output_manager.print_formatted('kv', doc['summary'], key="Summary", indent=4)
 
                 if len(result["document_analysis"]) > 3:
                     print(f"\n    ... and {len(result['document_analysis']) - 3} more documents")
 
         # Save results to file
         output_format = self.config.get('system.output_format')
-        filepath = self.output_manager.save_sentiment_analysis(workspace, results, "sentiment", output_format)
+        filepath = self.output_manager.save_sentiment_analysis(workspace, results, method, output_format)
 
-        print(f"\nResults saved to: {filepath}")
+        self.output_manager.print_formatted('feedback', f"Results saved to: {filepath}", success=True)
