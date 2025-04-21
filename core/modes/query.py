@@ -1,24 +1,25 @@
 """
 Query mode module with LlamaIndex and Ollama integration
-With improved session logging capability, fixed exit behavior,
-and optimized for performance, speed, and accuracy
+With improved session logging capability and fixed exit behavior
 """
+
 import os
 import textwrap
-import time
-from functools import lru_cache
-from typing import List, Dict, Any, Optional, Tuple
+
 from core.engine.logging import debug, info, warning, error
 from core.engine.storage import StorageManager
 from core.engine.output import OutputManager
 from core.language.processor import TextProcessor
 from core.connectors.connector_factory import ConnectorFactory
+from core.engine.utils import ensure_dir, Colors
+from core.engine.common import safe_execute
+
 
 class QueryEngine:
     """Interactive query engine using LlamaIndex and Ollama"""
 
     def __init__(self, config, storage_manager=None, output_manager=None, text_processor=None):
-        """Initialize the query engine with optimized configuration"""
+        """Initialize the query engine"""
         self.config = config
         self.storage_manager = storage_manager or StorageManager(config)
         self.output_manager = output_manager or OutputManager(config)
@@ -26,25 +27,10 @@ class QueryEngine:
         self.factory = ConnectorFactory(config)
         self.llm_connector = self.factory.get_llm_connector()
 
-        # State variables
         self.active = False
         self.current_workspace = None
-
-        # Unified session logging attribute (fixes inconsistency)
-        self.session_logging = False
-
-        # Cache for frequently accessed config values
-        self._config_cache = {}
-
-        # Performance optimization settings
-        self.relevance_threshold = self._get_config_value('query.relevance_threshold', 0.0)
-        self.max_retries = self._get_config_value('query.max_retries', 2)
-        self.retry_delay = self._get_config_value('query.retry_delay', 1.0)
-
-        # Document processing optimization
-        self.batch_size = self._get_config_value('query.batch_size', 10)
-
-        debug(config, "Query engine initialized with optimized settings")
+        self.logging_session = False  # Explicitly add logging_session attribute
+        debug(config, "Query engine initialized")
 
     def activate(self, workspace):
         """
@@ -97,26 +83,6 @@ class QueryEngine:
         """Check if query mode is active"""
         return self.active
 
-    def _get_config_value(self, key: str, default: Any) -> Any:
-        """
-        Get a configuration value with caching for performance
-
-        Args:
-            key: The configuration key
-            default: Default value if key is not found
-
-        Returns:
-            The configuration value or default
-        """
-        # Check cache first
-        if key in self._config_cache:
-            return self._config_cache[key]
-
-        # Get from config and cache it
-        value = self.config.get(key, default)
-        self._config_cache[key] = value
-        return value
-
     def _verify_llm_connection(self):
         """Verify connection to LLM"""
         debug(self.config, "Verifying LLM connection")
@@ -128,91 +94,47 @@ class QueryEngine:
         # For other connectors, assume connection is valid
         return True
 
-    def _generate_response(self, query: str, docs: List[Dict[str, Any]]) -> str:
+    def _generate_response(self, query, docs):
         """
-        Generate a response using an LLM with context, with retry logic for reliability
+        Generate a response using an LLM with context
 
         Args:
-            query: The original query
-            docs: Relevant documents
+            query (str): The original query
+            docs (list): Relevant documents
 
         Returns:
-            The generated response
+            str: The generated response
         """
         debug(self.config, "Generating response with LLM")
-        model = self._get_config_value('llm.default_model', 'mistral')
+        model = self.config.get('llm.default_model')
 
-        # Implement retry logic for improved reliability
-        retries = 0
-        last_error = None
+        try:
+            return self.llm_connector.generate_with_context(query, docs, model)
+        except Exception as e:
+            debug(self.config, f"Error generating response: {str(e)}")
+            return f"Error generating response: {str(e)}"
 
-        while retries <= self.max_retries:
-            try:
-                if retries > 0:
-                    debug(self.config, f"Retry attempt {retries}/{self.max_retries} for LLM response generation")
-
-                return self.llm_connector.generate_with_context(query, docs, model)
-
-            except Exception as e:
-                last_error = e
-                debug(self.config, f"Error generating response (attempt {retries+1}/{self.max_retries+1}): {str(e)}")
-
-                if retries < self.max_retries:
-                    # Wait before retrying with exponential backoff
-                    wait_time = self.retry_delay * (2 ** retries)
-                    debug(self.config, f"Waiting {wait_time:.2f}s before retry...")
-                    time.sleep(wait_time)
-
-                retries += 1
-
-        # If we get here, all retries failed
-        error_msg = f"Error generating response after {self.max_retries+1} attempts: {str(last_error)}"
-        warning(error_msg)
-        return f"I apologize, but I encountered a technical issue while generating a response. Please try again or rephrase your query."
-
-    def _generate_response_no_context(self, query: str) -> str:
+    def _generate_response_no_context(self, query):
         """
-        Generate a response using an LLM without context, with retry logic for reliability
+        Generate a response using an LLM without context
 
         Args:
-            query: The original query
+            query (str): The original query
 
         Returns:
-            The generated response
+            str: The generated response
         """
         debug(self.config, "Generating response with LLM (no context)")
-        model = self._get_config_value('llm.default_model', 'mistral')
+        model = self.config.get('llm.default_model')
 
         # Create a prompt for no-context scenario
         prompt = f"You are a document analysis assistant. The user is asking about documents in their collection, but no relevant documents were found. Please provide a helpful response.\n\nUser query: {query}\n\nResponse:"
 
-        # Implement retry logic for improved reliability
-        retries = 0
-        last_error = None
-
-        while retries <= self.max_retries:
-            try:
-                if retries > 0:
-                    debug(self.config, f"Retry attempt {retries}/{self.max_retries} for LLM response generation (no context)")
-
-                return self.llm_connector.generate(prompt, model)
-
-            except Exception as e:
-                last_error = e
-                debug(self.config, f"Error generating no-context response (attempt {retries+1}/{self.max_retries+1}): {str(e)}")
-
-                if retries < self.max_retries:
-                    # Wait before retrying with exponential backoff
-                    wait_time = self.retry_delay * (2 ** retries)
-                    debug(self.config, f"Waiting {wait_time:.2f}s before retry...")
-                    time.sleep(wait_time)
-
-                retries += 1
-
-        # If we get here, all retries failed
-        error_msg = f"Error generating no-context response after {self.max_retries+1} attempts: {str(last_error)}"
-        warning(error_msg)
-        return f"I apologize, but I encountered a technical issue while generating a response. Please try again or rephrase your query."
+        try:
+            return self.llm_connector.generate(prompt, model)
+        except Exception as e:
+            debug(self.config, f"Error generating response: {str(e)}")
+            return f"Error generating response: {str(e)}"
 
     def enter_interactive_mode(self):
         """
@@ -260,32 +182,32 @@ class QueryEngine:
                 # Start session saving with workspace prefix
                 self.output_manager.start_session_saving(self.current_workspace)
                 print("Query session logging started. All queries and responses will be saved.")
-                self.session_logging = True
+                self.session_logger = True
             except Exception as e:
                 debug(self.config, f"Error starting query session logging: {str(e)}")
-                self.session_logging = False
+                self.session_logger = False
         else:
             debug(self.config, "OutputManager doesn't support session saving")
-            self.session_logging = False
+            self.session_logger = False
 
     def _stop_session_logging(self):
         """Stop logging query session"""
         debug(self.config, "Stopping query session logging")
 
         # Check if we're logging and output_manager has the functionality
-        if self.session_logging and hasattr(self.output_manager, 'stop_session_saving'):
+        if self.session_logger and hasattr(self.output_manager, 'stop_session_saving'):
             try:
                 filepath = self.output_manager.stop_session_saving()
                 print(f"Query session logging stopped. Session log saved to: {filepath}")
-                self.session_logging = False
+                self.session_logger = False
             except Exception as e:
-                print(self.config, f"Error stopping query session logging: {str(e)}")
+                debug(self.config, f"Error stopping query session logging: {str(e)}")
                 print(f"Warning: Could not properly save session log: {str(e)}")
-                self.session_logging = False
+                self.session_logger = False
 
     def _log_to_session(self, content):
         """Helper method to log content to active session"""
-        if self.session_logging and hasattr(self.output_manager, '_write_to_session'):
+        if self.session_logger and hasattr(self.output_manager, '_write_to_session'):
             self.output_manager._write_to_session(content)
 
     def process_query(self, query):
@@ -294,7 +216,6 @@ class QueryEngine:
         and logging everything else to system message log
         """
         from core.engine.logging import info, debug, warning, error
-
         debug(self.config, f"Processing query: {query}")
 
         if not self.active:
@@ -302,10 +223,12 @@ class QueryEngine:
             return
 
         # Log query to system message log
+
         info(f"QUERY: {query}")
 
-        # Log the query text to session if active
-        self._log_to_session(f"User Query: {query}")
+        # Explicitly log the query text if we're saving a session
+        if self.logging_session and hasattr(self.output_manager, '_write_to_session'):
+            self.output_manager._write_to_session(f"User Query: {query}")
 
         # Preprocess query
         processed_query = self.text_processor.preprocess(query)
@@ -316,22 +239,8 @@ class QueryEngine:
         k_value = self.config.get('query.k_value')
         debug(f"Using k value: {k_value}")
 
-        # Retrieve documents with optimized processing
+        # Retrieve documents
         docs = self.storage_manager.query_documents(self.current_workspace, processed_query['processed'], k=k_value)
-
-        # Filter documents by relevance score if threshold is set
-        if self.relevance_threshold > 0 and docs:
-            filtered_docs = []
-            for doc in docs:
-                score = doc.get('relevance_score', 0)
-                if isinstance(score, float) and score >= self.relevance_threshold:
-                    filtered_docs.append(doc)
-
-            # Log filtering results
-            if len(filtered_docs) < len(docs):
-                debug(f"Filtered out {len(docs) - len(filtered_docs)} documents below relevance threshold {self.relevance_threshold}")
-
-            docs = filtered_docs
 
         if not docs:
             warning("No relevant documents found for query")
@@ -344,8 +253,9 @@ class QueryEngine:
             wrapped_response_lines = textwrap.wrap(response, width=80)
             print('\n'.join(wrapped_response_lines) + '\n')
 
-            # Log the response text to session if active
-            self._log_to_session(f"Response (no documents found): {response}")
+            # Explicitly log the response text to session if active
+            if self.logging_session and hasattr(self.output_manager, '_write_to_session'):
+                self.output_manager._write_to_session(f"Response (no documents found): {response}")
 
             self.output_manager.add_to_buffer(query, response, [])
             return
@@ -353,44 +263,35 @@ class QueryEngine:
         # Log retrieved documents info to system message log
         info(f"RETRIEVED DOCUMENTS: {len(docs)}")
 
-        # Prepare document log with optimized batch processing
+        # Detailed document info goes to system log
         doc_log = f"Retrieved {len(docs)} documents\n"
-
-        # Process documents in batches for better performance
-        batch_size = min(self.batch_size, len(docs))
-
-        # Pre-allocate lists for better memory efficiency
-        sources = []
-        scores = []
-        previews = []
-
-        # Extract document metadata in a single pass
         for i, doc in enumerate(docs):
-            # Extract metadata efficiently
             source = doc.get('metadata', {}).get('source', 'unknown')
             score = doc.get('relevance_score', 'N/A')
+
+            # Format as readable score
             score_str = f"{score:.4f}" if isinstance(score, float) else str(score)
-
-            # Generate preview
-            content = doc.get('content', '')
-            preview = (content[:200] + '...') if len(content) > 200 else content
-            preview_flat = preview.replace('\n', ' ')
-
-            # Store for batch logging
-            sources.append(source)
-            scores.append(score_str)
-            previews.append(preview_flat)
 
             # Log document details
             debug(f"Document {i + 1}: {source} (Relevance: {score_str})")
+
+            # Add to session log if active
+            if self.logging_session and hasattr(self.output_manager, '_write_to_session'):
+                doc_log += f"Document {i + 1}: {source}, Relevance: {score_str}\n"
+
+            # Show content preview in debug log
+            content = doc.get('content', '')
+            preview = (content[:200] + '...') if len(content) > 200 else content
+            preview_flat = preview.replace('\n', ' ')
             debug(f"  Preview: {preview_flat}")
 
-            # Build log entry
-            doc_log += f"Document {i + 1}: {source}, Relevance: {score_str}\n"
-            doc_log += f"  Preview: {preview_flat}\n"
+            # Add preview to session log if active
+            if self.logging_session and hasattr(self.output_manager, '_write_to_session'):
+                doc_log += f"  Preview: {preview_flat}\n"
 
         # Log the document summaries to session if active
-        self._log_to_session(doc_log)
+        if self.logging_session and hasattr(self.output_manager, '_write_to_session'):
+            self.output_manager._write_to_session(doc_log)
 
         # Generate response using LLM
         info("Generating response with retrieved documents...")
@@ -403,8 +304,9 @@ class QueryEngine:
         wrapped_response_lines = textwrap.wrap(response, width=80)
         print('\n'.join(wrapped_response_lines) + '\n')
 
-        # Log the response text to session if active
-        self._log_to_session(f"Response: {response}")
+        # Explicitly log the response text to session if active
+        if self.logging_session and hasattr(self.output_manager, '_write_to_session'):
+            self.output_manager._write_to_session(f"Response: {response}")
 
         # Save to buffer for potential later saving
         self.output_manager.add_to_buffer(query, response, docs)
