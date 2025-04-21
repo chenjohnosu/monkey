@@ -530,7 +530,7 @@ class MonkeyTUI(App):
         output_log.write(f"> {value}")
 
         # Run the command in a separate thread to prevent UI freezing
-        def run_command():
+        def run_command(self):
             try:
                 # Process the command and update everything
                 self._process_command(value)
@@ -548,7 +548,8 @@ class MonkeyTUI(App):
                 error(f"Error processing command: {str(e)}")
                 import traceback
                 from core.engine.logging import debug
-                debug(traceback.format_exc())
+                # Fix: Pass both config and message parameters to debug function
+                debug(None, f"Error stacktrace: {traceback.format_exc()}")
                 self.call_from_thread(lambda: output_log.write(f"Error processing command: {str(e)}"))
             finally:
                 self.command_running = False
@@ -643,58 +644,69 @@ class MonkeyTUI(App):
             string_capture = StringCapture(self)
             sys.stdout = string_capture
 
-            # Process the command with CommandProcessor
-            # Check if it's a quit command to exit the app
-            if command_string.startswith('/quit') or command_string.startswith('/exit'):
-                # First run the actual command
+            try:  # Add a try-finally block to ensure stdout is restored
+                # Process the command with CommandProcessor
+                # Check if it's a quit command to exit the app
+                if command_string.startswith('/quit') or command_string.startswith('/exit'):
+                    # First run the actual command
+                    self.command_processor.process_command(command_string)
+                    # Then exit the app
+                    self._timer_running = False
+                    self._status_timer_running = False
+                    self.call_from_thread(self.exit)
+                    return
+
+                # Process the command
                 self.command_processor.process_command(command_string)
-                # Then exit the app
-                self._timer_running = False
-                self._status_timer_running = False
-                self.call_from_thread(self.exit)
-                return
+                # Capture the command and its response
+                command_log = f"> {command_string}\n"
+                response_log = string_capture.line_buffer.strip()
 
-            # Process the command
-            self.command_processor.process_command(command_string)
-            # Capture the command and its response
-            command_log = f"> {command_string}\n"
-            response_log = string_capture.line_buffer.strip()
+                # Write the command and response to the system log
+                self.call_from_thread(lambda: self.system_log.write(command_log))
+                self.call_from_thread(lambda: self.system_log.write(response_log))
 
-            # Write the command and response to the system log
-            self.call_from_thread(lambda: self.system_log.write(command_log))
-            self.call_from_thread(lambda: self.system_log.write(response_log))
-
-            # If this was a load command, immediately update status
-            if load_cmd and hasattr(self.command_processor, 'current_workspace'):
-                # Force status bar to use the new workspace immediately
-                status_bar = self.query_one(StatusBar)
-                status_bar.workspace = self.command_processor.current_workspace
-                self.call_from_thread(lambda: status_bar.update_status())
-
-            # Update query mode status by directly checking query_engine
-            if hasattr(self.command_processor, 'query_engine'):
-                try:
-                    self.query_mode = self.command_processor.query_engine.is_active()
-
-                    # Also update the StatusBar.query_mode to ensure consistency
+                # If this was a load command, immediately update status
+                if load_cmd and hasattr(self.command_processor, 'current_workspace'):
+                    # Force status bar to use the new workspace immediately
                     status_bar = self.query_one(StatusBar)
-                    status_bar.query_mode = self.query_mode
-
-                    # Force status bar update
+                    status_bar.workspace = self.command_processor.current_workspace
                     self.call_from_thread(lambda: status_bar.update_status())
-                except Exception as e:
-                    logger.error(f"Error checking query mode: {str(e)}")
 
-            # Flush any remaining output
-            string_capture.flush()
+                # Update query mode status by directly checking query_engine
+                if hasattr(self.command_processor, 'query_engine'):
+                    try:
+                        self.query_mode = self.command_processor.query_engine.is_active()
 
-        finally:
-            # Restore stdout and input function
-            sys.stdout = original_stdout
+                        # Also update the StatusBar.query_mode to ensure consistency
+                        status_bar = self.query_one(StatusBar)
+                        status_bar.query_mode = self.query_mode
+
+                        # Force status bar update
+                        self.call_from_thread(lambda: status_bar.update_status())
+                    except Exception as e:
+                        logger.error(f"Error checking query mode: {str(e)}")
+
+                # Flush any remaining output
+                string_capture.flush()
+            finally:
+                # Restore stdout and input function
+                sys.stdout = original_stdout
+                builtins.input = original_input
+
+        except Exception as e:
+            logger.error(f"Error in _process_command: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            # Make sure to restore stdout and input in case of exception
+            import sys
+            sys.stdout = sys.__stdout__
             builtins.input = original_input
+            # Report error to UI
+            self.query_one(OutputLog).write(f"Error processing command: {str(e)}")
 
-            # Always update UI elements after any command to ensure status bar is current
-            self.call_from_thread(lambda: self.query_one(StatusBar).update_status())
+        # Always update UI elements after any command to ensure status bar is current
+        self.call_from_thread(lambda: self.query_one(StatusBar).update_status())
 
     def on_unmount(self):
         """Clean up resources when app is closing"""

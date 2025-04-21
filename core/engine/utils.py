@@ -127,18 +127,18 @@ def save_json(filepath, data, indent=2):
         Path(filepath).parent.mkdir(parents=True, exist_ok=True)
 
         # Write to temp file first, then rename for atomicity
-        temp_file = f"{filepath}.tmp"
+        temp_file = Path(f"{filepath}.tmp")
         with open(temp_file, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=indent)
 
         # Atomic replace
-        os.replace(temp_file, filepath)
+        temp_file.replace(filepath)
         return True
     except Exception as e:
         error(f"Error saving JSON file {filepath}: {str(e)}")
         # Clean up temp file if it exists
         with contextlib.suppress(FileNotFoundError):
-            os.remove(f"{filepath}.tmp")
+            Path(f"{filepath}.tmp").unlink(missing_ok=True)
         return False
 
 
@@ -215,9 +215,9 @@ def load_original_document(config, workspace, source_path):
 
     try:
         # Construct path to original file
-        original_path = os.path.join("body", workspace, source_path)
+        original_path = Path("body") / workspace / source_path
 
-        if os.path.exists(original_path):
+        if original_path.exists():
             # Get content based on file type
             content = get_file_content(original_path)
             if content:

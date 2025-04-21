@@ -27,12 +27,12 @@ def get_workspace_dirs(workspace: str) -> Dict[str, str]:
         Dict with standard directory paths
     """
     return {
-        'data': os.path.join("data", workspace),
-        'body': os.path.join("body", workspace),
-        'logs': os.path.join("logs", workspace),
-        'vector_store': os.path.join("data", workspace, "vector_store"),
-        'documents': os.path.join("data", workspace, "documents"),
-        'cache': os.path.join("data", workspace, "cache")
+        'data': str(Path("data") / workspace),
+        'body': str(Path("body") / workspace),
+        'logs': str(Path("logs") / workspace),
+        'vector_store': str(Path("data") / workspace / "vector_store"),
+        'documents': str(Path("data") / workspace / "documents"),
+        'cache': str(Path("data") / workspace / "cache")
     }
 
 
@@ -67,27 +67,26 @@ def get_latest_file(directory: str, pattern: str = None, extension: str = None) 
     Returns:
         Path to the latest file or None if not found
     """
-    if not os.path.exists(directory):
+    dir_path = Path(directory)
+    if not dir_path.exists():
         return None
 
     matching_files = []
 
-    for filename in os.listdir(directory):
-        filepath = os.path.join(directory, filename)
-
+    for file_path in dir_path.iterdir():
         # Skip directories
-        if not os.path.isfile(filepath):
+        if not file_path.is_file():
             continue
 
         # Check pattern match if specified
-        if pattern and pattern not in filename:
+        if pattern and pattern not in file_path.name:
             continue
 
         # Check extension if specified
-        if extension and not filename.endswith(extension):
+        if extension and not file_path.name.endswith(extension):
             continue
 
-        matching_files.append((filepath, os.path.getmtime(filepath)))
+        matching_files.append((str(file_path), file_path.stat().st_mtime))
 
     if not matching_files:
         return None
@@ -233,18 +232,20 @@ def create_timestamped_backup(filepath: str) -> Optional[str]:
     Returns:
         Path to backup or None if failed
     """
-    if not os.path.exists(filepath):
+    path = Path(filepath)
+    if not path.exists():
         warning(f"Cannot create backup - path does not exist: {filepath}")
         return None
 
     timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
     backup_path = f"{filepath}_backup_{timestamp}"
+    backup_path_obj = Path(backup_path)
 
     try:
-        if os.path.isdir(filepath):
-            shutil.copytree(filepath, backup_path)
+        if path.is_dir():
+            shutil.copytree(path, backup_path_obj)
         else:
-            shutil.copy2(filepath, backup_path)
+            shutil.copy2(path, backup_path_obj)
 
         info(f"Created backup at: {backup_path}")
         return backup_path
@@ -267,7 +268,7 @@ def save_analysis_results(workspace: str, analysis_type: str, results: Dict, tim
         Path to saved file
     """
     # Create logs directory
-    logs_dir = os.path.join("logs", workspace)
+    logs_dir = Path("logs") / workspace
     ensure_dir(logs_dir)
 
     # Generate timestamp if not provided
@@ -294,7 +295,7 @@ def save_analysis_results(workspace: str, analysis_type: str, results: Dict, tim
 
     # Generate filename
     filename = f"{analysis_type}_{timestamp}.{output_format}"
-    filepath = os.path.join(logs_dir, filename)
+    filepath = logs_dir / filename
 
     # Save based on format
     if output_format == 'json':
@@ -372,7 +373,7 @@ def check_workspace_exists(workspace: str) -> bool:
         True if workspace exists, False otherwise
     """
     dirs = get_workspace_dirs(workspace)
-    return os.path.exists(dirs['data']) or os.path.exists(dirs['body'])
+    return Path(dirs['data']).exists() or Path(dirs['body']).exists()
 
 
 def create_workspace(workspace: str, confirm: bool = True) -> bool:

@@ -8,6 +8,7 @@ import json
 import hashlib
 import datetime
 from typing import List, Dict, Any, Optional
+from pathlib import Path
 
 from core.engine.utils import ensure_dir, save_json, load_json, create_timestamped_backup, format_size
 from core.engine.logging import debug, info, error, warning, debug
@@ -46,7 +47,7 @@ class StorageManager:
 
         # Create safe filename from source path
         filename = hashlib.md5(source_path.encode('utf-8')).hexdigest() + '.json'
-        filepath = os.path.join(doc_dir, filename)
+        filepath = Path(doc_dir) / filename
 
         # Create document object
         document = {
@@ -82,12 +83,12 @@ class StorageManager:
         # Create safe filename from source path
         filename = hashlib.md5(source_path.encode('utf-8')).hexdigest() + '.json'
         dirs = get_workspace_dirs(workspace)
-        filepath = os.path.join(dirs['documents'], filename)
+        filepath = Path(dirs['documents']) / filename
 
         # Remove file if it exists
-        if os.path.exists(filepath):
+        if filepath.exists():
             try:
-                os.remove(filepath)
+                filepath.unlink()
                 debug(self.config, f"Removed document file: {filepath}")
                 return True
             except Exception as e:
@@ -180,8 +181,8 @@ class StorageManager:
 
         # Get standard directory paths using common.py function
         dirs = get_workspace_dirs(workspace)
-        workspace_dir = dirs['data']
-        documents_dir = dirs['documents']
+        workspace_dir = Path(dirs['data'])
+        documents_dir = Path(dirs['documents'])
 
         # Detailed diagnostics
         debug("Workspace Document Retrieval:")
@@ -189,11 +190,11 @@ class StorageManager:
         debug(f"  Documents Directory: {documents_dir}")
 
         # Check directory existence
-        if not os.path.exists(workspace_dir):
+        if not workspace_dir.exists():
             error(f"ERROR: Workspace directory does not exist: {workspace_dir}")
             return []
 
-        if not os.path.exists(documents_dir):
+        if not documents_dir.exists():
             error(f"ERROR: Documents directory does not exist: {documents_dir}")
             # Attempt to create the directory
             ensure_dir(documents_dir)
@@ -204,14 +205,14 @@ class StorageManager:
 
         # List files in the documents directory
         try:
-            document_files = [f for f in os.listdir(documents_dir) if f.endswith('.json')]
+            document_files = [f.name for f in documents_dir.glob('*.json')]
             print(f"  JSON Files in Documents Directory: {len(document_files)}")
 
             # If no files, provide more context
             if not document_files:
                 warning("  Warning: No JSON document files found")
                 # List all files in the directory to understand why
-                all_files = os.listdir(documents_dir)
+                all_files = [f.name for f in documents_dir.iterdir()]
                 if all_files:
                     print("  All files in documents directory:")
                     for file in all_files:
@@ -224,7 +225,7 @@ class StorageManager:
 
         # Load documents from files using load_json from utils.py
         for filename in document_files:
-            filepath = os.path.join(documents_dir, filename)
+            filepath = documents_dir / filename
             document = load_json(filepath)
             if document:
                 documents.append(document)
@@ -323,9 +324,9 @@ class StorageManager:
 
         # Get vector store directory from common.py function
         dirs = get_workspace_dirs(workspace)
-        vector_dir = dirs['vector_store']
+        vector_dir = Path(dirs['vector_store'])
 
-        if os.path.exists(vector_dir):
+        if vector_dir.exists():
             # Create backup using utils.py function
             backup_dir = create_timestamped_backup(vector_dir)
             if backup_dir:
@@ -350,8 +351,8 @@ class StorageManager:
                 vector_store_type = self.config.get('storage.vector_store')
                 if vector_store_type == 'llama_index':
                     # Check actual number of documents in the vector store
-                    docstore_path = os.path.join(vector_dir, "docstore.json")
-                    if os.path.exists(docstore_path):
+                    docstore_path = vector_dir / "docstore.json"
+                    if docstore_path.exists():
                         try:
                             docstore_data = load_json(docstore_path)
                             if docstore_data and 'docstore/docs' in docstore_data:
@@ -364,7 +365,7 @@ class StorageManager:
                 print(f"Vector store created successfully with {len(documents)} source files")
 
                 # Save vector store metadata
-                metadata_path = os.path.join(vector_dir, "metadata.json")
+                metadata_path = vector_dir / "metadata.json"
                 save_json(metadata_path, {
                     "created": datetime.datetime.now().isoformat(),
                     "source_file_count": len(documents),
@@ -407,9 +408,9 @@ class StorageManager:
             else:
                 # Default behavior - look for existing vector store
                 dirs = get_workspace_dirs(workspace)
-                vector_dir = dirs['vector_store']
-                metadata_path = os.path.join(vector_dir, "metadata.json")
-                success = os.path.exists(metadata_path)
+                vector_dir = Path(dirs['vector_store'])
+                metadata_path = vector_dir / "metadata.json"
+                success = metadata_path.exists()
 
             if success:
                 # Store in cache
@@ -437,9 +438,9 @@ class StorageManager:
 
         # Get directories using common.py function
         dirs = get_workspace_dirs(workspace)
-        workspace_dir = dirs['documents']
+        workspace_dir = Path(dirs['documents'])
 
-        if not os.path.exists(workspace_dir):
+        if not workspace_dir.exists():
             return None
 
         try:
@@ -454,8 +455,8 @@ class StorageManager:
                 language_counts[lang] = language_counts.get(lang, 0) + 1
 
             # Look for vector store metadata
-            vector_dir = dirs['vector_store']
-            metadata_path = os.path.join(vector_dir, "metadata.json")
+            vector_dir = Path(dirs['vector_store'])
+            metadata_path = vector_dir / "metadata.json"
 
             # Use load_json from utils.py
             metadata = load_json(metadata_path, {
@@ -495,14 +496,16 @@ class StorageManager:
             dirs = get_workspace_dirs(workspace)
 
             # Delete data directory
-            if os.path.exists(dirs['data']):
+            data_dir = Path(dirs['data'])
+            if data_dir.exists():
                 import shutil
-                shutil.rmtree(dirs['data'])
+                shutil.rmtree(data_dir)
 
             # Delete documents directory
-            if os.path.exists(dirs['body']):
+            body_dir = Path(dirs['body'])
+            if body_dir.exists():
                 import shutil
-                shutil.rmtree(dirs['body'])
+                shutil.rmtree(body_dir)
 
             # Remove from cache
             if workspace in self.vector_stores:
@@ -576,28 +579,28 @@ class VectorStoreInspector:
 
         # Get directories using common.py function
         dirs = get_workspace_dirs(workspace)
-        data_dir = dirs['data']
-        body_dir = dirs['body']
-        documents_dir = dirs['documents']
-        vector_dir = dirs['vector_store']
+        data_dir = Path(dirs['data'])
+        body_dir = Path(dirs['body'])
+        documents_dir = Path(dirs['documents'])
+        vector_dir = Path(dirs['vector_store'])
 
         print(f"\nInspecting workspace: {workspace}")
 
         # Check workspace directories
         print("\nWorkspace Directories:")
-        print(f"  Data Directory: {data_dir} - {'Exists' if os.path.exists(data_dir) else 'Missing'}")
-        print(f"  Body Directory: {body_dir} - {'Exists' if os.path.exists(body_dir) else 'Missing'}")
+        print(f"  Data Directory: {data_dir} - {'Exists' if data_dir.exists() else 'Missing'}")
+        print(f"  Body Directory: {body_dir} - {'Exists' if body_dir.exists() else 'Missing'}")
 
         # Check document files
-        if os.path.exists(documents_dir):
-            document_files = [f for f in os.listdir(documents_dir) if f.endswith('.json')]
+        if documents_dir.exists():
+            document_files = [f.name for f in documents_dir.glob('*.json')]
             print(f"\nDocument JSON Files: {len(document_files)}")
             for i, file in enumerate(document_files[:5]):  # Show first 5
                 print(f"  {i + 1}. {file}")
 
                 # Peek inside the document file
                 try:
-                    doc = load_json(os.path.join(documents_dir, file))
+                    doc = load_json(documents_dir / file)
                     if doc:
                         source = doc.get('metadata', {}).get('source', 'unknown')
                         print(f"     Source: {source}")
@@ -615,25 +618,24 @@ class VectorStoreInspector:
         vector_store_type = self.config.get('storage.vector_store')
 
         print(f"\nVector Store Type: {vector_store_type}")
-        print(f"Vector Store Directory: {vector_dir} - {'Exists' if os.path.exists(vector_dir) else 'Missing'}")
+        print(f"Vector Store Directory: {vector_dir} - {'Exists' if vector_dir.exists() else 'Missing'}")
 
         # If vector store directory exists, list and check all files
-        if os.path.exists(vector_dir):
+        if vector_dir.exists():
             print("\nVector Store Files:")
-            for file in os.listdir(vector_dir):
-                file_path = os.path.join(vector_dir, file)
-                size = os.path.getsize(file_path) if os.path.isfile(file_path) else 0
-                print(f"  {file}: {format_size(size)}")
+            for file_path in vector_dir.iterdir():
+                size = file_path.stat().st_size if file_path.is_file() else 0
+                print(f"  {file_path.name}: {format_size(size)}")
 
                 # For JSON files, validate and show basic structure
-                if file.endswith('.json') and os.path.isfile(file_path):
+                if file_path.name.endswith('.json') and file_path.is_file():
                     try:
                         data = load_json(file_path)
                         if isinstance(data, dict):
                             print(f"    Keys: {list(data.keys())[:5]}{' ...' if len(data.keys()) > 5 else ''}")
 
                             # Count documents for docstore
-                            if file == 'docstore.json' and 'docstore/docs' in data:
+                            if file_path.name == 'docstore.json' and 'docstore/docs' in data:
                                 print(f"    Documents in docstore: {len(data['docstore/docs'])}")
 
                                 # Show a sample document
