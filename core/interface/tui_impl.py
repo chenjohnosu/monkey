@@ -281,36 +281,41 @@ class MonkeyTUI(App):
         """
 
     def __init__(self, command_processor):
-        super().__init__()
+        # Set up command processor and config before parent init
         self.command_processor = command_processor
         self.config = command_processor.config
         self.input_handler = TUIInputHandler(self)
         self.command_running = False
         self.current_command = None
+        self._is_closing = False
+
+        # Initialize the app
+        super().__init__()
+
+        # Initialize log handler
         self.system_log = None
         self.log_handler = TUILogHandler(self)
-        self.query_mode = False  # Track query mode status
+
+        # Initialize tracking variables
+        self.query_mode = False
+        self._timer_running = False
+        self._status_timer_running = False
 
         # Set up log handler for debug
         root_logger = logging.getLogger()
         root_logger.addHandler(self.log_handler)
-
-        # Set up timer for log updates
-        self._timer_running = False
-
-        # Set up periodic status update timer
-        self._status_timer_running = False
 
         # Store reference to debug for monitoring
         from core.engine.logging import debug
         self.original_debug = debug
 
         # Override debug to capture to system log
-        def tui_debug(config, message):
+        def tui_debug(message, config=None):
             # Call the original function
-            self.original_debug(config, message)
+            self.original_debug(message, config)
             # Also capture to our log
-            self.log_handler.log_queue.put(f"[dim]DEBUG: {message}[/dim]")
+            if hasattr(self, 'log_handler'):
+                self.log_handler.log_queue.put(f"[dim]DEBUG: {message}[/dim]")
 
         # Replace the debug function
         import core.engine.logging
@@ -557,7 +562,7 @@ class MonkeyTUI(App):
                 # Update status bar
                 self.call_from_thread(lambda: self.query_one(StatusBar).update_status())
 
-        threading.Thread(target=run_command).start()
+        threading.Thread(target=run_command, args=(self,), daemon=True).start()
 
     def _force_status_update(self, workspace):
         """Force status bar update with current workspace"""
@@ -572,7 +577,9 @@ class MonkeyTUI(App):
         try:
             # Check for direct quit/exit commands - handle these immediately
             if command_string.lower() in ['/quit', '/exit']:
-                # Stop timers first
+                # Set closing flag
+                self._is_closing = True
+                # Stop timers
                 self._timer_running = False
                 self._status_timer_running = False
                 # Exit directly using the same method as Ctrl-Q
@@ -710,7 +717,10 @@ class MonkeyTUI(App):
 
     def on_unmount(self):
         """Clean up resources when app is closing"""
-        logger.info("TUI interface closing")
+        logger.info("TUI interface unmounting - shutting down")
+
+        # Set closing flag
+        self._is_closing = True
 
         # Stop the timers
         self._timer_running = False
@@ -724,3 +734,5 @@ class MonkeyTUI(App):
         # Restore original debug
         import core.engine.logging
         core.engine.logging.debug = self.original_debug
+
+        logger.info("TUI shutdown complete")

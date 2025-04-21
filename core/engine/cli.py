@@ -61,6 +61,52 @@ class CommandProcessor:
         info(f"Monkey v{self.config.get_version()} initialized. Type /help for available commands.")
 
         try:
+            # Set lower timeout for stdin to prevent blocking indefinitely
+            import sys
+            import select
+            import time
+
+            # Windows compatibility
+            if sys.platform.startswith('win'):
+                import msvcrt
+                def win_input_with_timeout(prompt, timeout=0.1):
+                    print(prompt, end='', flush=True)
+                    start_time = time.time()
+                    input_str = ''
+                    while True:
+                        if msvcrt.kbhit():
+                            char = msvcrt.getwch()
+                            if char == '\r':  # Enter key
+                                print('')
+                                return input_str
+                            elif char == '\b':  # Backspace
+                                if input_str:
+                                    input_str = input_str[:-1]
+                                    print('\b \b', end='', flush=True)
+                            else:
+                                input_str += char
+                                print(char, end='', flush=True)
+
+                        # Check for timeout
+                        if time.time() - start_time > timeout:
+                            # Reset timeout and continue waiting
+                            start_time = time.time()
+
+                        # Small sleep to prevent high CPU usage
+                        time.sleep(0.01)
+
+                input_func = win_input_with_timeout
+            else:
+                # Unix-based systems can use select
+                def unix_input_with_timeout(prompt, timeout=0.1):
+                    print(prompt, end='', flush=True)
+                    rlist, _, _ = select.select([sys.stdin], [], [], timeout)
+                    if rlist:
+                        return sys.stdin.readline().strip()
+                    return None
+
+                input_func = unix_input_with_timeout
+
             while self.running:
                 # Show both workspace and current LLM model in the prompt
                 llm_model = self.config.get('llm.default_model')
@@ -71,8 +117,15 @@ class CommandProcessor:
                 else:
                     prompt = f"[{self.current_workspace}][{llm_model}]> "
 
-                user_input = input(prompt)
-                if user_input.strip():
+                # Use non-blocking input with periodic retry
+                user_input = None
+                while user_input is None and self.running:
+                    user_input = input_func(prompt)
+                    # Give a small sleep if no input
+                    if user_input is None:
+                        time.sleep(0.1)
+
+                if user_input and self.running:
                     self.process_command(user_input)
         except KeyboardInterrupt:
             print("\nExiting...")
@@ -471,12 +524,12 @@ class CommandProcessor:
         debug(self.config, f"Loading workspace: {workspace}")
 
         # Check if workspace directories exist
-        import os
-        data_dir = os.path.join("data", workspace)
-        body_dir = os.path.join("body", workspace)
+        from pathlib import Path
+        data_dir = Path("data") / workspace
+        body_dir = Path("body") / workspace
 
         # Check if this is a new workspace
-        is_new_workspace = not os.path.exists(data_dir) and not os.path.exists(body_dir)
+        is_new_workspace = not data_dir.exists() and not body_dir.exists()
 
         if is_new_workspace:
             # Ask for confirmation before creating a new workspace
@@ -487,8 +540,8 @@ class CommandProcessor:
 
         # Create necessary directories
         for directory in [data_dir, body_dir]:
-            if not os.path.exists(directory):
-                os.makedirs(directory)
+            if not directory.exists():
+                directory.mkdir(parents=True, exist_ok=True)
                 print(f"Created directory: {directory}")
 
         # Add to loaded workspaces if not already loaded

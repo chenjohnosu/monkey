@@ -1,3 +1,4 @@
+
 """
 Common operations for document analysis toolkit
 Standardized functions for frequently used operations
@@ -7,6 +8,7 @@ import os
 import datetime
 import json
 import shutil
+from pathlib import Path  # Add this import at the module level
 from typing import Dict, Optional, Callable
 
 from core.engine.logging import error, warning, info

@@ -24,7 +24,7 @@ def ensure_dir(directory):
     """Ensure a directory exists, creating it if necessary using pathlib"""
     path = Path(directory)
     path.mkdir(parents=True, exist_ok=True)
-    return not path.exists()
+    return path.exists()  # This should be fixed to return True if path exists
 
 def get_file_extension(filepath):
     """Get the extension of a file using pathlib"""
