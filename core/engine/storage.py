@@ -568,6 +568,101 @@ class VectorStoreInspector:
         self.storage_manager = storage_manager or StorageManager(config)
         debug(config, "Vector store inspector initialized")
 
+    def dump_vector_store(self, workspace):
+        """
+        Dump vector store metadata and contents for inspection
+
+        Args:
+            workspace (str): Target workspace to inspect
+        """
+        debug(self.config, f"Dumping vector store contents for workspace: {workspace}")
+
+        # Get vector store directory
+        dirs = get_workspace_dirs(workspace)
+        vector_dir = Path(dirs['vector_store'])
+
+        print(f"\nVector Store Inspection for Workspace: {workspace}")
+        print(f"Vector Store Directory: {vector_dir}")
+
+        # Check if vector store directory exists
+        if not vector_dir.exists():
+            print(f"Vector store directory does not exist: {vector_dir}")
+            return
+
+        # List files in vector store directory
+        print("\nVector Store Files:")
+        try:
+            files = list(vector_dir.iterdir())
+            for file_path in files:
+                # Get file size
+                size = file_path.stat().st_size if file_path.is_file() else 0
+                print(f"  {file_path.name}: {format_size(size)}")
+
+                # For JSON files, attempt to load and show basic structure
+                if file_path.suffix == '.json':
+                    try:
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+
+                            # Basic structure analysis
+                            if isinstance(data, dict):
+                                print("    Top-level keys:", list(data.keys())[:5])
+
+                                # Special analysis for known file types
+                                if 'docstore/docs' in data:
+                                    print(f"    Documents in docstore: {len(data['docstore/docs'])}")
+
+                                # If it looks like a vector store, try to show some details
+                                if '/node_store' in data or '/docstore' in data:
+                                    try:
+                                        doc_count = len(data.get('/node_store', {}).get('nodes', {}))
+                                        print(f"    Nodes in node_store: {doc_count}")
+                                    except Exception:
+                                        pass
+                            elif isinstance(data, list):
+                                print(f"    List length: {len(data)}")
+
+                    except json.JSONDecodeError:
+                        print("    Unable to parse JSON")
+                    except Exception as e:
+                        print(f"    Error reading file: {str(e)}")
+
+        except Exception as e:
+            print(f"Error listing vector store files: {str(e)}")
+
+        # Attempt to load vector store with the appropriate connector
+        try:
+            # Use the storage manager to load the vector store
+            loaded = self.storage_manager.load_vector_store(workspace)
+
+            if loaded:
+                print("\nVector Store Loaded Successfully")
+
+                # Perform a test query to verify functionality
+                try:
+                    test_results = self.storage_manager.query_documents(workspace, "test", k=1)
+                    print(f"Test Query Results: {len(test_results)} documents retrieved")
+
+                    if test_results:
+                        first_doc = test_results[0]
+                        print("\nSample Retrieved Document:")
+                        source = first_doc.get('metadata', {}).get('source', 'Unknown')
+                        relevance = first_doc.get('relevance_score', 'N/A')
+                        print(f"  Source: {source}")
+                        print(f"  Relevance Score: {relevance}")
+
+                        # Optionally print a preview of the content
+                        content = first_doc.get('content', '')
+                        preview = (content[:200] + '...') if len(content) > 200 else content
+                        print(f"  Content Preview: {preview}")
+                except Exception as e:
+                    print(f"Error performing test query: {str(e)}")
+            else:
+                print("Failed to load vector store")
+
+        except Exception as e:
+            print(f"Error inspecting vector store: {str(e)}")
+
     def inspect_workspace(self, workspace):
         """
         Inspect a workspace's vector store and data
