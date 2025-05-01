@@ -21,6 +21,8 @@ class CommandProcessor:
         self.config = config
         self.running = True
         self.current_workspace = config.get('workspace.default')
+        self.hpc_mode = config.get('system.hpc_mode', False)
+        self.batch_mode = config.get('system.batch_mode', False)
 
         # Create shared instances
         self.storage_manager = StorageManager(config)

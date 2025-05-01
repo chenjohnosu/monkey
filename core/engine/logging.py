@@ -5,10 +5,14 @@ Simplified logging functionality for the document analysis toolkit
 import datetime
 import logging
 import sys
+import os
 from typing import Optional, Any
 
 class LogManager:
     """Centralized logging management"""
+
+    # Store file handler for batch mode
+    file_handler = None
 
     @classmethod
     def configure(cls, level=logging.INFO):
@@ -25,7 +29,7 @@ class LogManager:
         # Add console handler
         handler = logging.StreamHandler(sys.stderr)
         formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s',
-                                      datefmt='%Y-%m-%d %H:%M:%S')
+                                     datefmt='%Y-%m-%d %H:%M:%S')
         handler.setFormatter(formatter)
         root_logger.addHandler(handler)
 
@@ -37,38 +41,57 @@ class LogManager:
         return root_logger
 
     @classmethod
-    def set_debug(cls, enabled=False):
-        """Set debug mode"""
+    def set_level(cls, level_name):
+        """Set logging level by name"""
+        level_map = {
+            'off': logging.CRITICAL + 100,  # A level higher than any defined level
+            'error': logging.ERROR,
+            'warning': logging.WARNING,
+            'info': logging.INFO,
+            'debug': logging.DEBUG,
+            'trace': 5  # Custom TRACE level
+        }
+
+        level = level_map.get(level_name.lower(), logging.INFO)
         root_logger = logging.getLogger()
-        root_logger.setLevel(logging.DEBUG if enabled else logging.INFO)
-        return enabled
+        root_logger.setLevel(level)
+        return level
+
+    @classmethod
+    def add_file_handler(cls, log_file):
+        """Add a file handler for batch mode logging"""
+        if cls.file_handler:
+            # Remove existing file handler
+            root_logger = logging.getLogger()
+            root_logger.removeHandler(cls.file_handler)
+
+        # Create directory if needed
+        log_dir = os.path.dirname(log_file)
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir)
+
+        # Create new file handler
+        cls.file_handler = logging.FileHandler(log_file, mode='w', encoding='utf-8')
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s',
+                                     datefmt='%Y-%m-%d %H:%M:%S')
+        cls.file_handler.setFormatter(formatter)
+
+        # Add to root logger
+        root_logger = logging.getLogger()
+        root_logger.addHandler(cls.file_handler)
+
+        return cls.file_handler
 
     @staticmethod
     def get_logger(name):
         """Get a logger with the specified name"""
         return logging.getLogger(name)
 
-
-class FormattedLogHandler(logging.Handler):
-    """Custom handler that formats logs consistently for console"""
-
-    def __init__(self):
-        super().__init__()
-
-    def emit(self, record):
-        try:
-            message = self.format(record)
-            print(message, file=sys.stderr)
-        except Exception:
-            self.handleError(record)
-
-
 # Add TRACE level to the logging module
 logging.TRACE = 5
 logging.addLevelName(logging.TRACE, "TRACE")
 
-
-def debug(message: str, config: Any = None):
+def debug(message, config=None):
     """
     Log a debug message, respecting config settings if provided
 
@@ -79,23 +102,20 @@ def debug(message: str, config: Any = None):
     # Check if we should respect config settings
     if config is not None:
         try:
-            debug_mode = config.get('system.debug', False)
-            if not debug_mode:
-                return  # Skip logging if debug mode is disabled in config
+            debug_level = config.get('system.debug_level', 'info')
+            if debug_level != 'debug':
+                return  # Skip logging if debug not enabled
         except (AttributeError, KeyError):
-            # If we can't access config properly, fall back to regular debug
             pass
 
     # Log the message
     logging.debug(message)
-
 
 # Convenience functions
 def error(message): logging.error(message)
 def warning(message): logging.warning(message)
 def info(message): logging.info(message)
 def trace(message): logging.log(logging.TRACE, message)
-
 
 # Initialize logging system
 LogManager.configure()

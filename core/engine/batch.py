@@ -8,28 +8,18 @@ import sys
 from typing import Dict, List, Optional, Any
 from core.engine.logging import debug, info, warning, error
 
-
 class BatchProcessor:
     def __init__(self, command_processor):
-        """Initialize the batch processor"""
         self.command_processor = command_processor
         self.config = command_processor.config
         self.variables = {}  # For variable substitution
         self.current_line = 0
         self.current_file = None
         self.error_count = 0
+        self.hpc_mode = self.config.get('system.hpc_mode', False)
         debug(self.config, "Batch processor initialized")
 
     def process_file(self, filepath: str) -> bool:
-        """
-        Process commands from a batch file
-
-        Args:
-            filepath (str): Path to the batch file
-
-        Returns:
-            bool: Success flag
-        """
         debug(self.config, f"Processing batch file: {filepath}")
 
         if not os.path.exists(filepath):
@@ -84,10 +74,10 @@ class BatchProcessor:
                 if expanded_line.startswith('/'):
                     success = self._execute_command(expanded_line)
                     if not success and self._is_exit_on_error():
-                        error(f"Command failed, exiting batch processing")
+                        error(f"Command failed at line {self.current_line}, exiting batch processing")
                         return False
                 else:
-                    warning(f"Invalid command format: {line}")
+                    warning(f"Invalid command format at line {self.current_line}: {line}")
                     self.error_count += 1
 
             # Return success based on error count
@@ -105,12 +95,6 @@ class BatchProcessor:
             return False
 
     def _process_variable_declarations(self, lines: List[str]) -> None:
-        """
-        Process variable declarations in the batch file
-
-        Args:
-            lines (List[str]): Lines from the batch file
-        """
         for i, line in enumerate(lines):
             line = line.strip()
             if self._is_variable_declaration(line):
@@ -130,27 +114,9 @@ class BatchProcessor:
                     debug(self.config, f"Batch variable set: {var_name}={var_value}")
 
     def _is_variable_declaration(self, line: str) -> bool:
-        """
-        Check if a line is a variable declaration
-
-        Args:
-            line (str): Line to check
-
-        Returns:
-            bool: True if variable declaration
-        """
         return re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*.+', line) is not None
 
     def _expand_variables(self, line: str) -> str:
-        """
-        Expand variables in a command line
-
-        Args:
-            line (str): Command line
-
-        Returns:
-            str: Expanded command line
-        """
         result = line
 
         # Find and replace variables in the format ${VAR_NAME}
@@ -160,15 +126,6 @@ class BatchProcessor:
         return result
 
     def _execute_command(self, command: str) -> bool:
-        """
-        Execute a command in the batch file
-
-        Args:
-            command (str): Command to execute
-
-        Returns:
-            bool: Success flag
-        """
         try:
             info(f"Executing batch command: {command}")
             self.command_processor.process_command(command)
@@ -180,20 +137,6 @@ class BatchProcessor:
             return False
 
     def _process_conditional(self, line: str, lines: List[str], current_index: int) -> int:
-        """
-        Process a conditional statement
-
-        Args:
-            line (str): Conditional line
-            lines (List[str]): All lines
-            current_index (int): Current line index
-
-        Returns:
-            int: Next line index to process
-        """
-        # Basic implementation - will need expansion for real conditionals
-        # For now, just parse simple file existence checks
-
         # Example: if exists ${file} then
         match = re.match(r'if\s+exists\s+(.+)\s+then', line)
         if match:
@@ -211,13 +154,30 @@ class BatchProcessor:
                     elif lines[i].strip() == 'else':
                         return i + 1
 
+        # Process other conditionals like error checks
+        match = re.match(r'if\s+errorlevel\s+(\d+)\s+then', line)
+        if match:
+            error_level = int(match.group(1))
+
+            if self.error_count >= error_level:
+                # Condition is true, continue with next line
+                return current_index + 1
+            else:
+                # Find the matching 'endif' or 'else'
+                for i in range(current_index + 1, len(lines)):
+                    if lines[i].strip() == 'endif':
+                        return i + 1
+                    elif lines[i].strip() == 'else':
+                        return i + 1
+
+        # Default to next line
         return current_index + 1
 
     def _is_exit_on_error(self) -> bool:
-        """
-        Check if batch processing should exit on error
+        exit_on_error = self.variables.get('EXIT_ON_ERROR', 'true').lower()
 
-        Returns:
-            bool: True if should exit on error
-        """
-        return self.variables.get('EXIT_ON_ERROR', 'true').lower() == 'true'
+        # In HPC mode, always exit on error unless explicitly set to false
+        if self.hpc_mode and exit_on_error != 'false':
+            return True
+
+        return exit_on_error == 'true'

@@ -4,7 +4,7 @@ Configuration management for the document analysis toolkit
 
 import os
 import yaml
-from core.engine.logging import debug,error, info, warning
+from core.engine.logging import debug, error, info, warning
 
 class Config:
     """Configuration management class"""
@@ -31,22 +31,23 @@ class Config:
         # Initialize with defaults if needed
         self._ensure_defaults()
 
-        # Set global debug flag
+        # Update logging configuration
         from core.engine.logging import LogManager
-        LogManager.set_debug(self.get('system.debug', False))
+        debug_level = self.get('system.debug_level', 'info')
+        LogManager.set_level(debug_level)
 
-        # Debug output (using debug function instead of direct print)
-        if self.get('system.debug'):
-            from core.engine.logging import debug
+        # Debug output
+        if debug_level in ['debug', 'trace']:
             debug(f"Configuration loaded from {config_path}")
 
     def _ensure_defaults(self):
         """Ensure default configuration values are set"""
         defaults = {
             'system': {
-                'debug': False,
+                'debug_level': 'off',
                 'output_format': 'txt',
-                'hpc_mode': False
+                'hpc_mode': False,
+                'batch_mode': False
             },
             'hardware': {
                 'use_cuda': 'auto',
@@ -90,40 +91,39 @@ class Config:
             for key, value in values.items():
                 if key not in self.config[section]:
                     self.config[section][key] = value
-    
+
     def get(self, path, default=None):
-        """Get a configuration value by path (e.g., 'system.debug')"""
+        """Get a configuration value by path (e.g., 'system.debug_level')"""
         sections = path.split('.')
         config = self.config
-        
+
         for section in sections:
             if section not in config:
                 return default
             config = config[section]
-        
+
         return config
-    
+
     def set(self, path, value):
-        """Set a configuration value by path (e.g., 'system.debug')"""
+        """Set a configuration value by path (e.g., 'system.debug_level')"""
         sections = path.split('.')
         config = self.config
-        
+
         # Navigate to the last section
         for section in sections[:-1]:
             if section not in config:
                 config[section] = {}
             config = config[section]
-        
+
         # Set the value
         config[sections[-1]] = value
-        
+
         # Save the updated configuration
         self._save_config()
-        
+
         # Debug output
-        if self.get('system.debug'):
-            debug(self, f"Configuration updated: {path} = {value}")
-    
+        debug(f"Configuration updated: {path} = {value}")
+
     def _save_config(self):
         """Save the configuration to file"""
         try:
@@ -131,23 +131,23 @@ class Config:
                 yaml.dump(self.config, file, default_flow_style=False)
         except Exception as e:
             error(f"Error saving configuration: {str(e)}")
-    
+
     def set_guide(self, name, content):
         """Store a loaded guide"""
         self.loaded_guides[name] = content
-    
+
     def get_guide(self, name):
         """Get a loaded guide"""
         return self.loaded_guides.get(name)
-    
+
     def get_version(self):
         """Get the application version"""
         return self.version
-    
+
     def display(self):
         """Display the current configuration"""
         print("Current Configuration:")
-        
+
         for section, values in self.config.items():
             print(f"[{section}]")
             for key, value in values.items():

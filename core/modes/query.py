@@ -1,6 +1,5 @@
 """
 Query mode module with LlamaIndex and Ollama integration
-With improved session logging capability and fixed exit behavior
 """
 
 import os
@@ -11,7 +10,7 @@ from core.engine.storage import StorageManager
 from core.engine.output import OutputManager
 from core.language.processor import TextProcessor
 from core.connectors.connector_factory import ConnectorFactory
-from core.engine.utils import ensure_dir, Colors
+from core.engine.utils import ensure_dir
 from core.engine.common import safe_execute
 
 
@@ -19,26 +18,20 @@ class QueryEngine:
     """Interactive query engine using LlamaIndex and Ollama"""
 
     def __init__(self, config, storage_manager=None, output_manager=None, text_processor=None):
-        """Initialize the query engine"""
         self.config = config
         self.storage_manager = storage_manager or StorageManager(config)
         self.output_manager = output_manager or OutputManager(config)
         self.text_processor = text_processor or TextProcessor(config)
         self.factory = ConnectorFactory(config)
         self.llm_connector = self.factory.get_llm_connector()
+        self.batch_mode = config.get('system.batch_mode', False)
 
         self.active = False
         self.current_workspace = None
-        self.session_logger = False  # Initialize session logging flag
+        self.session_logger = False
         debug(config, "Query engine initialized")
 
     def activate(self, workspace):
-        """
-        Activate query mode for a workspace
-
-        Args:
-            workspace (str): The workspace to query
-        """
         debug(self.config, f"Activating query mode for workspace '{workspace}'")
 
         # Check if workspace exists
@@ -64,7 +57,6 @@ class QueryEngine:
         return True
 
     def deactivate(self):
-        """Deactivate query mode"""
         debug(self.config, "Deactivating query mode")
 
         # Store the workspace name for the message
@@ -80,11 +72,9 @@ class QueryEngine:
         print(f"Query mode deactivated for workspace '{workspace}' - returning to command loop")
 
     def is_active(self):
-        """Check if query mode is active"""
         return self.active
 
     def _verify_llm_connection(self):
-        """Verify connection to LLM"""
         debug(self.config, "Verifying LLM connection")
 
         # Check if connector supports connection verification
@@ -95,16 +85,6 @@ class QueryEngine:
         return True
 
     def _generate_response(self, query, docs):
-        """
-        Generate a response using an LLM with context
-
-        Args:
-            query (str): The original query
-            docs (list): Relevant documents
-
-        Returns:
-            str: The generated response
-        """
         debug(self.config, "Generating response with LLM")
         model = self.config.get('llm.default_model')
 
@@ -115,15 +95,6 @@ class QueryEngine:
             return f"Error generating response: {str(e)}"
 
     def _generate_response_no_context(self, query):
-        """
-        Generate a response using an LLM without context
-
-        Args:
-            query (str): The original query
-
-        Returns:
-            str: The generated response
-        """
         debug(self.config, "Generating response with LLM (no context)")
         model = self.config.get('llm.default_model')
 
@@ -137,9 +108,6 @@ class QueryEngine:
             return f"Error generating response: {str(e)}"
 
     def enter_interactive_mode(self):
-        """
-        Enter an isolated interactive query mode
-        """
         print("Entering interactive query mode. Type /exit to return to main command mode.")
 
         # Start session logging if configured
@@ -173,7 +141,6 @@ class QueryEngine:
                 break
 
     def _start_session_logging(self):
-        """Start logging query session to a file"""
         debug(self.config, "Starting query session logging")
 
         # Check if output_manager has session functionality
@@ -191,7 +158,6 @@ class QueryEngine:
             self.session_logger = False
 
     def _stop_session_logging(self):
-        """Stop logging query session"""
         debug(self.config, "Stopping query session logging")
 
         # Check if we're logging and output_manager has the functionality
@@ -211,15 +177,11 @@ class QueryEngine:
             self.output_manager._write_to_session(content)
 
     def process_query(self, query):
-        """
-        Process a user query with output to main screen only for response
-        and logging everything else to system message log
-        """
         from core.engine.logging import info, debug, warning, error
         debug(self.config, f"Processing query: {query}")
 
         if not self.active:
-            self.output_manager.print_formatted('feedback', "Query mode is not active", success=False)
+            print("Query mode is not active")
             return
 
         # Log query to system message log
@@ -245,8 +207,10 @@ class QueryEngine:
             warning("No relevant documents found for query")
             response = self._generate_response_no_context(query)
 
-            # Display the response
-            self.output_manager.print_formatted('header', "RESPONSE")
+            # Only print response header if not in batch mode
+            if not self.batch_mode:
+                print("\nRESPONSE:")
+
             wrapped_response_lines = textwrap.wrap(response, width=80)
             print('\n'.join(wrapped_response_lines) + '\n')
 
@@ -294,8 +258,10 @@ class QueryEngine:
         info("Generating response with retrieved documents...")
         response = self._generate_response(query, docs)
 
-        # Display the response
-        self.output_manager.print_formatted('header', "RESPONSE")
+        # Only print response header if not in batch mode
+        if not self.batch_mode:
+            print("\nRESPONSE:")
+
         wrapped_response_lines = textwrap.wrap(response, width=80)
         print('\n'.join(wrapped_response_lines) + '\n')
 
@@ -307,15 +273,6 @@ class QueryEngine:
         self.output_manager.add_to_buffer(query, response, docs)
 
     def process_one_time_query(self, query_text):
-        """
-        Process a one-time query without entering interactive mode
-
-        Args:
-            query_text (str): The query to process
-
-        Returns:
-            str: The response to the query
-        """
         debug(self.config, f"Processing one-time query: {query_text}")
 
         if not self.active:

@@ -1,3 +1,5 @@
+batch:
+  exit_on_error: true
 embedding:
   chinese_model: jina-zh
   default_model: mixbread
@@ -28,7 +30,12 @@ query:
 storage:
   vector_store: llama_index
 system:
+  batch_mode: true
   debug: false
+  debug_level: 'off'
+  hpc_mode: true
   output_format: txt
+topic:
+  use_originals: true
 workspace:
   default: default
