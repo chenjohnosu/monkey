@@ -522,10 +522,9 @@ def format_analysis_result(title: str, content: str) -> str:
     """Format analysis result with bright white title and normal content"""
     return f"{Colors.BRIGHT_WHITE}{title}:{Colors.RESET} {content}"
 
-
 def format_code_block(content: str, indent: int = 0) -> str:
     """
-    Format a code block with appropriate styling based on mode (TUI or console)
+    Format a code block with appropriate styling for console output
 
     Args:
         content (str): The text content to format
@@ -534,23 +533,12 @@ def format_code_block(content: str, indent: int = 0) -> str:
     Returns:
         str: Formatted text
     """
-    # Check if we're running in TUI mode by checking a global flag from logging module
-    from core.engine.logging import _in_tui_mode
-
     spaces = " " * indent
     lines = content.split('\n')
 
-    if _in_tui_mode:
-        # In TUI mode, don't use ANSI color codes directly
-        # Use markup that the textual library can interpret properly
-        formatted_lines = [f"{spaces}{line}" for line in lines]
-    else:
-        # In console mode, use ANSI color codes as before
-        from core.engine.utils import Colors
-        formatted_lines = [f"{spaces}{Colors.GRAY}{line}{Colors.RESET}" for line in lines]
-
-    return '\n'.join(formatted_lines)
-
+    # In console mode, use ANSI color codes
+    from core.engine.utils import Colors
+    formatted_lines = [f"{spaces}{Colors.GRAY}{line}{Colors.RESET}" for line in lines]
 
 # ===== MARKDOWN FORMATTING =====
 

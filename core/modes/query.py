@@ -29,7 +29,7 @@ class QueryEngine:
 
         self.active = False
         self.current_workspace = None
-        self.logging_session = False  # Explicitly add logging_session attribute
+        self.session_logger = False  # Initialize session logging flag
         debug(config, "Query engine initialized")
 
     def activate(self, workspace):
@@ -223,11 +223,10 @@ class QueryEngine:
             return
 
         # Log query to system message log
-
         info(f"QUERY: {query}")
 
         # Explicitly log the query text if we're saving a session
-        if self.logging_session and hasattr(self.output_manager, '_write_to_session'):
+        if self.session_logger and hasattr(self.output_manager, '_write_to_session'):
             self.output_manager._write_to_session(f"User Query: {query}")
 
         # Preprocess query
@@ -246,15 +245,13 @@ class QueryEngine:
             warning("No relevant documents found for query")
             response = self._generate_response_no_context(query)
 
-            # Display the response (this is the only output to main screen)
-            info("RESPONSE (no context):")
-            # Use output_manager to format and print to main screen
+            # Display the response
             self.output_manager.print_formatted('header', "RESPONSE")
             wrapped_response_lines = textwrap.wrap(response, width=80)
             print('\n'.join(wrapped_response_lines) + '\n')
 
             # Explicitly log the response text to session if active
-            if self.logging_session and hasattr(self.output_manager, '_write_to_session'):
+            if self.session_logger and hasattr(self.output_manager, '_write_to_session'):
                 self.output_manager._write_to_session(f"Response (no documents found): {response}")
 
             self.output_manager.add_to_buffer(query, response, [])
@@ -276,7 +273,7 @@ class QueryEngine:
             debug(f"Document {i + 1}: {source} (Relevance: {score_str})")
 
             # Add to session log if active
-            if self.logging_session and hasattr(self.output_manager, '_write_to_session'):
+            if self.session_logger and hasattr(self.output_manager, '_write_to_session'):
                 doc_log += f"Document {i + 1}: {source}, Relevance: {score_str}\n"
 
             # Show content preview in debug log
@@ -286,27 +283,55 @@ class QueryEngine:
             debug(f"  Preview: {preview_flat}")
 
             # Add preview to session log if active
-            if self.logging_session and hasattr(self.output_manager, '_write_to_session'):
+            if self.session_logger and hasattr(self.output_manager, '_write_to_session'):
                 doc_log += f"  Preview: {preview_flat}\n"
 
         # Log the document summaries to session if active
-        if self.logging_session and hasattr(self.output_manager, '_write_to_session'):
+        if self.session_logger and hasattr(self.output_manager, '_write_to_session'):
             self.output_manager._write_to_session(doc_log)
 
         # Generate response using LLM
         info("Generating response with retrieved documents...")
         response = self._generate_response(query, docs)
 
-        # Display the response (this is the only output to main screen)
-        info("RESPONSE:")
-        # Use output_manager to format and print to main screen
+        # Display the response
         self.output_manager.print_formatted('header', "RESPONSE")
         wrapped_response_lines = textwrap.wrap(response, width=80)
         print('\n'.join(wrapped_response_lines) + '\n')
 
         # Explicitly log the response text to session if active
-        if self.logging_session and hasattr(self.output_manager, '_write_to_session'):
+        if self.session_logger and hasattr(self.output_manager, '_write_to_session'):
             self.output_manager._write_to_session(f"Response: {response}")
 
         # Save to buffer for potential later saving
         self.output_manager.add_to_buffer(query, response, docs)
+
+    def process_one_time_query(self, query_text):
+        """
+        Process a one-time query without entering interactive mode
+
+        Args:
+            query_text (str): The query to process
+
+        Returns:
+            str: The response to the query
+        """
+        debug(self.config, f"Processing one-time query: {query_text}")
+
+        if not self.active:
+            if not self.activate(self.current_workspace):
+                return "Failed to activate query mode for the workspace."
+
+        # Process the query
+        self.process_query(query_text)
+
+        # Get the response from the buffer
+        if hasattr(self, 'output_manager') and self.output_manager.buffer:
+            response = self.output_manager.buffer.get('response', '')
+        else:
+            response = "Query processed, but no response was buffered."
+
+        # Deactivate query mode
+        self.deactivate()
+
+        return response

@@ -271,3 +271,4 @@ class OutputManager:
         except Exception as e:
             # Log any errors but don't crash the application
             print(f"Error writing to session file: {str(e)}")
+            print(f"Error writing to session file: {str(e)}")

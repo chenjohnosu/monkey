@@ -10,8 +10,6 @@ from core.engine.logging import debug, info, warning, error
 
 
 class BatchProcessor:
-    """Processes command batches from files for automation"""
-
     def __init__(self, command_processor):
         """Initialize the batch processor"""
         self.command_processor = command_processor

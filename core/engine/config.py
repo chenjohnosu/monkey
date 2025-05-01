@@ -45,7 +45,8 @@ class Config:
         defaults = {
             'system': {
                 'debug': False,
-                'output_format': 'txt'
+                'output_format': 'txt',
+                'hpc_mode': False
             },
             'hardware': {
                 'use_cuda': 'auto',
@@ -71,12 +72,24 @@ class Config:
                 'default': 'default'
             },
             'storage': {
-                'vector_store': 'chroma'
+                'vector_store': 'llama_index'
             },
             'topic': {
                 'use_originals': True  # Always try to use original documents from body directory
+            },
+            'batch': {
+                'exit_on_error': True  # Exit batch processing on first error by default
             }
         }
+
+        # Ensure all default settings exist
+        for section, values in defaults.items():
+            if section not in self.config:
+                self.config[section] = {}
+
+            for key, value in values.items():
+                if key not in self.config[section]:
+                    self.config[section][key] = value
     
     def get(self, path, default=None):
         """Get a configuration value by path (e.g., 'system.debug')"""

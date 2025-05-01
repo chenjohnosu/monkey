@@ -992,8 +992,28 @@ class CommandProcessor:
             self.theme_analyzer.analyze(self.current_workspace, method)
 
         elif subcommand == 'query':
-            if self.query_engine.activate(self.current_workspace):
-                self.query_engine.enter_interactive_mode()
+            # Check if this is a one-time query (args contains the query text)
+            if len(args) > 1:
+                # Extract the query text (everything after 'query')
+                query_text = ' '.join(args[1:])
+
+                # Activate query engine
+                if not self.query_engine.is_active():
+                    if not self.query_engine.activate(self.current_workspace):
+                        print(f"Failed to activate query engine for workspace '{self.current_workspace}'")
+                        return
+
+                # Process the one-time query
+                response = self.query_engine.process_one_time_query(query_text)
+
+                # Print the response
+                print("\nRESPONSE:")
+                print(response)
+                print()
+            else:
+                # Enter interactive query mode
+                if self.query_engine.activate(self.current_workspace):
+                    self.query_engine.enter_interactive_mode()
 
         elif subcommand == 'grind':
             self.file_processor.process_workspace(self.current_workspace)
