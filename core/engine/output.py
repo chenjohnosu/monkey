@@ -3,6 +3,7 @@ Output formatting and saving
 """
 
 import os
+import sys
 import json
 import datetime
 from core.engine.utils import timestamp_filename, ensure_dir
@@ -197,6 +198,10 @@ class OutputManager:
         # Add to session file if active
         if self.session_file:
             self._write_to_session(formatted)
+
+        # Ensure output is flushed in HPC/batch mode
+        if self.batch_mode or self.hpc_mode:
+            sys.stdout.flush()
 
     def _write_to_session(self, text):
         if not self.session_file:

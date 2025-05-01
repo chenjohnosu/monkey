@@ -32,7 +32,7 @@ storage:
 system:
   batch_mode: true
   debug: false
-  debug_level: 'off'
+  debug_level: info
   hpc_mode: true
   output_format: txt
 topic:

@@ -6,7 +6,7 @@ import os
 import re
 import sys
 from typing import Dict, List, Optional, Any
-from core.engine.logging import debug, info, warning, error
+from core.engine.logging import debug, info, warning, error, LogManager
 
 class BatchProcessor:
     def __init__(self, command_processor):
@@ -30,6 +30,19 @@ class BatchProcessor:
             self.current_file = filepath
             self.current_line = 0
             self.error_count = 0
+
+            # Ensure we have a log file for batch output
+            log_file = LogManager.get_log_file_path()
+            if not log_file:
+                # Default log location if not already set
+                timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+                workspace = self.config.get('workspace.default', 'default')
+                logs_dir = os.path.join('logs', workspace)
+                if not os.path.exists(logs_dir):
+                    os.makedirs(logs_dir)
+                log_file = os.path.join(logs_dir, f"batch_{timestamp}.txt")
+                LogManager.add_file_handler(log_file)
+                info(f"Set up batch log file: {log_file}")
 
             # Read the file
             with open(filepath, 'r', encoding='utf-8') as file:
@@ -79,6 +92,10 @@ class BatchProcessor:
                 else:
                     warning(f"Invalid command format at line {self.current_line}: {line}")
                     self.error_count += 1
+
+                # Force flush log file to ensure output is written immediately
+                if LogManager.file_handler:
+                    LogManager.file_handler.flush()
 
             # Return success based on error count
             if self.error_count > 0:

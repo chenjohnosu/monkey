@@ -13,10 +13,15 @@ class LogManager:
 
     # Store file handler for batch mode
     file_handler = None
+    initialized = False
+    log_file_path = None
 
     @classmethod
     def configure(cls, level=logging.INFO):
         """Configure the root logger with standard formatting"""
+        if cls.initialized:
+            return logging.getLogger()
+
         root_logger = logging.getLogger()
 
         # Clear existing handlers to avoid duplicates
@@ -38,6 +43,7 @@ class LogManager:
         logging.getLogger('matplotlib').setLevel(logging.WARNING)
         logging.getLogger('PIL').setLevel(logging.WARNING)
 
+        cls.initialized = True
         return root_logger
 
     @classmethod
@@ -53,34 +59,58 @@ class LogManager:
         }
 
         level = level_map.get(level_name.lower(), logging.INFO)
-        root_logger = logging.getLogger()
-        root_logger.setLevel(level)
+
+        # Ensure logger is configured
+        if not cls.initialized:
+            cls.configure(level)
+        else:
+            root_logger = logging.getLogger()
+            root_logger.setLevel(level)
+
         return level
 
     @classmethod
     def add_file_handler(cls, log_file):
         """Add a file handler for batch mode logging"""
+        # Ensure logger is configured
+        if not cls.initialized:
+            cls.configure()
+
+        root_logger = logging.getLogger()
+
         if cls.file_handler:
             # Remove existing file handler
-            root_logger = logging.getLogger()
             root_logger.removeHandler(cls.file_handler)
+            cls.file_handler.close()
+            cls.file_handler = None
 
         # Create directory if needed
         log_dir = os.path.dirname(log_file)
-        if not os.path.exists(log_dir):
+        if log_dir and not os.path.exists(log_dir):
             os.makedirs(log_dir)
 
-        # Create new file handler
-        cls.file_handler = logging.FileHandler(log_file, mode='w', encoding='utf-8')
+        # Create new file handler - ensure it's always set to DEBUG level
+        # to capture all messages regardless of console log level
+        cls.file_handler = logging.FileHandler(log_file, mode='a', encoding='utf-8')
         formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s',
                                      datefmt='%Y-%m-%d %H:%M:%S')
         cls.file_handler.setFormatter(formatter)
 
+        # Always set file handler to DEBUG level to capture everything
+        cls.file_handler.setLevel(logging.DEBUG)
+
         # Add to root logger
-        root_logger = logging.getLogger()
         root_logger.addHandler(cls.file_handler)
 
+        # Store the log file path
+        cls.log_file_path = log_file
+
         return cls.file_handler
+
+    @classmethod
+    def get_log_file_path(cls):
+        """Return the current log file path"""
+        return cls.log_file_path
 
     @staticmethod
     def get_logger(name):
@@ -103,7 +133,7 @@ def debug(message, config=None):
     if config is not None:
         try:
             debug_level = config.get('system.debug_level', 'info')
-            if debug_level != 'debug':
+            if debug_level not in ('debug', 'trace'):
                 return  # Skip logging if debug not enabled
         except (AttributeError, KeyError):
             pass
