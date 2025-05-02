@@ -23,7 +23,7 @@ def setup_directories():
     for dir_name in dirs:
         if not os.path.exists(dir_name):
             os.makedirs(dir_name)
-            print(f"Created directory: {dir_name}")
+            info(f"Created directory: {dir_name}")
 
 
 def parse_arguments():
