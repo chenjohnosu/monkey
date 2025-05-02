@@ -1,8 +1,4 @@
 #!/usr/bin/env python3
-"""
-Monkey - Next-generation document analysis toolkit
-Main entry point for the application
-"""
 
 import os
 import sys
@@ -32,7 +28,10 @@ def parse_arguments():
     parser.add_argument('--debug', choices=['off', 'error', 'warning', 'info', 'debug', 'trace'],
                         default=None, help='Set debug level')
     parser.add_argument('-b', '--batch', help='Run commands from batch file')
-    parser.add_argument('--hpc', action='store_true', help='HPC mode: suppress interactive prompts')
+    parser.add_argument('--hpc', action='store_true', help='HPC mode: optimize for high-performance computing')
+    parser.add_argument('--cmd', help='Run a single command and exit')
+    parser.add_argument('-w', '--workspace', help='Set the workspace to use')
+    parser.add_argument('-o', '--output', help='Specify output file for results')
     return parser.parse_args()
 
 
@@ -48,12 +47,17 @@ def main():
         LogManager.set_level(args.debug)
         debug(f"Debug level set to: {args.debug}")
 
+    if args.workspace:
+        config.set('workspace.default', args.workspace)
+        info(f"Using workspace: {args.workspace}")
+
     if args.hpc:
         config.set('system.hpc_mode', True)
-        info("HPC mode enabled: suppressing interactive prompts")
+        info("HPC mode enabled: optimizing for high-performance computing")
 
     cli = CommandProcessor(config)
 
+    # First handle batch mode
     if args.batch:
         if os.path.exists(args.batch):
             info(f"Running batch file: {args.batch}")
@@ -65,23 +69,18 @@ def main():
             if not os.path.exists(logs_dir):
                 os.makedirs(logs_dir)
 
-            log_file = os.path.join(logs_dir, f"batch_{timestamp}.txt")
-
-            # Set up logging to the file regardless of debug level
+            # Determine log file, either from args or default
+            log_file = args.output if args.output else os.path.join(logs_dir, f"batch_{timestamp}.txt")
             LogManager.add_file_handler(log_file)
             info(f"Batch mode: logging output to {log_file}")
 
-            # Redirect stdout/stderr in HPC mode, but ensure logging still works
+            # Redirect stdout/stderr in HPC mode
             if args.hpc:
-                # Save original stdout/stderr
                 orig_stdout = sys.stdout
                 orig_stderr = sys.stderr
-
-                # Open the log file for stdout/stderr redirection
                 log_file_handle = open(log_file, 'a', encoding='utf-8')
                 sys.stdout = log_file_handle
                 sys.stderr = log_file_handle
-
                 info("HPC mode: redirected stdout and stderr to log file")
 
             success = cli.process_batch_file(args.batch)
@@ -101,8 +100,39 @@ def main():
         else:
             error(f"Batch file not found: {args.batch}")
             sys.exit(1)
+
+    # Then handle single command mode
+    elif args.cmd:
+        info(f"Running single command: {args.cmd}")
+        config.set('system.batch_mode', True)
+
+        # Set up logging to file if output specified
+        if args.output:
+            LogManager.add_file_handler(args.output)
+            info(f"Logging output to {args.output}")
+
+            # Redirect stdout/stderr in HPC mode
+            if args.hpc:
+                orig_stdout = sys.stdout
+                orig_stderr = sys.stderr
+                log_file_handle = open(args.output, 'a', encoding='utf-8')
+                sys.stdout = log_file_handle
+                sys.stderr = log_file_handle
+
+        # Execute the command
+        cli.process_command(args.cmd)
+
+        # Restore stdout/stderr if redirected
+        if args.hpc and args.output and 'log_file_handle' in locals():
+            sys.stdout = orig_stdout
+            sys.stderr = orig_stderr
+            log_file_handle.close()
+
+        sys.exit(0)
+
+    # Finally, fall back to interactive mode
     else:
-        cli.start()
+        cli.run_interactive()
 
 
 if __name__ == "__main__":

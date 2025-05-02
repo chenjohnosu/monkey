@@ -1,5 +1,10 @@
 # Todo List
 
+## New Code Base Migration
+- need to get cursor back to print command>llm>workspace>
+- changes to query>llm>workspace> when in query mode
+- query batch mode prints nothing to the screen and nothing is logged
+
 
 ## HPC
 ### Migrate to HPC
