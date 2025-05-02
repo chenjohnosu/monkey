@@ -1,7 +1,9 @@
+"""
+Query mode module with LlamaIndex and Ollama integration
+"""
+
 import os
 import textwrap
-import sys
-import json
 
 from core.engine.logging import debug, info, warning, error
 from core.engine.storage import StorageManager
@@ -13,7 +15,7 @@ from core.engine.common import safe_execute
 
 
 class QueryEngine:
-    """Query engine using LlamaIndex and Ollama"""
+    """Interactive query engine using LlamaIndex and Ollama"""
 
     def __init__(self, config, storage_manager=None, output_manager=None, text_processor=None):
         self.config = config
@@ -23,8 +25,6 @@ class QueryEngine:
         self.factory = ConnectorFactory(config)
         self.llm_connector = self.factory.get_llm_connector()
         self.batch_mode = config.get('system.batch_mode', False)
-        self.hpc_mode = config.get('system.hpc_mode', False)
-        self.output_file = None
 
         self.active = False
         self.current_workspace = None
@@ -69,16 +69,10 @@ class QueryEngine:
         self.active = False
         self.current_workspace = None
 
-        if not self.batch_mode and not self.hpc_mode:
-            print(f"Query mode deactivated for workspace '{workspace}'")
+        print(f"Query mode deactivated for workspace '{workspace}' - returning to command loop")
 
     def is_active(self):
         return self.active
-
-    def set_output_file(self, filepath):
-        """Set output file for redirecting results in batch mode"""
-        self.output_file = filepath
-        debug(self.config, f"Query output will be saved to: {filepath}")
 
     def _verify_llm_connection(self):
         debug(self.config, "Verifying LLM connection")
@@ -113,6 +107,39 @@ class QueryEngine:
             debug(self.config, f"Error generating response: {str(e)}")
             return f"Error generating response: {str(e)}"
 
+    def enter_interactive_mode(self):
+        print("Entering interactive query mode. Type /exit to return to main command mode.")
+
+        # Start session logging if configured
+        self._start_session_logging()
+
+        while True:
+            # Use custom prompt showing workspace, LLM model and query indicator
+            llm_model = self.config.get('llm.default_model')
+            prompt = f"[{self.current_workspace}][{llm_model}][query]> "
+
+            try:
+                # Get user input
+                query = input(prompt).strip()
+
+                # Check for exit command
+                if query.lower() in ['/exit', '/quit']:
+                    print("Exiting query mode.")
+                    self.deactivate()
+                    break
+
+                # Skip empty queries
+                if not query:
+                    continue
+
+                # Process the query
+                self.process_query(query)
+
+            except KeyboardInterrupt:
+                print("\nReturning to main command mode.")
+                self.deactivate()
+                break
+
     def _start_session_logging(self):
         debug(self.config, "Starting query session logging")
 
@@ -121,8 +148,7 @@ class QueryEngine:
             try:
                 # Start session saving with workspace prefix
                 self.output_manager.start_session_saving(self.current_workspace)
-                if not self.batch_mode and not self.hpc_mode:
-                    print("Query session logging started. All queries and responses will be saved.")
+                print("Query session logging started. All queries and responses will be saved.")
                 self.session_logger = True
             except Exception as e:
                 debug(self.config, f"Error starting query session logging: {str(e)}")
@@ -138,8 +164,7 @@ class QueryEngine:
         if self.session_logger and hasattr(self.output_manager, 'stop_session_saving'):
             try:
                 filepath = self.output_manager.stop_session_saving()
-                if not self.batch_mode and not self.hpc_mode:
-                    print(f"Query session logging stopped. Session log saved to: {filepath}")
+                print(f"Query session logging stopped. Session log saved to: {filepath}")
                 self.session_logger = False
             except Exception as e:
                 debug(self.config, f"Error stopping query session logging: {str(e)}")
@@ -152,6 +177,7 @@ class QueryEngine:
             self.output_manager._write_to_session(content)
 
     def process_query(self, query):
+        from core.engine.logging import info, debug, warning, error
         debug(self.config, f"Processing query: {query}")
 
         if not self.active:
@@ -180,7 +206,19 @@ class QueryEngine:
         if not docs:
             warning("No relevant documents found for query")
             response = self._generate_response_no_context(query)
-            self._output_response(response, query, [])
+
+            # Only print response header if not in batch mode
+            if not self.batch_mode:
+                print("\nRESPONSE:")
+
+            wrapped_response_lines = textwrap.wrap(response, width=80)
+            print('\n'.join(wrapped_response_lines) + '\n')
+
+            # Explicitly log the response text to session if active
+            if self.session_logger and hasattr(self.output_manager, '_write_to_session'):
+                self.output_manager._write_to_session(f"Response (no documents found): {response}")
+
+            self.output_manager.add_to_buffer(query, response, [])
             return
 
         # Log retrieved documents info to system message log
@@ -220,62 +258,21 @@ class QueryEngine:
         info("Generating response with retrieved documents...")
         response = self._generate_response(query, docs)
 
-        # Output the response in the appropriate format
-        self._output_response(response, query, docs)
+        # Only print response header if not in batch mode
+        if not self.batch_mode:
+            print("\nRESPONSE:")
 
-    def _output_response(self, response, query, docs):
-        """Output the response in the appropriate format based on mode"""
+        wrapped_response_lines = textwrap.wrap(response, width=80)
+        print('\n'.join(wrapped_response_lines) + '\n')
+
+        # Explicitly log the response text to session if active
+        if self.session_logger and hasattr(self.output_manager, '_write_to_session'):
+            self.output_manager._write_to_session(f"Response: {response}")
+
         # Save to buffer for potential later saving
         self.output_manager.add_to_buffer(query, response, docs)
 
-        # In HPC mode with output file, write directly to file
-        if self.hpc_mode and self.output_file:
-            try:
-                with open(self.output_file, 'w', encoding='utf-8') as f:
-                    # Write in requested format
-                    output_format = self.config.get('system.output_format', 'txt')
-
-                    if output_format == 'json':
-                        json.dump({
-                            'query': query,
-                            'response': response,
-                            'documents': [
-                                {
-                                    'source': doc.get('metadata', {}).get('source', 'unknown'),
-                                    'relevance': doc.get('relevance_score', 0)
-                                } for doc in docs
-                            ]
-                        }, f, indent=2)
-                    else:
-                        # Plain text format
-                        f.write(f"Query: {query}\n\n")
-                        f.write(f"Response:\n{response}\n\n")
-
-                        if docs:
-                            f.write(f"Referenced {len(docs)} documents:\n")
-                            for i, doc in enumerate(docs):
-                                source = doc.get('metadata', {}).get('source', 'unknown')
-                                score = doc.get('relevance_score', 'N/A')
-                                f.write(f"  {i+1}. {source} (Relevance: {score})\n")
-            except Exception as e:
-                error(f"Error writing to output file: {str(e)}")
-
-        # For batch mode, only print minimal output
-        elif self.batch_mode:
-            print(f"Query processed: '{query[:50]}...' ({len(docs)} documents)")
-
-        # For normal mode, print full response
-        else:
-            print("\nRESPONSE:")
-            wrapped_response_lines = textwrap.wrap(response, width=80)
-            print('\n'.join(wrapped_response_lines) + '\n')
-
-            # Explicitly log the response text to session if active
-            if self.session_logger and hasattr(self.output_manager, '_write_to_session'):
-                self.output_manager._write_to_session(f"Response: {response}")
-
     def process_one_time_query(self, query_text):
-        """Process a single query and return the response"""
         debug(self.config, f"Processing one-time query: {query_text}")
 
         if not self.active:
@@ -291,79 +288,7 @@ class QueryEngine:
         else:
             response = "Query processed, but no response was buffered."
 
-        # Deactivate query mode unless we're in batch or HPC mode
-        if not self.batch_mode and not self.hpc_mode:
-            self.deactivate()
+        # Deactivate query mode
+        self.deactivate()
 
         return response
-
-    def batch_query(self, queries, output_dir=None):
-        """Process multiple queries in batch mode and save results"""
-        if not output_dir:
-            output_dir = os.path.join('logs', self.current_workspace or 'default')
-
-        ensure_dir(output_dir)
-
-        # Activate query mode if not already active
-        if not self.active:
-            if not self.activate(self.current_workspace):
-                return False
-
-        results = []
-
-        # Process each query
-        for i, query in enumerate(queries):
-            info(f"Processing batch query {i+1}/{len(queries)}: {query[:50]}...")
-
-            # Setup output file if HPC mode
-            if self.hpc_mode:
-                output_file = os.path.join(output_dir, f"query_{i+1}_{query[:20].replace(' ', '_')}.txt")
-                self.set_output_file(output_file)
-
-            # Process the query
-            self.process_query(query)
-
-            # Get the response from the buffer
-            if hasattr(self, 'output_manager') and self.output_manager.buffer:
-                result = {
-                    'query': query,
-                    'response': self.output_manager.buffer.get('response', ''),
-                    'documents': [
-                        {
-                            'source': doc.get('metadata', {}).get('source', 'unknown'),
-                            'relevance': doc.get('relevance_score', 0)
-                        } for doc in self.output_manager.buffer.get('documents', [])
-                    ]
-                }
-                results.append(result)
-
-        # Deactivate query mode unless we're in HPC mode
-        if not self.hpc_mode:
-            self.deactivate()
-
-        # Save combined results if not in HPC mode (HPC mode saves individual files)
-        if not self.hpc_mode and results:
-            output_format = self.config.get('system.output_format', 'txt')
-            output_file = os.path.join(output_dir, f"batch_results.{output_format}")
-
-            try:
-                if output_format == 'json':
-                    with open(output_file, 'w', encoding='utf-8') as f:
-                        json.dump(results, f, indent=2)
-                else:
-                    with open(output_file, 'w', encoding='utf-8') as f:
-                        for i, result in enumerate(results):
-                            f.write(f"=== Query {i+1} ===\n\n")
-                            f.write(f"Query: {result['query']}\n\n")
-                            f.write(f"Response:\n{result['response']}\n\n")
-                            f.write(f"Referenced {len(result['documents'])} documents:\n")
-                            for j, doc in enumerate(result['documents']):
-                                f.write(f"  {j+1}. {doc['source']} (Relevance: {doc['relevance']})\n")
-                            f.write("\n\n")
-
-                info(f"Batch query results saved to: {output_file}")
-            except Exception as e:
-                error(f"Error saving batch results: {str(e)}")
-                return False
-
-        return True

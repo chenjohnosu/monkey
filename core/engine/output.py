@@ -1,3 +1,7 @@
+"""
+Output formatting and saving
+"""
+
 import os
 import sys
 import json
@@ -10,7 +14,7 @@ class OutputManager:
         self.config = config
         self.buffer = None
         self.session_file = None
-        self.batch_mode = config.get('system.batch_mode', False)
+        self.batch_mode = config.get('system.hpc_mode', False)
         self.hpc_mode = config.get('system.hpc_mode', False)
         ensure_dir('logs')
         debug(config, "Output manager initialized")
@@ -45,6 +49,8 @@ class OutputManager:
         # Save file based on format
         if output_format == 'json':
             self._save_json(filepath, self.buffer)
+        elif output_format == 'md':
+            self._save_markdown(filepath, self.buffer)
         else:  # Default to txt
             self._save_text(filepath, self.buffer)
 
@@ -79,6 +85,12 @@ class OutputManager:
             self.session_file['file'].write('  "batch_mode": ' + str(self.batch_mode).lower() + ',\n')
             self.session_file['file'].write('  "interactions": [\n')
             self.session_file['first'] = True
+        elif output_format == 'md':
+            self.session_file['file'].write(f'# Session Log - {workspace}\n\n')
+            self.session_file['file'].write(f'Session started: {datetime.datetime.now().isoformat()}\n')
+            if self.batch_mode:
+                self.session_file['file'].write('Running in batch mode\n')
+            self.session_file['file'].write('\n')
         else:  # Default to txt
             self.session_file['file'].write(f'=== Session Log - {workspace} ===\n\n')
             self.session_file['file'].write(f'Session started: {datetime.datetime.now().isoformat()}\n')
@@ -111,6 +123,21 @@ class OutputManager:
         with open(filepath, 'w', encoding='utf-8') as file:
             json.dump(data, file, indent=2)
 
+    def _save_markdown(self, filepath, data):
+        with open(filepath, 'w', encoding='utf-8') as file:
+            file.write(f'# Query Log\n\n')
+            file.write(f'Timestamp: {data["timestamp"]}\n\n')
+            file.write(f'## Query\n\n')
+            file.write(f'{data["query"]}\n\n')
+            file.write(f'## Response\n\n')
+            file.write(f'{data["response"]}\n\n')
+
+            if data.get('documents'):
+                file.write(f'## Referenced Documents\n\n')
+                for i, doc in enumerate(data['documents']):
+                    file.write(f'### Document {i+1}: {doc["metadata"]["source"]}\n\n')
+                    file.write(f'```\n{doc["content"][:500]}{"..." if len(doc["content"]) > 500 else ""}\n```\n\n')
+
     def _save_text(self, filepath, data):
         with open(filepath, 'w', encoding='utf-8') as file:
             file.write(f'=== Query Log ===\n\n')
@@ -125,6 +152,56 @@ class OutputManager:
                 for i, doc in enumerate(data['documents']):
                     file.write(f'Document {i+1}: {doc["metadata"]["source"]}\n\n')
                     file.write(f'{doc["content"][:500]}{"..." if len(doc["content"]) > 500 else ""}\n\n')
+
+    def print_formatted(self, output_type, content, **kwargs):
+        debug(self.config, f"Formatted output type: {output_type}")
+
+        # Format based on output type
+        if output_type == 'debug':
+            formatted = f"[DEBUG] {content}"
+        elif output_type == 'header':
+            formatted = f"\n{content}\n{'=' * len(content)}"
+        elif output_type == 'subheader':
+            formatted = f"\n{content}\n{'-' * len(content)}"
+        elif output_type == 'mini_header':
+            formatted = f"\n{content}:"
+        elif output_type == 'command':
+            formatted = f"> {content}"
+        elif output_type == 'feedback':
+            success = kwargs.get('success', True)
+            prefix = "✓" if success else "✗"
+            formatted = f"{prefix} {content}"
+        elif output_type == 'analysis':
+            title = kwargs.get('title', 'Result')
+            formatted = f"{title}: {content}"
+        elif output_type == 'list':
+            indent = kwargs.get('indent', 0)
+            indent_str = " " * indent
+            formatted = f"{indent_str}• {content}"
+        elif output_type == 'kv':
+            key = kwargs.get('key', '')
+            indent = kwargs.get('indent', 0)
+            indent_str = " " * indent
+            formatted = f"{indent_str}{key}: {content}"
+        elif output_type == 'code':
+            indent = kwargs.get('indent', 0)
+            indent_str = " " * indent
+            lines = content.split('\n')
+            formatted_lines = [f"{indent_str}{line}" for line in lines]
+            formatted = '\n'.join(formatted_lines)
+        else:
+            formatted = str(content)
+
+        # Print the formatted output
+        print(formatted)
+
+        # Add to session file if active
+        if self.session_file:
+            self._write_to_session(formatted)
+
+        # Ensure output is flushed in HPC/batch mode
+        if self.batch_mode or self.hpc_mode:
+            sys.stdout.flush()
 
     def _write_to_session(self, text):
         if not self.session_file:
@@ -148,7 +225,7 @@ class OutputManager:
                 self.session_file['file'].write(f'      "content": "{escaped_text}"\n')
                 self.session_file['file'].write('    }')
             else:
-                # For text, just write the text with a timestamp
+                # For text and markdown, just write the text with a timestamp
                 timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 self.session_file['file'].write(f"[{timestamp}] {text}\n")
 
@@ -159,130 +236,151 @@ class OutputManager:
             # Log any errors but don't crash
             debug(self.config, f"Error writing to session file: {str(e)}")
 
-    def print(self, text, newline=True):
-        """Simple print function that respects batch mode"""
-        if newline:
-            print(text)
-        else:
-            print(text, end='')
-            
-        # Add to session log if active
-        if self.session_file:
-            self._write_to_session(text)
-            
-        # Ensure output is flushed in HPC/batch mode
-        if self.batch_mode or self.hpc_mode:
-            sys.stdout.flush()
-
-    def save_analysis_results(self, analysis_type, workspace, results):
-        """Save analysis results to file"""
-        debug(self.config, f"Saving {analysis_type} analysis results")
+    def save_theme_analysis(self, workspace, results, method, output_format):
+        debug(self.config, "Saving theme analysis results")
 
         # Create logs directory
         logs_dir = os.path.join('logs', workspace)
         ensure_dir(logs_dir)
 
-        # Get output format
-        output_format = self.config.get('system.output_format', 'txt')
-
         # Generate filename with timestamp
         timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = f"{analysis_type}_{timestamp}.{output_format}"
+        filename = f"themes_{method}_{timestamp}.{output_format}"
         filepath = os.path.join(logs_dir, filename)
 
         # Save based on format
         if output_format == 'json':
             self._save_json(filepath, {
                 'timestamp': datetime.datetime.now().isoformat(),
-                'type': analysis_type,
+                'method': method,
                 'results': results
             })
         else:
             with open(filepath, 'w', encoding='utf-8') as f:
-                f.write(f"=== {analysis_type.upper()} ANALYSIS RESULTS ===\n\n")
-                f.write(f"Timestamp: {datetime.datetime.now().isoformat()}\n\n")
-                
-                # Format results by type
-                if analysis_type == 'themes':
-                    self._write_theme_results(f, results)
-                elif analysis_type == 'topics':
-                    self._write_topic_results(f, results)
-                elif analysis_type == 'sentiment':
-                    self._write_sentiment_results(f, results)
-                else:
-                    # Generic format for other types
-                    f.write(str(results))
+                f.write(f"=== THEME ANALYSIS RESULTS ===\n\n")
+                f.write(f"Timestamp: {datetime.datetime.now().isoformat()}\n")
+                f.write(f"Method: {method}\n\n")
+
+                for result_type, result in results.items():
+                    f.write(f"--- {result.get('method', result_type.upper())} ---\n\n")
+
+                    # Show themes
+                    themes = result.get('themes', [])
+                    if themes:
+                        f.write(f"Found {len(themes)} themes:\n\n")
+
+                        for i, theme in enumerate(themes):
+                            f.write(f"Theme {i+1}: {theme.get('name', 'Unnamed')}\n")
+
+                            if 'keywords' in theme:
+                                f.write(f"  Keywords: {', '.join(theme['keywords'])}\n")
+
+                            if 'score' in theme:
+                                f.write(f"  Score: {theme['score']}\n")
+
+                            if 'document_count' in theme:
+                                f.write(f"  Documents: {theme['document_count']}\n")
+
+                            f.write("\n")
+                    else:
+                        f.write("No themes found\n\n")
 
         return filepath
 
-    def _write_theme_results(self, file, results):
-        """Write theme analysis results to text file"""
-        for method, result in results.items():
-            file.write(f"--- {result.get('method', method.upper())} ---\n\n")
-            
-            themes = result.get('themes', [])
-            if themes:
-                file.write(f"Found {len(themes)} themes:\n\n")
-                
-                for i, theme in enumerate(themes):
-                    file.write(f"Theme {i+1}: {theme.get('name', 'Unnamed')}\n")
-                    
-                    if 'keywords' in theme:
-                        file.write(f"  Keywords: {', '.join(theme['keywords'])}\n")
-                        
-                    if 'score' in theme:
-                        file.write(f"  Score: {theme['score']}\n")
-                        
-                    if 'document_count' in theme:
-                        file.write(f"  Documents: {theme['document_count']}\n")
-                        
-                    file.write("\n")
-            else:
-                file.write("No themes found\n\n")
-                
-    def _write_topic_results(self, file, results):
-        """Write topic analysis results to text file"""
-        for method, result in results.items():
-            file.write(f"--- {result.get('method', method.upper())} ---\n\n")
-            
-            topics = result.get('topics', [])
-            if topics:
-                file.write(f"Found {len(topics)} topics:\n\n")
-                
-                for i, topic in enumerate(topics):
-                    file.write(f"Topic {i+1}: {topic.get('name', 'Unnamed')}\n")
-                    
-                    if 'keywords' in topic:
-                        file.write(f"  Keywords: {', '.join(topic['keywords'])}\n")
-                        
-                    if 'document_count' in topic:
-                        file.write(f"  Documents: {topic['document_count']}\n")
-                        
-                    file.write("\n")
-            else:
-                file.write("No topics found\n\n")
-                
-    def _write_sentiment_results(self, file, results):
-        """Write sentiment analysis results to text file"""
-        for method, result in results.items():
-            file.write(f"--- {result.get('method', method.upper())} ---\n\n")
-            
-            # Show sentiment distribution
-            if 'sentiment_distribution' in result:
-                file.write(f"Sentiment Distribution:\n")
-                for sentiment, count in result['sentiment_distribution'].items():
-                    file.write(f"  {sentiment}: {count}\n")
-                file.write("\n")
-                
-            # Show document sentiments
-            document_sentiments = result.get('document_sentiments', [])
-            if document_sentiments:
-                file.write(f"Document Sentiments:\n\n")
-                
-                for i, doc in enumerate(document_sentiments[:10]):  # First 10 only
-                    file.write(f"  {doc['source']}: {doc['sentiment']} (score: {doc['score']:.2f})\n")
-                    
-                if len(document_sentiments) > 10:
-                    file.write(f"  ... and {len(document_sentiments) - 10} more\n")
-                    
-                file.write("\n")
+    def save_topic_analysis(self, workspace, results, method, output_format):
+        debug(self.config, "Saving topic analysis results")
+
+        # Create logs directory
+        logs_dir = os.path.join('logs', workspace)
+        ensure_dir(logs_dir)
+
+        # Generate filename with timestamp
+        timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"topics_{method}_{timestamp}.{output_format}"
+        filepath = os.path.join(logs_dir, filename)
+
+        # Save based on format
+        if output_format == 'json':
+            self._save_json(filepath, {
+                'timestamp': datetime.datetime.now().isoformat(),
+                'method': method,
+                'results': results
+            })
+        else:
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(f"=== TOPIC ANALYSIS RESULTS ===\n\n")
+                f.write(f"Timestamp: {datetime.datetime.now().isoformat()}\n")
+                f.write(f"Method: {method}\n\n")
+
+                for result_type, result in results.items():
+                    f.write(f"--- {result.get('method', result_type.upper())} ---\n\n")
+
+                    # Show topics
+                    topics = result.get('topics', [])
+                    if topics:
+                        f.write(f"Found {len(topics)} topics:\n\n")
+
+                        for i, topic in enumerate(topics):
+                            f.write(f"Topic {i+1}: {topic.get('name', 'Unnamed')}\n")
+
+                            if 'keywords' in topic:
+                                f.write(f"  Keywords: {', '.join(topic['keywords'])}\n")
+
+                            if 'document_count' in topic:
+                                f.write(f"  Documents: {topic['document_count']}\n")
+
+                            f.write("\n")
+                    else:
+                        f.write("No topics found\n\n")
+
+        return filepath
+
+    def save_sentiment_analysis(self, workspace, results, method, output_format):
+        debug(self.config, "Saving sentiment analysis results")
+
+        # Create logs directory
+        logs_dir = os.path.join('logs', workspace)
+        ensure_dir(logs_dir)
+
+        # Generate filename with timestamp
+        timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"sentiment_{method}_{timestamp}.{output_format}"
+        filepath = os.path.join(logs_dir, filename)
+
+        # Save based on format
+        if output_format == 'json':
+            self._save_json(filepath, {
+                'timestamp': datetime.datetime.now().isoformat(),
+                'method': method,
+                'results': results
+            })
+        else:
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(f"=== SENTIMENT ANALYSIS RESULTS ===\n\n")
+                f.write(f"Timestamp: {datetime.datetime.now().isoformat()}\n")
+                f.write(f"Method: {method}\n\n")
+
+                for result_type, result in results.items():
+                    f.write(f"--- {result.get('method', result_type.upper())} ---\n\n")
+
+                    # Show sentiment distribution
+                    if 'sentiment_distribution' in result:
+                        f.write(f"Sentiment Distribution:\n")
+                        for sentiment, count in result['sentiment_distribution'].items():
+                            f.write(f"  {sentiment}: {count}\n")
+                        f.write("\n")
+
+                    # Show document sentiments
+                    document_sentiments = result.get('document_sentiments', [])
+                    if document_sentiments:
+                        f.write(f"Document Sentiments:\n\n")
+
+                        for i, doc in enumerate(document_sentiments[:10]):  # First 10 only
+                            f.write(f"  {doc['source']}: {doc['sentiment']} (score: {doc['score']:.2f})\n")
+
+                        if len(document_sentiments) > 10:
+                            f.write(f"  ... and {len(document_sentiments) - 10} more\n")
+
+                        f.write("\n")
+
+        return filepath
