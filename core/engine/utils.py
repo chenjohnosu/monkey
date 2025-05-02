@@ -189,15 +189,20 @@ def create_timestamped_backup(filepath):
 
 def timestamp_filename(prefix, extension):
     """Generate a filename with a timestamp"""
-    timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-    return f"{prefix}_{timestamp}.{extension}"
+    from datetime import datetime
+    return f"{prefix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.{extension}"
 
 def format_size(size_bytes):
     """Format file size in a human-readable format"""
-    for unit in ['B', 'KB', 'MB', 'GB']:
-        if size_bytes < 1024 or unit == 'GB':
-            return f"{size_bytes:.2f} {unit}"
-        size_bytes /= 1024
+    import math
+    if size_bytes == 0:
+        return "0 B"
+    size_name = ("B", "KB", "MB", "GB")
+    i = int(math.floor(math.log(size_bytes, 1024)))
+    i = min(i, len(size_name) - 1)  # Cap at the largest unit we have
+    p = math.pow(1024, i)
+    s = round(size_bytes / p, 2)
+    return f"{s:.2f} {size_name[i]}"
 
 def load_original_document(config, workspace, source_path):
     """
@@ -249,10 +254,34 @@ def split_text_into_chunks(text, chunk_size=500):
     if not text:
         return []
 
-    # Use regular expressions for more efficient sentence splitting
     import re
+    from itertools import chain
+
+    # Use regular expressions for more efficient sentence splitting
     sentences = re.split(r'(?<=[.!?])\s+', text)
 
+    # Function to split a long sentence into word chunks
+    def split_long_sentence(sentence):
+        if len(sentence) <= chunk_size:
+            return [sentence]
+
+        words = sentence.split()
+        result = []
+        current = ""
+
+        for word in words:
+            if len(current) + len(word) + 1 <= chunk_size:
+                current = f"{current} {word}".strip()
+            else:
+                result.append(current)
+                current = word
+
+        if current:
+            result.append(current)
+
+        return result
+
+    # Process each sentence
     chunks = []
     current_chunk = ""
 
@@ -261,29 +290,23 @@ def split_text_into_chunks(text, chunk_size=500):
         if len(current_chunk) + len(sentence) + 1 > chunk_size:
             # Save current chunk if it exists
             if current_chunk:
-                chunks.append(current_chunk.strip())
+                chunks.append(current_chunk)
 
             # Handle sentences longer than chunk_size
             if len(sentence) > chunk_size:
-                # Split long sentence into chunks
-                words = sentence.split()
-                current_chunk = ""
-
-                for word in words:
-                    if len(current_chunk) + len(word) + 1 <= chunk_size:
-                        current_chunk += " " + word
-                    else:
-                        chunks.append(current_chunk.strip())
-                        current_chunk = word
+                # Add all but the last chunk from splitting the long sentence
+                sentence_chunks = split_long_sentence(sentence)
+                chunks.extend(sentence_chunks[:-1])
+                current_chunk = sentence_chunks[-1] if sentence_chunks else ""
             else:
                 current_chunk = sentence
         else:
             # Add sentence to current chunk
-            current_chunk += " " + sentence
+            current_chunk = f"{current_chunk} {sentence}".strip()
 
     # Add the last chunk if it exists
     if current_chunk:
-        chunks.append(current_chunk.strip())
+        chunks.append(current_chunk)
 
     return chunks
 
@@ -429,10 +452,10 @@ def measure_execution_time(func):
     """Decorator to measure execution time of a function using functools.wraps"""
     @wraps(func)
     def wrapper(*args, **kwargs):
-        start_time = time.time()
+        start_time = time.perf_counter()  # More precise than time.time()
         result = func(*args, **kwargs)
-        execution_time = time.time() - start_time
-        print(f"Function '{func.__name__}' executed in {execution_time:.2f} seconds")
+        execution_time = time.perf_counter() - start_time
+        print(f"Function '{func.__name__}' executed in {execution_time:.4f} seconds")
         return result
     return wrapper
 
@@ -537,8 +560,8 @@ def format_code_block(content: str, indent: int = 0) -> str:
     lines = content.split('\n')
 
     # In console mode, use ANSI color codes
-    from core.engine.utils import Colors
     formatted_lines = [f"{spaces}{Colors.GRAY}{line}{Colors.RESET}" for line in lines]
+    return '\n'.join(formatted_lines)
 
 # ===== MARKDOWN FORMATTING =====
 

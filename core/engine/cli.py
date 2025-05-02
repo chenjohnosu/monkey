@@ -1411,14 +1411,5 @@ class CommandProcessor:
                 f"\n  {Colors.CYAN}Filename{Colors.RESET}  {Colors.CYAN}Size{Colors.RESET}  {Colors.CYAN}Modified{Colors.RESET}")
 
             for file_path, size, mod_time in sorted(files):
-                print(f"  {Colors.BRIGHT_WHITE}{file_path}{Colors.RESET}  {self._format_size(size)}  {mod_time}")
-
-    def _format_size(self, size_bytes):
-        """Format file size in a human-readable format"""
-        size_bytes = float(size_bytes)  # Ensure size is a float
-        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
-            if size_bytes < 1024.0 or unit == 'TB':
-                return f"{size_bytes:.2f} {unit}"
-            size_bytes /= 1024.0
-
+                print(f"  {Colors.BRIGHT_WHITE}{file_path}{Colors.RESET}  {format_size(size)}  {mod_time}")
 
