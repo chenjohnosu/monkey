@@ -1413,3 +1413,177 @@ class CommandProcessor:
             for file_path, size, mod_time in sorted(files):
                 print(f"  {Colors.BRIGHT_WHITE}{file_path}{Colors.RESET}  {format_size(size)}  {mod_time}")
 
+    def _cmd_config(self, args):
+        """Handle the config command"""
+        debug(self.config, f"Config command with args: {args}")
+
+        if not args:
+            self._show_config()
+            return
+
+        # Get the subcommand
+        subcommand = args[0].lower()
+
+        if subcommand == 'llm':
+            if len(args) < 2:
+                print(f"Current LLM model: {self.config.get('llm.default_model')}")
+                return
+            self.config.set('llm.default_model', args[1])
+            print(f"LLM model set to: {args[1]}")
+
+        elif subcommand == 'embed':
+            if len(args) < 2:
+                print(f"Current embedding model: {self.config.get('embedding.default_model')}")
+                print("Available models: multilingual-e5, mixbread, bge, jina-zh")
+                return
+            self.config.set('embedding.default_model', args[1])
+            print(f"Embedding model set to: {args[1]}")
+
+        elif subcommand == 'storage':
+            if len(args) < 2:
+                print(f"Current storage backend: {self.config.get('storage.vector_store')}")
+                print("Available backends: llama_index, haystack, chroma")
+                return
+            self.config.set('storage.vector_store', args[1])
+            print(f"Storage backend set to: {args[1]}")
+
+        elif subcommand == 'kval':
+            if len(args) < 2:
+                print(f"Current k value: {self.config.get('query.k_value')}")
+                return
+            try:
+                k_value = int(args[1])
+                self.config.set('query.k_value', k_value)
+                print(f"K value set to: {k_value}")
+            except ValueError:
+                print(f"Invalid k value: {args[1]}")
+
+        elif subcommand == 'debug':
+            if len(args) < 2:
+                print(f"Current debug level: {self.config.get('system.debug_level')}")
+                return
+            debug_value = args[1].lower()
+            if debug_value in ['on', 'true', 'yes', '1']:
+                self.config.set('system.debug_level', 'debug')
+                print("Debug mode enabled")
+            elif debug_value in ['off', 'false', 'no', '0']:
+                self.config.set('system.debug_level', 'info')
+                print("Debug mode disabled")
+            else:
+                # Try to set explicit level
+                self.config.set('system.debug_level', debug_value)
+                print(f"Debug level set to: {debug_value}")
+
+        elif subcommand == 'output':
+            if len(args) < 2:
+                print(f"Current output format: {self.config.get('system.output_format')}")
+                return
+            output_format = args[1].lower()
+            if output_format in ['txt', 'json']:
+                self.config.set('system.output_format', output_format)
+                print(f"Output format set to: {output_format}")
+            else:
+                print(f"Unsupported output format: {output_format}")
+                print("Supported formats: txt, json")
+
+        elif subcommand == 'guide':
+            if len(args) < 2:
+                print(f"Current active guide: {self.active_guide or 'None'}")
+                return
+            guide_name = args[1]
+            self._load_guide(guide_name)
+
+        elif subcommand == 'device':
+            if len(args) < 2:
+                print(f"Current device: {self.config.get('hardware.device')}")
+                return
+            device = args[1].lower()
+            if device in ['auto', 'cpu', 'cuda', 'mps']:
+                self.config.set('hardware.device', device)
+                print(f"Device set to: {device}")
+            else:
+                print(f"Unsupported device: {device}")
+                print("Supported devices: auto, cpu, cuda, mps")
+
+        elif subcommand == 'batch':
+            if len(args) < 2:
+                print(f"Current batch settings:")
+                print(f"  Exit on error: {self.config.get('batch.exit_on_error')}")
+                print(f"  Timeout: {self.config.get('batch.timeout')} seconds")
+                return
+            batch_setting = args[1].lower()
+            if batch_setting == 'exit_on_error':
+                if len(args) < 3:
+                    print(f"Current exit_on_error setting: {self.config.get('batch.exit_on_error')}")
+                    return
+                value = args[2].lower() in ['true', 'yes', '1', 't', 'y']
+                self.config.set('batch.exit_on_error', value)
+                print(f"Batch exit_on_error set to: {value}")
+            elif batch_setting == 'timeout':
+                if len(args) < 3:
+                    print(f"Current timeout setting: {self.config.get('batch.timeout')} seconds")
+                    return
+                try:
+                    timeout = int(args[2])
+                    self.config.set('batch.timeout', timeout)
+                    print(f"Batch timeout set to: {timeout} seconds")
+                except ValueError:
+                    print(f"Invalid timeout value: {args[2]}")
+            else:
+                print(f"Unknown batch setting: {batch_setting}")
+                print("Available settings: exit_on_error, timeout")
+
+        elif subcommand == 'hpc':
+            if len(args) < 2:
+                print(f"Current HPC mode: {self.config.get('system.hpc_mode')}")
+                return
+            hpc_mode = args[1].lower() in ['true', 'yes', '1', 't', 'y', 'on']
+            self.config.set('system.hpc_mode', hpc_mode)
+            # Update the instance variable too
+            self.hpc_mode = hpc_mode
+            print(f"HPC mode set to: {hpc_mode}")
+
+        elif subcommand == 'export':
+            # Export config to environment variables
+            self.config.export_to_env()
+            print("Configuration exported to environment variables")
+
+        elif subcommand == 'reset':
+            # Reset to defaults
+            if len(args) < 2:
+                print("Usage: /config reset <section.key> or 'all'")
+                return
+
+            target = args[1].lower()
+            if target == 'all':
+                # Re-initialize with defaults
+                self.config._ensure_defaults()
+                print("All configuration reset to defaults")
+            else:
+                # Try to reset specific section.key
+                sections = target.split('.')
+                if len(sections) != 2:
+                    print("Invalid format. Use 'section.key' (e.g., 'system.debug_level')")
+                    return
+
+                section, key = sections
+                if section not in self.config.config:
+                    print(f"Section '{section}' not found in configuration")
+                    return
+
+                if key not in self.config.config[section]:
+                    print(f"Key '{key}' not found in section '{section}'")
+                    return
+
+                # Reset using defaults
+                self.config._ensure_defaults()
+                default_value = self.config.config[section][key]
+
+                # Set it back to trigger proper update behavior
+                self.config.set(target, default_value)
+                print(f"Reset {target} to default: {default_value}")
+
+        else:
+            print(f"Unknown config subcommand: {subcommand}")
+            print(
+                "Available subcommands: llm, embed, storage, kval, debug, output, guide, device, batch, hpc, export, reset")
