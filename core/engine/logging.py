@@ -8,6 +8,7 @@ import sys
 import os
 from typing import Optional, Any
 
+
 class LogManager:
     """Centralized logging management"""
 
@@ -34,7 +35,7 @@ class LogManager:
         # Add console handler
         handler = logging.StreamHandler(sys.stderr)
         formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s',
-                                     datefmt='%Y-%m-%d %H:%M:%S')
+                                      datefmt='%Y-%m-%d %H:%M:%S')
         handler.setFormatter(formatter)
         root_logger.addHandler(handler)
 
@@ -93,10 +94,56 @@ class LogManager:
         # to capture all messages regardless of console log level
         cls.file_handler = logging.FileHandler(log_file, mode='a', encoding='utf-8')
         formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s',
-                                     datefmt='%Y-%m-%d %H:%M:%S')
+                                      datefmt='%Y-%m-%d %H:%M:%S')
         cls.file_handler.setFormatter(formatter)
 
         # Always set file handler to DEBUG level to capture everything
+        cls.file_handler.setLevel(logging.DEBUG)
+
+        # Add to root logger
+        root_logger.addHandler(cls.file_handler)
+
+        # Store the log file path
+        cls.log_file_path = log_file
+
+        return cls.file_handler
+
+    @classmethod
+    def redirect_all_logs(cls, log_file):
+        """
+        Redirect all logging to a file by removing console handlers
+        and adding only a file handler
+
+        Args:
+            log_file (str): Path to the log file
+
+        Returns:
+            FileHandler: The created file handler
+        """
+        # Ensure logger is configured
+        if not cls.initialized:
+            cls.configure()
+
+        root_logger = logging.getLogger()
+
+        # Remove all existing handlers
+        for handler in root_logger.handlers[:]:
+            root_logger.removeHandler(handler)
+            if hasattr(handler, 'close'):
+                handler.close()
+
+        # Create directory if needed
+        log_dir = os.path.dirname(log_file)
+        if log_dir and not os.path.exists(log_dir):
+            os.makedirs(log_dir)
+
+        # Create file handler
+        cls.file_handler = logging.FileHandler(log_file, mode='a', encoding='utf-8')
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s',
+                                      datefmt='%Y-%m-%d %H:%M:%S')
+        cls.file_handler.setFormatter(formatter)
+
+        # Set to DEBUG level to capture everything
         cls.file_handler.setLevel(logging.DEBUG)
 
         # Add to root logger
@@ -116,6 +163,7 @@ class LogManager:
     def get_logger(name):
         """Get a logger with the specified name"""
         return logging.getLogger(name)
+
 
 # Add TRACE level to the logging module
 logging.TRACE = 5

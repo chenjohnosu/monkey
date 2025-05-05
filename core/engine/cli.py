@@ -5,7 +5,7 @@ Command line interface for the document analysis toolkit
 import os
 import shlex
 import sys
-from core.engine.logging import debug, error, warning, info, trace, debug
+from core.engine.logging import debug, error, warning, info, trace
 from core.engine.storage import StorageManager, VectorStoreInspector
 from core.engine.output import OutputManager
 import datetime
@@ -157,6 +157,282 @@ class CommandProcessor:
         }
         return aliases.get(command, command)
 
+    def _cmd_config(self, args):
+        """Handle the config command"""
+        debug(self.config, f"Config command with args: {args}")
+
+        if not args:
+            self._show_config()
+            return
+
+        # Get the subcommand
+        subcommand = args[0].lower()
+
+        if subcommand == 'llm':
+            if len(args) < 2:
+                print(f"Current LLM model: {self.config.get('llm.default_model')}")
+                return
+            self.config.set('llm.default_model', args[1])
+            print(f"LLM model set to: {args[1]}")
+
+        elif subcommand == 'embed':
+            if len(args) < 2:
+                print(f"Current embedding model: {self.config.get('embedding.default_model')}")
+                print("Available models: multilingual-e5, mixbread, bge, jina-zh")
+                return
+            self.config.set('embedding.default_model', args[1])
+            print(f"Embedding model set to: {args[1]}")
+
+        elif subcommand == 'storage':
+            if len(args) < 2:
+                print(f"Current storage backend: {self.config.get('storage.vector_store')}")
+                print("Available backends: llama_index, haystack, chroma")
+                return
+            self.config.set('storage.vector_store', args[1])
+            print(f"Storage backend set to: {args[1]}")
+
+        elif subcommand == 'kval':
+            if len(args) < 2:
+                print(f"Current k value: {self.config.get('query.k_value')}")
+                return
+            try:
+                k_value = int(args[1])
+                self.config.set('query.k_value', k_value)
+                print(f"K value set to: {k_value}")
+            except ValueError:
+                print(f"Invalid k value: {args[1]}")
+
+        elif subcommand == 'debug':
+            if len(args) < 2:
+                print(f"Current debug level: {self.config.get('system.debug_level')}")
+                return
+            debug_value = args[1].lower()
+            if debug_value in ['on', 'true', 'yes', '1']:
+                self.config.set('system.debug_level', 'debug')
+                print("Debug mode enabled")
+            elif debug_value in ['off', 'false', 'no', '0']:
+                self.config.set('system.debug_level', 'info')
+                print("Debug mode disabled")
+            else:
+                # Try to set explicit level
+                self.config.set('system.debug_level', debug_value)
+                print(f"Debug level set to: {debug_value}")
+
+        elif subcommand == 'output':
+            if len(args) < 2:
+                print(f"Current output format: {self.config.get('system.output_format')}")
+                return
+            output_format = args[1].lower()
+            if output_format in ['txt', 'json']:
+                self.config.set('system.output_format', output_format)
+                print(f"Output format set to: {output_format}")
+            else:
+                print(f"Unsupported output format: {output_format}")
+                print("Supported formats: txt, json")
+
+        elif subcommand == 'guide':
+            if len(args) < 2:
+                print(f"Current active guide: {self.active_guide or 'None'}")
+                return
+            guide_name = args[1]
+            self._load_guide(guide_name)
+
+        elif subcommand == 'device':
+            if len(args) < 2:
+                print(f"Current device: {self.config.get('hardware.device')}")
+                return
+            device = args[1].lower()
+            if device in ['auto', 'cpu', 'cuda', 'mps']:
+                self.config.set('hardware.device', device)
+                print(f"Device set to: {device}")
+            else:
+                print(f"Unsupported device: {device}")
+                print("Supported devices: auto, cpu, cuda, mps")
+
+        elif subcommand == 'batch':
+            if len(args) < 2:
+                print(f"Current batch settings:")
+                print(f"  Exit on error: {self.config.get('batch.exit_on_error')}")
+                print(f"  Timeout: {self.config.get('batch.timeout')} seconds")
+                return
+            batch_setting = args[1].lower()
+            if batch_setting == 'exit_on_error':
+                if len(args) < 3:
+                    print(f"Current exit_on_error setting: {self.config.get('batch.exit_on_error')}")
+                    return
+                value = args[2].lower() in ['true', 'yes', '1', 't', 'y']
+                self.config.set('batch.exit_on_error', value)
+                print(f"Batch exit_on_error set to: {value}")
+            elif batch_setting == 'timeout':
+                if len(args) < 3:
+                    print(f"Current timeout setting: {self.config.get('batch.timeout')} seconds")
+                    return
+                try:
+                    timeout = int(args[2])
+                    self.config.set('batch.timeout', timeout)
+                    print(f"Batch timeout set to: {timeout} seconds")
+                except ValueError:
+                    print(f"Invalid timeout value: {args[2]}")
+            else:
+                print(f"Unknown batch setting: {batch_setting}")
+                print("Available settings: exit_on_error, timeout")
+
+        elif subcommand == 'hpc':
+            if len(args) < 2:
+                print(f"Current HPC mode: {self.config.get('system.hpc_mode')}")
+                return
+            hpc_mode = args[1].lower() in ['true', 'yes', '1', 't', 'y', 'on']
+            self.config.set('system.hpc_mode', hpc_mode)
+            # Update the instance variable too
+            self.hpc_mode = hpc_mode
+            print(f"HPC mode set to: {hpc_mode}")
+
+        elif subcommand == 'export':
+            # Export config to environment variables
+            self.config.export_to_env()
+            print("Configuration exported to environment variables")
+
+        elif subcommand == 'log':
+            # Handle log configuration
+            self._config_log(args[1:] if len(args) > 1 else [])
+
+        elif subcommand == 'reset':
+            # Reset to defaults
+            if len(args) < 2:
+                print("Usage: /config reset <section.key> or 'all'")
+                return
+
+            target = args[1].lower()
+            if target == 'all':
+                # Re-initialize with defaults
+                self.config._ensure_defaults()
+                print("All configuration reset to defaults")
+            else:
+                # Try to reset specific section.key
+                sections = target.split('.')
+                if len(sections) != 2:
+                    print("Invalid format. Use 'section.key' (e.g., 'system.debug_level')")
+                    return
+
+                section, key = sections
+                if section not in self.config.config:
+                    print(f"Section '{section}' not found in configuration")
+                    return
+
+                if key not in self.config.config[section]:
+                    print(f"Key '{key}' not found in section '{section}'")
+                    return
+
+                # Reset using defaults
+                self.config._ensure_defaults()
+                default_value = self.config.config[section][key]
+
+                # Set it back to trigger proper update behavior
+                self.config.set(target, default_value)
+                print(f"Reset {target} to default: {default_value}")
+
+        else:
+            print(f"Unknown config subcommand: {subcommand}")
+            print(
+                "Available subcommands: llm, embed, storage, kval, debug, output, guide, device, batch, hpc, export, log, reset")
+
+    def _config_log(self, args):
+        """Handle log configuration as part of the config command"""
+        debug(self.config, f"Log config with args: {args}")
+
+        from core.engine.logging import LogManager
+
+        if not args:
+            print("Usage: /config log [file|console|both|status]")
+            return
+
+        subcommand = args[0].lower()
+
+        if subcommand == 'file':
+            if len(args) < 2:
+                print("Usage: /config log file <filename>")
+                return
+
+            log_file = args[1]
+            # Ensure directory exists
+            log_dir = os.path.dirname(log_file)
+            if log_dir and not os.path.exists(log_dir):
+                os.makedirs(log_dir)
+
+            # Redirect all logs to file
+            LogManager.redirect_all_logs(log_file)
+            print(f"All logs redirected to: {log_file}")
+
+        elif subcommand == 'console':
+            # Reset logging to console only
+            from core.engine.logging import LogManager
+
+            # Reconfigure logging
+            debug_level = self.config.get('system.debug_level', 'info')
+            LogManager.configure()
+            LogManager.set_level(debug_level)
+
+            print("Logging restored to console only")
+
+        elif subcommand == 'both':
+            if len(args) < 2:
+                print("Usage: /config log both <filename>")
+                return
+
+            log_file = args[1]
+
+            # Configure logging to both console and file
+            debug_level = self.config.get('system.debug_level', 'info')
+            LogManager.configure()
+            LogManager.set_level(debug_level)
+            LogManager.add_file_handler(log_file)
+
+            print(f"Logging to both console and: {log_file}")
+
+        elif subcommand == 'status':
+            # Show current logging configuration
+            log_file = LogManager.get_log_file_path()
+
+            if log_file:
+                print(f"Currently logging to file: {log_file}")
+            else:
+                print("Currently logging to console only")
+
+            # Show debug level
+            debug_level = self.config.get('system.debug_level', 'info')
+            print(f"Current debug level: {debug_level}")
+
+        else:
+            print(f"Unknown log subcommand: {subcommand}")
+            print("Available subcommands: file, console, both, status")
+
+    def _show_specific_help(self, topic):
+        """Show help for a specific topic"""
+        if topic == 'config':
+            print("""
+            Config Commands:
+              /config llm <model>                - Set LLM model (e.g., mistral, llama2)
+              /config embed <model>              - Set embedding model (e.g., multilingual-e5, mixbread)
+              /config storage <backend>          - Set storage backend (llama_index, haystack, or chroma)
+              /config kval <n>                   - Set k value for retrieval (number of docs to return)
+              /config debug [on|off]             - Enable or disable debug mode
+              /config output [txt|md|json]       - Set output format for saved files
+              /config guide <guide>              - Set guide from guides.txt
+              /config log <option>               - Control logging to file (see below)
+
+              Log control options:
+                /config log file <filename>      - Redirect all logging to a file
+                /config log console              - Restore logging to console
+                /config log both <filename>      - Log to both console and file
+                /config log status               - Show current logging status
+
+            Examples:
+              /config llm mistral                - Set LLM model to mistral
+              /config embed multilingual-e5      - Set embedding model to multilingual-e5
+              /config kval 5                     - Set retrieval to return 5 documents
+              /config log file logs/output.log   - Redirect all logs to file
+            """)
+
     def _cmd_quit(self):
         """Handle the quit command"""
         debug(self.config, "Quit command received")
@@ -202,151 +478,6 @@ class CommandProcessor:
             self._show_specific_help(args[0])
         else:
             print(f"No specific help available for '{args[0]}'")
-
-    def _show_specific_help(self, topic):
-        """Show help for a specific topic"""
-        if topic == 'run':
-            print("""
-            Run Commands:
-              /run themes [method]     - Run theme analysis
-                Methods: all, nfm, net, key, lsa, cluster
-                  all    - Run all theme analysis methods
-                  nfm    - Named entity-based theme extraction
-                  net    - Content network analysis
-                  key    - Keyword-based theme identification
-                  lsa    - Latent semantic analysis
-                  cluster - Document clustering
-
-              /run query             - Enter interactive query mode with context-aware responses
-
-              /run grind             - Process files in workspace to create initial database
-
-              /run update            - Update workspace with new or modified files
-
-              /run scan [detailed]   - Scan workspace for new or updated files
-                detailed - Show additional file information
-
-              /run merge <source_ws> - Merge source workspace into current workspace
-
-              /run sentiment [method] - Run sentiment analysis
-                Methods: all, basic, advanced
-                  all     - Run all sentiment analysis methods
-                  basic   - Simple sentiment classification
-                  advanced - In-depth analysis with aspect extraction
-
-              /run topics [method]    - Run topic modeling
-                Methods: all, lda, nmf, cluster
-                  all    - Run all topic modeling methods
-                  lda    - Latent Dirichlet Allocation
-                  nmf    - Non-Negative Matrix Factorization
-                  cluster - Clustering-based topic modeling
-
-            Examples:
-              /run themes nfm        - Run named entity-based theme extraction
-              /run sentiment advanced - Run advanced sentiment analysis
-              /run topics lda         - Run LDA topic modeling
-            """)
-        elif topic == 'clear':
-            print("""
-            Clear Commands:
-              /clear logs [workspace]    - Clear log files for a workspace
-              /clear vdb [workspace]     - Clear vector database files for a workspace
-              /clear cache [workspace]   - Clear cached data and intermediary files
-              /clear all [workspace]     - Clear all logs, vector database, and cache files
-
-            Notes:
-              - If workspace is not specified, the current workspace is used
-              - Clearing vector database will require rebuilding indexes
-              - A backup is created before clearing the vector database
-              - All clear operations require confirmation
-            """)
-        elif topic == 'load':
-            print("""
-            Load Commands:
-              /load ws <workspace>  - Load or create a workspace
-
-            Notes:
-              - If the workspace doesn't exist, you'll be prompted to create it
-              - Loading a workspace sets it as the current active workspace
-              - All commands will operate on the current workspace
-            """)
-        elif topic == 'config':
-            print("""
-            Config Commands:
-              /config llm <model>                - Set LLM model (e.g., mistral, llama2)
-              /config embed <model>              - Set embedding model (e.g., multilingual-e5, mixbread)
-              /config storage <backend>          - Set storage backend (llama_index, haystack, or chroma)
-              /config kval <n>                   - Set k value for retrieval (number of docs to return)
-              /config debug [on|off]             - Enable or disable debug mode
-              /config output [txt|md|json]       - Set output format for saved files
-              /config guide <guide>              - Set guide from guides.txt
-
-            Examples:
-              /config llm mistral                - Set LLM model to mistral
-              /config embed multilingual-e5      - Set embedding model to multilingual-e5
-              /config kval 5                     - Set retrieval to return 5 documents
-            """)
-        elif topic == 'save':
-            print("""
-            Save Commands:
-              /save start                - Start saving session (all commands and outputs)
-              /save stop                 - Stop saving session and write to file
-              /save buffer               - Save last command output to file
-
-            Notes:
-              - Session logs are saved to logs/<workspace>/ directory
-              - Output format depends on your config.output_format setting
-              - The buffer contains the most recent command output
-            """)
-        elif topic == 'show':
-            print("""
-            Show Commands:
-              /show status               - Show system status (current settings)
-              /show cuda                 - Show CUDA status and GPU information
-              /show config               - Show detailed configuration settings
-              /show ws                   - Show workspace details and statistics
-              /show files                - Show files in current workspace
-              /show guide                - Show available guides from guides.txt
-
-            Examples:
-              /show status               - View current workspace and model settings
-              /show files                - List all files in the current workspace
-            """)
-        elif topic == 'inspect':
-            print("""
-            Inspect Commands:
-              /inspect workspace [ws]         - Inspect workspace metadata and vector store
-              /inspect ws [ws]                - Alias for workspace inspect
-              /inspect documents [ws] [limit] - Dump document content in workspace
-                Optional: Specify number of documents to show (default: 5)
-              /inspect vectorstore [ws]       - Dump vector store metadata
-              /inspect vdb [ws]               - Alias for vectorstore inspect
-              /inspect query [ws] [query]     - Test query pipeline with optional test query
-              /inspect rebuild [ws]           - Rebuild vector store from existing documents
-              /inspect fix [ws]               - Fix common vector store issues
-              /inspect metadata [ws] [query]  - Inspect raw metadata returned from vector store
-              /inspect migrate [ws]           - Fix inconsistent vector store naming
-
-            Examples:
-              /inspect documents default 10   - Show content of 10 documents in default workspace
-              /inspect query research         - Test query pipeline with the term "research"
-            """)
-        elif topic == 'explain':
-            print("""
-            Interpretation Commands:
-              /explain themes [question]    - Get LLM interpretation of theme analysis
-              /explain topics [question]    - Get LLM interpretation of topic modeling 
-              /explain sentiment [question] - Get LLM interpretation of sentiment analysis
-              /explain session [question]   - Get LLM interpretation of query session
-
-            Examples:
-              /explain themes What are the most significant themes?
-              /explain topics How do the topics relate to each other?
-              /explain sentiment What emotions are most prominent?
-              /explain session What were the main research directions?
-            """)
-        else:
-            print(f"No specific help available for '{topic}'")
 
     def _cmd_show(self, args):
         """Handle the show command"""
