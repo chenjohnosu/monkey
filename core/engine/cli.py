@@ -216,14 +216,7 @@ class CommandProcessor:
               /config output [txt|md|json]       - Set output format for saved files
               /config guide <guide>              - Set guide from guides.txt
               /config log <option>               - Control logging to file (see below)
-
-              Log control options:
-                /config log file <filename>      - Redirect all logging to a file
-                /config log console              - Restore logging to console
-                /config log both <filename>      - Log to both console and file
-                /config log on                   - Turn logging on
-                /config log off                  - Turn logging off
-                /config log status               - Show current logging status
+              /config key <method> [ngram_size]   - Set keyword extraction method (tf-idf, rake-nltk, yake, keybert)
 
             Examples:
               /config llm mistral                - Set LLM model to mistral
@@ -568,6 +561,32 @@ class CommandProcessor:
         elif subcommand == 'log':
             # Handle log configuration
             self._config_log(args[1:] if len(args) > 1 else [])
+        elif subcommand == 'key':
+            if len(args) < 2:
+                current_method = self.config.get('keywords.method', 'tf-idf')
+                print(f"Current keyword extraction method: {current_method}")
+                print("Available methods: tf-idf, rake-nltk, yake, keybert")
+                return
+
+            # Get method namev
+            method = args[1].lower()
+
+            # Validate method
+            valid_methods = ['tf-idf', 'rake-nltk', 'yake', 'keybert']
+            if method not in valid_methods:
+                print(f"Invalid keyword extraction method: {method}")
+                print(f"Must be one of: {', '.join(valid_methods)}")
+                return
+
+            # Set new method
+            self.config.set('keywords.method', method)
+            print(f"Keyword extraction method set to: {method}")
+
+            # Configure max_ngram_size if provided
+            if len(args) > 2 and args[2].isdigit():
+                ngram_size = int(args[2])
+                self.config.set('keywords.max_ngram_size', ngram_size)
+                print(f"Maximum n-gram size set to: {ngram_size}")
 
         elif subcommand == 'reset':
             # Reset to defaults

@@ -32,6 +32,7 @@ def parse_arguments():
     parser.add_argument('--debug', choices=['off', 'error', 'warning', 'info', 'debug', 'trace'],
                         default=None, help='Set debug level')
     parser.add_argument('-b', '--batch', help='Run commands from batch file')
+    parser.add_argument('--log-file', dest='log_file', help='Redirect logs to file')
     parser.add_argument('--hpc', action='store_true', help='HPC mode: suppress interactive prompts')
     return parser.parse_args()
 
@@ -53,7 +54,7 @@ def main():
         info("HPC mode enabled: suppressing interactive prompts")
 
     # Handle log file redirection if specified
-    if args.log_file:
+    if hasattr(args, 'log_file') and args.log_file:
         info(f"Redirecting all logs to: {args.log_file}")
         LogManager.redirect_all_logs(args.log_file)
 

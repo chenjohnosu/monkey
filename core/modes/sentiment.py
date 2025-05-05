@@ -13,7 +13,9 @@ from core.engine.output import OutputManager
 from core.language.processor import TextProcessor
 from core.language.tokenizer import JIEBA_AVAILABLE, get_jieba_instance
 from core.engine.common import safe_execute
+
 from core.engine.utils import split_text_into_chunks, ensure_dir
+
 
 # Try to import sentiment analysis libraries - use what's available
 try:

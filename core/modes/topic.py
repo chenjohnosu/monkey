@@ -7,10 +7,9 @@ from collections import Counter, defaultdict
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 
-from core.engine.utils import (
-    ensure_dir, extract_keywords, configure_vectorizer, format_feedback,
-    split_text_into_chunks
-)
+from core.engine.keywords import extract_keywords, configure_vectorizer
+from core.engine.utils import ensure_dir
+
 from core.engine.logging import debug, warning, info, error, trace
 from core.engine.storage import StorageManager
 from core.engine.output import OutputManager
@@ -114,6 +113,11 @@ class TopicModeler:
             Dict: Topic analysis results
         """
         debug(self.config, f"Analyzing topics in workspace '{workspace}' using method '{method}'")
+
+        # Print keyword extraction method information
+        keyword_method = self.config.get('keywords.method', 'tf-idf')
+        max_ngram_size = self.config.get('keywords.max_ngram_size', 2)
+        print(f"\nKeyword extraction: {keyword_method.upper()}, n-gram size: {max_ngram_size}")
 
         # Validate method - case insensitive matching
         valid_methods = ['all', 'lda', 'nmf', 'cluster']

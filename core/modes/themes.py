@@ -14,10 +14,8 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.decomposition import TruncatedSVD
 from sklearn.cluster import KMeans
 
-from core.engine.utils import (
-    ensure_dir, get_file_content, timestamp_filename, format_size,
-    split_text_into_chunks, configure_vectorizer, extract_keywords
-)
+from core.engine.keywords import extract_keywords, configure_vectorizer
+
 from core.engine.logging import debug, warning, info, error
 from core.engine.storage import StorageManager
 from core.engine.output import OutputManager
@@ -115,6 +113,11 @@ class ThemeAnalyzer:
             Dict: Analyzed themes
         """
         debug(self.config, f"Analyzing themes in workspace '{workspace}' using method '{method}'")
+
+        # Print keyword extraction method information
+        keyword_method = self.config.get('keywords.method', 'tf-idf')
+        max_ngram_size = self.config.get('keywords.max_ngram_size', 2)
+        print(f"\nKeyword extraction: {keyword_method.upper()}, n-gram size: {max_ngram_size}")
 
         # Validate method
         valid_methods = ['all', 'nfm', 'net', 'key', 'lsa', 'cluster']
@@ -786,15 +789,8 @@ class ThemeAnalyzer:
         Returns:
             Dict: Named entity analysis results
         """
-        debug(self.config, "Analyzing named entities")
-
-        # Detailed logging of input documents
-        print(f"Total input documents: {len(doc_contents)}")
-        for doc in doc_contents[:5]:  # Log first 5 documents for inspection
-            print(f"Document source: {doc.get('source', 'Unknown')}")
-            print(f"Document language: {doc.get('language', 'Unknown')}")
-            print(f"Content length: {len(doc.get('processed_content', ''))}")
-            print(f"First 100 chars: {doc.get('processed_content', '')[:100]}")
+        # Print detailed info about what's being processed
+        print(f"Processing {len(doc_contents)} documents for named entity analysis")
 
         # Group documents by language
         docs_by_language = defaultdict(list)
@@ -804,7 +800,6 @@ class ThemeAnalyzer:
 
         # Prepare results
         all_entities = []
-        total_entity_counts = defaultdict(int)
 
         # Process entities for each language
         for language, docs in docs_by_language.items():
@@ -819,52 +814,50 @@ class ThemeAnalyzer:
 
                 print(f"Extracted {len(language_entities)} entities for {language}")
 
-                # Accumulate entities
+                # Add all entities without filtering
                 all_entities.extend(language_entities)
-
-                # Count entities
-                for entity in language_entities:
-                    total_entity_counts[entity['value']] += entity['count']
             except Exception as e:
                 print(f"Error extracting entities for {language}: {str(e)}")
                 import traceback
                 traceback.print_exc()
 
-        # Sort entities by overall frequency
-        sorted_entities = sorted(
-            [
-                {
-                    'value': entity,
-                    'count': count,
-                    'documents': sum(1 for doc in doc_contents if entity in doc.get('processed_content', ''))
-                }
-                for entity, count in total_entity_counts.items()
-            ],
-            key=lambda x: x['count'],
-            reverse=True
-        )
+        # Sort entities by frequency and document count
+        if all_entities:
+            sorted_entities = sorted(all_entities, key=lambda x: (x['documents'], x['count']), reverse=True)
 
-        print(f"\nTotal unique entities found: {len(sorted_entities)}")
-        print("Top 10 entities:")
-        for entity in sorted_entities[:10]:
-            print(f"  {entity['value']}: count={entity['count']}, documents={entity['documents']}")
+            # Take top entities (more than before)
+            top_entities = sorted_entities[:100]  # Take more entities
 
-        # Generate themes from top entities
-        themes = []
-        for top_entity in sorted_entities[:20]:  # Top 20 entities
-            themes.append({
-                'name': f"Theme: {top_entity['value']}",
-                'keywords': [top_entity['value']],
-                'frequency': top_entity['count'],
-                'document_count': top_entity['documents']
-            })
+            print(f"\nTotal unique entities found: {len(sorted_entities)}")
+            print("Top 10 entities:")
+            for i, entity in enumerate(top_entities[:10]):
+                print(f"  {entity['value']}: count={entity['count']}, documents={entity['documents']}")
 
-        return {
-            "method": "Named Entity Analysis",
-            "entity_count": len(sorted_entities),
-            "significant_entities": len(sorted_entities),
-            "themes": themes
-        }
+            # Generate themes
+            themes = []
+            for entity in top_entities[:30]:  # Generate more themes
+                themes.append({
+                    'name': f"Theme: {entity['value']}",
+                    'keywords': [entity['value']],
+                    'frequency': entity['count'],
+                    'document_count': entity['documents']
+                })
+
+            # Return results with all entities counted as significant
+            return {
+                "method": "Named Entity Analysis",
+                "entity_count": len(sorted_entities),
+                "significant_entities": len(sorted_entities),  # Count all as significant
+                "themes": themes
+            }
+        else:
+            print("No entities found")
+            return {
+                "method": "Named Entity Analysis",
+                "entity_count": 0,
+                "significant_entities": 0,
+                "themes": []
+            }
 
     def _extract_chinese_entities(self, docs: List[Dict]) -> List[Dict]:
         """
@@ -955,7 +948,7 @@ class ThemeAnalyzer:
 
     def _extract_english_entities(self, docs: List[Dict]) -> List[Dict]:
         """
-        Extract named entities from English text with improved detection
+        Extract entities from English text with improved detection for interview content
 
         Args:
             docs (List[Dict]): English documents
@@ -963,81 +956,79 @@ class ThemeAnalyzer:
         Returns:
             List[Dict]: Extracted entities
         """
-        import re
+        debug(self.config, f"Extracting entities from {len(docs)} English documents")
 
+        # Direct approach - use keywords as entities with NO filtering
+        # For interview data, direct keyword extraction works better than regex patterns
+
+        # Extract document texts
+        doc_texts = [doc.get("processed_content", "") for doc in docs]
+
+        # Create combined text for better keyword context
+        combined_text = " ".join(doc_texts)
+
+        # IMPORTANT: Use a much simpler approach with minimal filtering
         entities = []
 
-        # More comprehensive entity patterns
-        entity_patterns = [
-            # Proper names (potential person names)
-            r'\b([A-Z][a-z]+\s+[A-Z][a-z]+)\b',
-            # Organizations
-            r'\b([A-Z][a-z]+\s+(?:University|College|Institute|Hospital|Company|Corporation|Center))\b',
-            # Technical terms and acronyms
-            r'\b([A-Z]{2,})\b',
-            # Specialized domain terms
-            r'\b([A-Z][a-z]+(?:ing|tion|ment|ity|ship))\b'
-        ]
+        # 1. First use basic word frequency
+        words = combined_text.lower().split()
+        word_counts = Counter(words)
 
-        # Compile patterns
-        compiled_patterns = [re.compile(pattern) for pattern in entity_patterns]
+        # Filter out very short words and convert to entity format
+        for word, count in word_counts.items():
+            if len(word) > 3 and word not in self.english_stopwords:
+                # Count documents containing this word
+                doc_count = sum(1 for text in doc_texts if word in text.lower())
 
-        for doc in docs:
-            text = doc.get('processed_content', '')
-
-            # Collect entities from different patterns
-            doc_entities = []
-            for pattern in compiled_patterns:
-                doc_entities.extend(pattern.findall(text))
-
-            # Additional term extraction
-            technical_terms = re.findall(
-                r'\b[A-Za-z]+(?:-[A-Za-z]+)+\b',  # Hyphenated terms
-                text
-            )
-            camel_case_terms = re.findall(
-                r'\b[a-z]+[A-Z][a-zA-Z]+\b',  # camelCase terms
-                text
-            )
-
-            # Combine and filter entities
-            doc_entities.extend(technical_terms)
-            doc_entities.extend(camel_case_terms)
-
-            # Filter out stopwords and short/irrelevant terms
-            filtered_entities = [
-                entity for entity in doc_entities
-                if (len(entity) > 3 and
-                    entity.lower() not in self.english_stopwords and
-                    not entity.isdigit())
-            ]
-
-            # Count entity frequencies
-            entity_counts = Counter(filtered_entities)
-
-            # Convert to standardized format
-            doc_entity_list = [
-                {
-                    'value': entity,
+                # Include ALL entities - no minimum threshold
+                entities.append({
+                    'value': word,
                     'count': count,
-                    'documents': 1
-                }
-                for entity, count in entity_counts.items()
-                if count > 1  # Only keep entities appearing more than once
-            ]
+                    'documents': doc_count
+                })
 
-            entities.extend(doc_entity_list)
+        # 2. Extract multi-word phrases (bigrams and trigrams)
+        # This is crucial for interview content
+        for doc_text in doc_texts:
+            words = doc_text.lower().split()
 
-        # Remove duplicates while preserving count information
-        unique_entities = {}
-        for entity in entities:
-            if entity['value'] not in unique_entities:
-                unique_entities[entity['value']] = entity
-            else:
-                unique_entities[entity['value']]['count'] += entity['count']
-                unique_entities[entity['value']]['documents'] += entity['documents']
+            # Extract bigrams (pairs of adjacent words)
+            for i in range(len(words) - 1):
+                if len(words[i]) > 3 and len(words[i + 1]) > 3:
+                    bigram = f"{words[i]} {words[i + 1]}"
 
-        return list(unique_entities.values())
+                    # Count occurrences in all documents
+                    bigram_count = sum(1 for text in doc_texts if bigram in text.lower())
+
+                    # Include if appears in any document
+                    if bigram_count > 0:
+                        entities.append({
+                            'value': bigram,
+                            'count': bigram_count,
+                            'documents': sum(1 for text in doc_texts if bigram in text.lower())
+                        })
+
+            # Extract trigrams (three adjacent words)
+            for i in range(len(words) - 2):
+                if len(words[i]) > 2 and len(words[i + 1]) > 2 and len(words[i + 2]) > 2:
+                    trigram = f"{words[i]} {words[i + 1]} {words[i + 2]}"
+
+                    # Count occurrences in all documents
+                    trigram_count = sum(1 for text in doc_texts if trigram in text.lower())
+
+                    # Include if appears in any document
+                    if trigram_count > 0:
+                        entities.append({
+                            'value': trigram,
+                            'count': trigram_count,
+                            'documents': sum(1 for text in doc_texts if trigram in text.lower())
+                        })
+
+        # Print count to help diagnose
+        debug(self.config, f"Found {len(entities)} potential entities before filtering")
+
+        # Don't filter entities - add all of them
+        return entities
 
     def _analyze_latent_semantics(self, doc_contents: List[Dict]) -> Dict[str, Any]:
         """

@@ -13,7 +13,7 @@ class Config:
         """Initialize configuration from file"""
         self.config_path = config_path
         self.loaded_guides = {}
-        self.version = '0.9.0'
+        self.version = '0.9.1'
 
         # Load configuration
         try:
@@ -80,6 +80,10 @@ class Config:
             },
             'batch': {
                 'exit_on_error': True  # Exit batch processing on first error by default
+            },
+            'keywords': {
+                'method': 'tf-idf',  # Default method
+                'max_ngram_size': 2  # Default for multi-word phrases
             }
         }
 
