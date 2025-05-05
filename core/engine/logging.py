@@ -18,7 +18,7 @@ class LogManager:
     initialized = False
     # Default log file path in logs directory
     default_log_file = os.path.join('logs', 'monkey.log')
-    log_file_path = default_log_file
+    log_file_path = default_log_file  # Initialize with default_log_file
     # Add a flag to track if logging is active
     logging_active = False  # Default: logging to console is OFF
     # Path to store logging state
@@ -44,6 +44,11 @@ class LogManager:
             cls.logging_active = True
             cls.log_file_path = cls.default_log_file
 
+        # Ensure log_file_path is not None
+        if cls.log_file_path is None:
+            cls.log_file_path = cls.default_log_file
+            print(f"Warning: log_file_path was None, using default: {cls.default_log_file}")
+
         root_logger = logging.getLogger()
 
         # Clear existing handlers to avoid duplicates
@@ -63,16 +68,25 @@ class LogManager:
 
         # Always add file handler to log to the default log file
         # Create file handler for the default log file
-        cls.file_handler = logging.FileHandler(cls.log_file_path, mode='a', encoding='utf-8')
-        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s',
-                                     datefmt='%Y-%m-%d %H:%M:%S')
-        cls.file_handler.setFormatter(formatter)
+        try:
+            cls.file_handler = logging.FileHandler(cls.log_file_path, mode='a', encoding='utf-8')
+            formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s',
+                                        datefmt='%Y-%m-%d %H:%M:%S')
+            cls.file_handler.setFormatter(formatter)
 
-        # Always set file handler to DEBUG level to capture everything
-        cls.file_handler.setLevel(logging.DEBUG)
+            # Always set file handler to DEBUG level to capture everything
+            cls.file_handler.setLevel(logging.DEBUG)
 
-        # Add to root logger
-        root_logger.addHandler(cls.file_handler)
+            # Add to root logger
+            root_logger.addHandler(cls.file_handler)
+        except Exception as e:
+            print(f"Error creating file handler: {str(e)}")
+            # Add a console handler as fallback
+            fallback_handler = logging.StreamHandler(sys.stderr)
+            formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s',
+                                       datefmt='%Y-%m-%d %H:%M:%S')
+            fallback_handler.setFormatter(formatter)
+            root_logger.addHandler(fallback_handler)
 
         # Silence overly verbose libraries
         logging.getLogger('numba').setLevel(logging.WARNING)
@@ -237,12 +251,22 @@ class LogManager:
                 root_logger.addHandler(handler)
 
             # Always add a file handler for the log file
-            cls.file_handler = logging.FileHandler(cls.log_file_path, mode='a', encoding='utf-8')
-            formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s',
-                                        datefmt='%Y-%m-%d %H:%M:%S')
-            cls.file_handler.setFormatter(formatter)
-            cls.file_handler.setLevel(logging.DEBUG)
-            root_logger.addHandler(cls.file_handler)
+            if cls.log_file_path:
+                cls.file_handler = logging.FileHandler(cls.log_file_path, mode='a', encoding='utf-8')
+                formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s',
+                                            datefmt='%Y-%m-%d %H:%M:%S')
+                cls.file_handler.setFormatter(formatter)
+                cls.file_handler.setLevel(logging.DEBUG)
+                root_logger.addHandler(cls.file_handler)
+            else:
+                # If log_file_path is None, use default
+                cls.log_file_path = cls.default_log_file
+                cls.file_handler = logging.FileHandler(cls.log_file_path, mode='a', encoding='utf-8')
+                formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s',
+                                           datefmt='%Y-%m-%d %H:%M:%S')
+                cls.file_handler.setFormatter(formatter)
+                cls.file_handler.setLevel(logging.DEBUG)
+                root_logger.addHandler(cls.file_handler)
 
         # Save state
         cls._save_state()
@@ -293,6 +317,13 @@ class LogManager:
                 # Extract state variables
                 cls.logging_active = state.get('active', False)  # Default to OFF
                 cls.log_file_path = state.get('log_file', cls.default_log_file)
+
+                # Ensure log_file_path is not None
+                if cls.log_file_path is None:
+                    cls.log_file_path = cls.default_log_file
+            else:
+                # If no state file exists, ensure log_file_path has a default value
+                cls.log_file_path = cls.default_log_file
         except Exception as e:
             # Can't log here to avoid infinite recursion
             print(f"Error loading logging state: {str(e)}")
