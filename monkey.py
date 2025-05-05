@@ -52,6 +52,11 @@ def main():
         config.set('system.hpc_mode', True)
         info("HPC mode enabled: suppressing interactive prompts")
 
+    # Handle log file redirection if specified
+    if args.log_file:
+        info(f"Redirecting all logs to: {args.log_file}")
+        LogManager.redirect_all_logs(args.log_file)
+
     cli = CommandProcessor(config)
 
     if args.batch:
@@ -59,17 +64,10 @@ def main():
             info(f"Running batch file: {args.batch}")
             config.set('system.batch_mode', True)
 
-            timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-            workspace = config.get('workspace.default', 'default')
-            logs_dir = os.path.join('logs', workspace)
-            if not os.path.exists(logs_dir):
-                os.makedirs(logs_dir)
-
-            log_file = os.path.join(logs_dir, f"batch_{timestamp}.txt")
-
-            # Set up logging to the file regardless of debug level
-            LogManager.add_file_handler(log_file)
-            info(f"Batch mode: logging output to {log_file}")
+            # Set up batch mode logging - enable console output and log to file
+            from core.engine.logging import LogManager
+            LogManager.configure(batch_mode=True)
+            info(f"Batch mode: logging to console and default log file")
 
             # Redirect stdout/stderr in HPC mode, but ensure logging still works
             if args.hpc:
@@ -78,6 +76,7 @@ def main():
                 orig_stderr = sys.stderr
 
                 # Open the log file for stdout/stderr redirection
+                log_file = LogManager.get_log_file_path()
                 log_file_handle = open(log_file, 'a', encoding='utf-8')
                 sys.stdout = log_file_handle
                 sys.stderr = log_file_handle
