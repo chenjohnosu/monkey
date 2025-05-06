@@ -1,32 +1,49 @@
 """
-core/language/processor.py - Update TextProcessor initialization
+core/language/processor.py - Update TextProcessor to use spaCy
 """
 
 import os
-import re  # Ensure re is imported for the regex operations
-from core.engine.logging import debug,warning
+import re
+from core.engine.logging import debug, warning, info, error
 from core.language.detector import LanguageDetector
 
-# Import the centralized jieba availability constant and helper functions
-from core.language.tokenizer import JIEBA_AVAILABLE, get_jieba_instance
+# Import spaCy functionality if available
+try:
+    from core.language.spacy_tokenizer import (
+        SPACY_AVAILABLE,
+        initialize_spacy,
+        get_spacy_model,
+        load_stopwords
+    )
+except ImportError:
+    SPACY_AVAILABLE = False
+    warning("spaCy integration not available, falling back to traditional methods")
 
-# Remove the jieba import attempt here
-# try:
-#     import jieba
-#     JIEBA_AVAILABLE = True
-# except ImportError:
-#     JIEBA_AVAILABLE = False
-#     warning("jieba not available, falling back to character-based segmentation for Chinese")
+# Keep backward compatibility with jieba
+from core.language.tokenizer import JIEBA_AVAILABLE, get_jieba_instance
 
 
 class TextProcessor:
-    """Processes text for analysis with enhanced Chinese support"""
+    """Processes text for analysis with enhanced language support using spaCy where available"""
 
     def __init__(self, config):
         """Initialize the text processor"""
         self.config = config
         self.language_detector = LanguageDetector(config)
+
+        # Initialize spaCy if available
+        self.use_spacy = SPACY_AVAILABLE and config.get('system.use_spacy', True)
+        if self.use_spacy:
+            try:
+                initialize_spacy()
+                debug(config, "Using spaCy for text processing")
+            except Exception as e:
+                error(f"Error initializing spaCy: {str(e)}")
+                self.use_spacy = False
+
+        # Load stopwords
         self.stopwords = self._load_stopwords()
+
         debug(config, "Text processor initialized")
 
     def _load_stopwords(self):
@@ -39,7 +56,17 @@ class TextProcessor:
             os.makedirs(lexicon_dir)
             debug(self.config, f"Created lexicon directory: {lexicon_dir}")
 
-        # Load English stopwords
+        # Try to use spaCy stopwords first
+        if self.use_spacy:
+            try:
+                stopwords['en'] = load_stopwords('en')
+                stopwords['zh'] = load_stopwords('zh')
+                debug(self.config, f"Loaded stopwords from spaCy models")
+                return stopwords
+            except Exception as e:
+                warning(f"Could not load spaCy stopwords: {str(e)}")
+
+        # Fallback: Load from files
         try:
             with open(os.path.join(lexicon_dir, 'stopwords_en.txt'), 'r', encoding='utf-8') as file:
                 stopwords['en'] = set(line.strip() for line in file if line.strip())
@@ -48,7 +75,6 @@ class TextProcessor:
             stopwords['en'] = set()
             debug(self.config, "English stopwords file not found")
 
-        # Load Chinese stopwords
         try:
             with open(os.path.join(lexicon_dir, 'stopwords_zh.txt'), 'r', encoding='utf-8') as file:
                 stopwords['zh'] = set(line.strip() for line in file if line.strip())
@@ -84,24 +110,19 @@ class TextProcessor:
         # Detect language
         language = self.language_detector.detect(text)
 
-        # Apply language-specific preprocessing
-        if language == 'zh':
-            processed_text = self._preprocess_chinese(text)
+        # Choose processing method based on available tools
+        if self.use_spacy:
+            # Use spaCy-based processing
+            processed_text, token_count = self._preprocess_with_spacy(text, language)
         else:
-            processed_text = self._preprocess_english(text)
-
-        # Count tokens appropriately based on language
-        if language == 'zh':
-            if JIEBA_AVAILABLE:
-                jieba_instance = get_jieba_instance()
-                if jieba_instance:
-                    token_count = len(list(jieba_instance.cut(processed_text)))
-                else:
-                    token_count = len(processed_text)  # Character count as fallback
+            # Apply traditional language-specific preprocessing
+            if language == 'zh':
+                processed_text = self._preprocess_chinese(text)
             else:
-                token_count = len(processed_text)  # Character count as fallback
-        else:
-            token_count = len(processed_text.split())
+                processed_text = self._preprocess_english(text)
+
+            # Count tokens appropriately based on language
+            token_count = self._count_tokens(processed_text, language)
 
         return {
             'original': text,
@@ -110,6 +131,49 @@ class TextProcessor:
             'length': len(text),
             'tokens': token_count
         }
+
+    def _preprocess_with_spacy(self, text, language):
+        """
+        Preprocess text using spaCy
+
+        Args:
+            text (str): Text to process
+            language (str): Language code
+
+        Returns:
+            Tuple[str, int]: Processed text and token count
+        """
+        try:
+            # Get appropriate spaCy model
+            nlp = get_spacy_model(language)
+            if not nlp:
+                # Fall back to traditional methods if model is unavailable
+                if language == 'zh':
+                    return self._preprocess_chinese(text), self._count_tokens(text, language)
+                else:
+                    return self._preprocess_english(text), self._count_tokens(text, language)
+
+            # Process with spaCy
+            doc = nlp(text)
+
+            # Filter out stopwords and punctuation
+            tokens = [token.text for token in doc if not token.is_stop and not token.is_punct]
+
+            # Join tokens appropriately based on language
+            if language == 'zh':
+                processed_text = ''.join(tokens)
+            else:
+                processed_text = ' '.join(tokens)
+
+            return processed_text, len(tokens)
+
+        except Exception as e:
+            debug(self.config, f"spaCy processing error: {str(e)}")
+            # Fall back to traditional methods
+            if language == 'zh':
+                return self._preprocess_chinese(text), self._count_tokens(text, language)
+            else:
+                return self._preprocess_english(text), self._count_tokens(text, language)
 
     def _preprocess_english(self, text):
         """Preprocess English text"""
@@ -162,3 +226,26 @@ class TextProcessor:
                     text = text.replace(stopword, '')
 
         return text
+
+    def _count_tokens(self, text, language):
+        """
+        Count tokens in processed text
+
+        Args:
+            text (str): Processed text
+            language (str): Language code
+
+        Returns:
+            int: Token count
+        """
+        if language == 'zh':
+            if JIEBA_AVAILABLE:
+                jieba_instance = get_jieba_instance()
+                if jieba_instance:
+                    return len(list(jieba_instance.cut(text)))
+                else:
+                    return len(text)  # Character count as fallback
+            else:
+                return len(text)  # Character count as fallback
+        else:
+            return len(text.split())

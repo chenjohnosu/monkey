@@ -1,74 +1,59 @@
 """
-core/language/tokenizer.py - Central place for jieba initialization
+core/language/tokenizer.py - Compatibility layer for spaCy tokenization
+Re-exports functionality from spacy_tokenizer.py for backward compatibility
 """
 
-# Create a new global initialization management for jieba
-# We'll use this file as the central place for jieba management
+import warnings
 
-from core.engine.logging import warning, debug
+# Import functionality from spacy_tokenizer
+from core.language.spacy_tokenizer import (
+    SPACY_AVAILABLE,
+    SpacyTokenizer as NewTokenizer,  # Import with different name to avoid name conflict
+    initialize_spacy,
+    get_spacy_model,
+    load_stopwords
+)
 
-# Global flag and instance to track Jieba initialization
+# Set up backward compatibility flags and functions
+JIEBA_AVAILABLE = False  # Mark as not available
 _JIEBA_INITIALIZED = False
 _JIEBA_INSTANCE = None
 
-# Import jieba for Chinese word segmentation if available
-try:
-    import jieba
-    JIEBA_AVAILABLE = True
-except ImportError:
-    JIEBA_AVAILABLE = False
-    warning("jieba not available, falling back to character-based tokenization for Chinese")
+# Emit deprecation warning only once
+_shown_warning = False
 
+def _show_deprecation_warning():
+    """Show deprecation warning once"""
+    global _shown_warning
+    if not _shown_warning:
+        warnings.warn(
+            "The tokenizer module is deprecated and will be removed in a future version. "
+            "Please use SpacyTokenizer from core.language.spacy_tokenizer instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        _shown_warning = True
+
+# Compatibility functions
 def initialize_jieba():
-    """
-    Initialize jieba if it hasn't been initialized already.
-    This function should be called whenever jieba is needed.
-    """
-    global _JIEBA_INITIALIZED, _JIEBA_INSTANCE
-
-    if not JIEBA_AVAILABLE:
-        return None
-
-    if not _JIEBA_INITIALIZED:
-        debug(None, "Initializing Jieba dictionary (first time)")
-        # Redirect stdout to suppress jieba's initialization messages
-        import sys
-        import io
-        original_stdout = sys.stdout
-        sys.stdout = io.StringIO()  # Redirect to string buffer
-
-        try:
-            # Force loading the dictionary
-            jieba.lcut("初始化")
-            _JIEBA_INSTANCE = jieba
-            _JIEBA_INITIALIZED = True
-        finally:
-            # Restore stdout
-            sys.stdout = original_stdout
-
-    return _JIEBA_INSTANCE
+    """Compatibility function that does nothing"""
+    _show_deprecation_warning()
+    return None
 
 def get_jieba_instance():
-    """
-    Get the initialized jieba instance.
-    Always use this function instead of importing jieba directly.
-    """
-    if not JIEBA_AVAILABLE:
-        return None
+    """Compatibility function that returns None"""
+    _show_deprecation_warning()
+    return None
 
-    return initialize_jieba()
-
+# Create compatibility version of the original Tokenizer class
 class Tokenizer:
-    """Language-specific tokenization"""
+    """Compatibility class that wraps SpacyTokenizer"""
 
-    def __init__(self, config):
+    def __init__(self, config=None):
         """Initialize the tokenizer"""
+        _show_deprecation_warning()
         self.config = config
-        debug(config, "Tokenizer initialized")
-
-        # Initialize Jieba once during tokenizer initialization
-        if JIEBA_AVAILABLE:
-            initialize_jieba()
+        self.spacy_tokenizer = NewTokenizer(config)
 
     def tokenize(self, text, language=None):
         """
@@ -81,67 +66,7 @@ class Tokenizer:
         Returns:
             list: Tokens
         """
-        debug(self.config, f"Tokenizing text with language: {language}")
-
-        # Skip empty text
-        if not text or len(text.strip()) == 0:
-            return []
-
-        # Auto-detect language if not provided
-        if language is None:
-            from core.language.detector import LanguageDetector
-            detector = LanguageDetector(self.config)
-            language = detector.detect(text)
-
-        # Apply language-specific tokenization
-        if language == 'zh':
-            return self._tokenize_chinese(text)
-        else:
-            return self._tokenize_english(text)
-
-    def _tokenize_english(self, text):
-        """Tokenize English text"""
-        debug(self.config, "Tokenizing English text")
-
-        # Simple whitespace tokenization for English
-        import re
-
-        # Remove punctuation and tokenize
-        text = re.sub(r'[^\w\s]', ' ', text.lower())
-        tokens = text.split()
-
-        return tokens
-
-    def _tokenize_chinese(self, text):
-        """Tokenize Chinese text"""
-        debug(self.config, "Tokenizing Chinese text")
-
-        # Use jieba for word segmentation if available
-        if JIEBA_AVAILABLE:
-            debug(self.config, "Using jieba for Chinese word segmentation")
-
-            # Get the initialized jieba instance
-            jieba_instance = get_jieba_instance()
-
-            # Segment text into words
-            tokens = list(jieba_instance.cut(text))
-
-            # Filter out empty tokens and spaces
-            tokens = [token for token in tokens if token.strip()]
-
-            return tokens
-        else:
-            debug(self.config, "Falling back to character-based tokenization for Chinese")
-
-            # Character-based tokenization as fallback
-            tokens = []
-
-            # Extract Chinese characters
-            for char in text:
-                if '\u4e00' <= char <= '\u9fff':  # Is it a Chinese character?
-                    tokens.append(char)
-
-            return tokens
+        return self.spacy_tokenizer.tokenize(text, language)
 
     def get_ngrams(self, tokens, n=2):
         """
@@ -154,11 +79,11 @@ class Tokenizer:
         Returns:
             list: N-grams
         """
-        return [tuple(tokens[i:i+n]) for i in range(len(tokens)-n+1)]
+        return self.spacy_tokenizer.get_ngrams(tokens, n)
 
-
+# Re-export the ChineseTokenizer class that now uses spaCy internally
 class ChineseTokenizer:
-    """Tokenizer for Chinese text using jieba if available"""
+    """Tokenizer for Chinese text using spaCy (formerly jieba)"""
 
     def __init__(self, stopwords=None):
         """
@@ -167,19 +92,15 @@ class ChineseTokenizer:
         Args:
             stopwords (set, optional): Set of stopwords to filter
         """
-        self.use_jieba = JIEBA_AVAILABLE
+        _show_deprecation_warning()
         self.stopwords = stopwords or set()
-
-        # Always treat spaces as stopwords regardless of what's passed in
         self.space_chars = {" ", "　", "\u00A0", "\t", "\n", "\r", "\f", "\v"}
         if self.stopwords:
             self.stopwords.update(self.space_chars)
         else:
             self.stopwords = self.space_chars.copy()
 
-        # Initialize Jieba once
-        if self.use_jieba:
-            initialize_jieba()
+        self.tokenizer = NewTokenizer(stopwords=self.stopwords)
 
     def __call__(self, text):
         """
@@ -194,13 +115,7 @@ class ChineseTokenizer:
         if not text:
             return []
 
-        # Tokenize based on available libraries
-        if self.use_jieba:
-            jieba_instance = get_jieba_instance()
-            tokens = list(jieba_instance.cut(text))
-        else:
-            # Character-based fallback
-            tokens = [char for char in text if '\u4e00' <= char <= '\u9fff']
+        tokens = self.tokenizer.tokenize(text, language='zh')
 
         # Filter out stopwords and any whitespace tokens
         # Double filtering to ensure spaces are always removed

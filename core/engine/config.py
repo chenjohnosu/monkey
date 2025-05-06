@@ -13,7 +13,7 @@ class Config:
         """Initialize configuration from file"""
         self.config_path = config_path
         self.loaded_guides = {}
-        self.version = '0.9.1'
+        self.version = '0.9.2'
 
         # Load configuration
         try:
@@ -47,7 +47,8 @@ class Config:
                 'debug_level': 'off',
                 'output_format': 'txt',
                 'hpc_mode': False,
-                'batch_mode': False
+                'batch_mode': False,
+                'use_spacy': True,
             },
             'hardware': {
                 'use_cuda': 'auto',
@@ -84,7 +85,11 @@ class Config:
             'keywords': {
                 'method': 'tf-idf',  # Default method
                 'max_ngram_size': 2  # Default for multi-word phrases
-            }
+            },
+            'spacy': {  # Add a new section for spaCy configuration
+                'en_model': 'en_core_web_sm',
+                'zh_model': 'zh_core_web_sm'
+            },
         }
 
         # Ensure all default settings exist

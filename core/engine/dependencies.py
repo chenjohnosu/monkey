@@ -14,7 +14,7 @@ class DependencyManager:
     def __init__(self):
         """Initialize the dependency manager with empty caches"""
         self._status_cache = {}  # Cache of dependency statuses
-        self._model_cache = {}   # Cache of loaded models
+        self._model_cache = {}  # Cache of loaded models
 
         # Set of already issued warnings to avoid duplicates
         self._warned = set()
@@ -23,8 +23,8 @@ class DependencyManager:
         self.core_dependencies = {
             'yaml': 'PyYAML',
             'numpy': 'numpy',
-            're': None,   # Built-in
-            'os': None,   # Built-in
+            're': None,  # Built-in
+            'os': None,  # Built-in
             'json': None  # Built-in
         }
 
@@ -33,6 +33,9 @@ class DependencyManager:
             # Text processing
             'jieba': 'jieba',
             'nltk': 'nltk',
+            'spacy': 'spacy',
+            'spacy_model_en': 'spacy>=3.0.0,<4.0.0',
+            'spacy_model_zh': 'spacy[zh]>=3.0.0,<4.0.0',
 
             # Machine learning
             'sklearn': 'scikit-learn',
@@ -145,7 +148,66 @@ class DependencyManager:
 
         return available
 
-    def ensure_nltk_data(data_name: str) -> bool:
+    def check_spacy_model(self, model_name: str) -> bool:
+        """
+        Check if a spaCy model is installed
+
+        Args:
+            model_name: Name of the spaCy model to check
+
+        Returns:
+            bool: True if available, False otherwise
+        """
+        if not self.require('spacy', 'spaCy language model'):
+            return False
+
+        try:
+            import spacy
+
+            # Check if model is installed
+            try:
+                spacy.load(model_name)
+                return True
+            except OSError:
+                return False
+        except Exception as e:
+            warning(f"Error checking spaCy model {model_name}: {str(e)}")
+            return False
+
+    def get_available_spacy_models(self) -> Dict[str, List[str]]:
+        """
+        Get list of available spaCy models
+
+        Returns:
+            Dict: Dictionary mapping language codes to available models
+        """
+        if not self.require('spacy', 'spaCy language models'):
+            return {}
+
+        try:
+            import spacy
+            from spacy.cli.info import info
+
+            # Get installed models
+            installed_models = {}
+            model_info = info(False)
+
+            if 'pipelines' in model_info:
+                for model_name in model_info['pipelines']:
+                    # Extract language code from model name
+                    lang_code = model_name.split('_')[0]
+
+                    if lang_code not in installed_models:
+                        installed_models[lang_code] = []
+
+                    installed_models[lang_code].append(model_name)
+
+            return installed_models
+        except Exception as e:
+            warning(f"Error getting available spaCy models: {str(e)}")
+            return {}
+
+    def ensure_nltk_data(self, data_name: str) -> bool:
         """
         Ensure NLTK data is downloaded
 
@@ -155,7 +217,7 @@ class DependencyManager:
         Returns:
             bool: True if available, False otherwise
         """
-        if not require('nltk', 'NLTK data download'):
+        if not self.require('nltk', 'NLTK data download'):
             return False
 
         try:
@@ -213,6 +275,17 @@ class DependencyManager:
             if self.is_available('transformers') and self.is_available('torch') and self.is_available('jieba'):
                 alternatives.append('jina-zh')
 
+            # Add spaCy models if available
+            if self.is_available('spacy'):
+                try:
+                    spacy_models = self.get_available_spacy_models()
+                    if 'en' in spacy_models:
+                        alternatives.append('spacy_en')
+                    if 'zh' in spacy_models:
+                        alternatives.append('spacy_zh')
+                except:
+                    pass
+
             return alternatives
 
         elif model_type == 'llm':
@@ -250,7 +323,7 @@ class DependencyManager:
 
                 # Check for MPS (Apple Silicon)
                 support['mps'] = (hasattr(torch.backends, 'mps') and
-                                 torch.backends.mps.is_available())
+                                  torch.backends.mps.is_available())
             except Exception as e:
                 warning(f"Error checking hardware support: {str(e)}")
 
@@ -278,9 +351,14 @@ class DependencyManager:
             report['core'][module] = self.is_available(module)
 
         # Text processing
-        text_modules = ['jieba', 'nltk']
+        text_modules = ['jieba', 'nltk', 'spacy']
         for module in text_modules:
             report['text_processing'][module] = self.is_available(module)
+
+        # Add spaCy models if spaCy is available
+        if self.is_available('spacy'):
+            report['text_processing']['spacy_en_model'] = self.check_spacy_model('en_core_web_sm')
+            report['text_processing']['spacy_zh_model'] = self.check_spacy_model('zh_core_web_sm')
 
         # Machine learning
         ml_modules = ['sklearn', 'torch', 'transformers', 'umap', 'hdbscan', 'networkx', 'community']
@@ -345,30 +423,47 @@ def is_available(module_name: str) -> bool:
     """Check if a module is available"""
     return dependency_manager.is_available(module_name)
 
+
 def require(module_name: str, feature_name: Optional[str] = None) -> bool:
     """Require a module with helpful error message"""
     return dependency_manager.require(module_name, feature_name)
+
 
 def check_required_modules(module_list: List[str], feature_name: str) -> bool:
     """Check if all modules in a list are available"""
     return dependency_manager.check_required_modules(module_list, feature_name)
 
+
 def ensure_nltk_data(data_name: str) -> bool:
     """Ensure NLTK data is downloaded"""
     return dependency_manager.ensure_nltk_data(data_name)
+
 
 def get_status_report() -> Dict[str, Dict[str, bool]]:
     """Get dependency status report"""
     return dependency_manager.get_status_report()
 
+
 def format_status_report() -> str:
     """Format dependency status report for display"""
     return dependency_manager.format_status_report()
+
 
 def check_hardware_support() -> Dict[str, bool]:
     """Check available hardware acceleration support"""
     return dependency_manager.check_hardware_support()
 
+
 def get_model_alternatives(model_type: str) -> List[str]:
     """Get available alternative models for a given type"""
     return dependency_manager.get_model_alternatives(model_type)
+
+
+def check_spacy_model(model_name: str) -> bool:
+    """Check if a spaCy model is installed"""
+    return dependency_manager.check_spacy_model(model_name)
+
+
+def get_available_spacy_models() -> Dict[str, List[str]]:
+    """Get a dict of available spaCy models by language code"""
+    return dependency_manager.get_available_spacy_models()

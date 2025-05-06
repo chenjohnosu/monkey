@@ -437,6 +437,38 @@ class CommandProcessor:
                 return
             self.config.set('llm.default_model', args[1])
             print(f"LLM model set to: {args[1]}")
+        elif subcommand == 'spacy':
+            if len(args) < 2:
+                print(f"Current spaCy setting: {self.config.get('system.use_spacy')}")
+                print(f"Current English model: {self.config.get('spacy.en_model')}")
+                print(f"Current Chinese model: {self.config.get('spacy.zh_model')}")
+                return
+
+            # Handle spaCy configuration
+            setting = args[1].lower()
+
+            if setting in ['on', 'true', 'yes', '1']:
+                self.config.set('system.use_spacy', True)
+                print("spaCy integration enabled")
+            elif setting in ['off', 'false', 'no', '0']:
+                self.config.set('system.use_spacy', False)
+                print("spaCy integration disabled")
+            elif setting == 'model':
+                if len(args) < 3:
+                    print("Usage: /config spacy model [en|zh] [model_name]")
+                    return
+
+                lang = args[2].lower()
+                if len(args) < 4:
+                    print(f"Current {lang} model: {self.config.get(f'spacy.{lang}_model')}")
+                    return
+
+                model_name = args[3]
+                self.config.set(f'spacy.{lang}_model', model_name)
+                print(f"spaCy {lang} model set to: {model_name}")
+            else:
+                print(f"Unknown spaCy setting: {setting}")
+                print("Available settings: on, off, model")
 
         elif subcommand == 'embed':
             if len(args) < 2:
