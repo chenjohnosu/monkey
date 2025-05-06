@@ -12,6 +12,38 @@ from core.engine.logging import debug,error,info,warning,trace,debug
 import shutil
 from datetime import datetime
 
+
+def _ensure_nltk_initialized():
+    """
+    Ensure NLTK is properly initialized before LlamaIndex uses it
+    This prevents the 'module nltk has no attribute data' error
+    """
+    try:
+        import nltk
+        import sys
+
+        # Check if nltk.data is already in sys.modules
+        if 'nltk.data' not in sys.modules:
+            try:
+                # Try importing the data module explicitly
+                import nltk.data
+            except ImportError:
+                # If that fails, download a minimal dataset which will initialize the module
+                print("Initializing NLTK data module...")
+                nltk.download('punkt', quiet=True)
+                # Try importing again after download
+                import nltk.data
+
+        # Verify that nltk.data exists
+        if not hasattr(nltk, 'data'):
+            print("Warning: NLTK data module not properly initialized")
+            return False
+
+        return True
+    except Exception as e:
+        print(f"Error initializing NLTK: {str(e)}")
+        return False
+
 class LlamaIndexConnector:
     """Provides integration with LlamaIndex for document processing and retrieval"""
 
@@ -443,6 +475,8 @@ class LlamaIndexConnector:
         print(f"Initializing LlamaIndex vector store for workspace: {workspace}")
 
         try:
+            _ensure_nltk_initialized()
+
             # Import LlamaIndex components
             from llama_index.core import VectorStoreIndex, load_index_from_storage
 

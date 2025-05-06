@@ -145,7 +145,7 @@ class DependencyManager:
 
         return available
 
-    def ensure_nltk_data(self, data_name: str) -> bool:
+    def ensure_nltk_data(data_name: str) -> bool:
         """
         Ensure NLTK data is downloaded
 
@@ -155,11 +155,15 @@ class DependencyManager:
         Returns:
             bool: True if available, False otherwise
         """
-        if not self.require('nltk', 'NLTK data download'):
+        if not require('nltk', 'NLTK data download'):
             return False
 
         try:
             import nltk
+            # First ensure nltk.data is initialized
+            # This is a critical step to avoid the 'module nltk has no attribute data' error
+            nltk.download('punkt', quiet=True)  # Download a basic dataset to initialize nltk.data
+
             try:
                 nltk.data.find(data_name)
                 return True
