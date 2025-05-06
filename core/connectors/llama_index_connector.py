@@ -1,4 +1,3 @@
-
 """
 LlamaIndex integration for document processing and vector search
 """
@@ -8,9 +7,7 @@ import datetime
 import json
 from typing import List, Dict, Any, Optional
 from core.engine.utils import ensure_dir
-from core.engine.logging import debug,error,info,warning,trace,debug
-import shutil
-from datetime import datetime
+from core.engine.logging import debug, error, info, warning, trace
 
 
 def _ensure_nltk_initialized():
@@ -44,6 +41,7 @@ def _ensure_nltk_initialized():
         print(f"Error initializing NLTK: {str(e)}")
         return False
 
+
 class LlamaIndexConnector:
     """Provides integration with LlamaIndex for document processing and retrieval"""
 
@@ -53,16 +51,22 @@ class LlamaIndexConnector:
         self.index = None
         self.storage_context = None
 
-        # Explicitly configure embedding model to use local embeddings
+        # Configure local embedding model before any LlamaIndex imports
         self._configure_local_embeddings()
 
         debug(config, "LlamaIndex connector initialized")
 
     def _configure_local_embeddings(self):
         """
-        Configure local embedding model
+        Configure local embedding model, ensuring it's set before any LlamaIndex operations
         """
         try:
+            # First, set the embedding model type in environment to force local embeddings
+            # This is a critical step to prevent OpenAI usage
+            os.environ["OPENAI_API_KEY"] = "INTENTIONALLY_INVALID_KEY"
+            os.environ["LLAMAINDEX_EMBED_MODEL"] = "local"
+
+            # Import LlamaIndex settings and embedding classes
             from llama_index.core import Settings
             from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 
@@ -76,6 +80,8 @@ class LlamaIndexConnector:
                 model_name = "mixedbread-ai/mxbai-embed-large-v1"
             elif embedding_model_name == "bge":
                 model_name = "BAAI/bge-m3"
+            elif embedding_model_name == "jina-zh":
+                model_name = "jinaai/jina-embeddings-v2-base-zh"
             else:
                 # Fallback to a reliable multilingual model
                 model_name = "intfloat/multilingual-e5-large"
@@ -85,17 +91,34 @@ class LlamaIndexConnector:
             # Create local embedding model
             try:
                 embed_model = HuggingFaceEmbedding(model_name=model_name)
+
+                # Explicitly set the global embedding model in Settings
                 Settings.embed_model = embed_model
-                info(f"Successfully configured embedding model: {model_name}")
+
+                # Verify the model is set correctly
+                if Settings.embed_model == embed_model:
+                    info(f"Successfully configured embedding model: {model_name}")
+                else:
+                    warning(f"Embedding model may not be properly set")
+
             except Exception as e:
                 error(f"Error creating main embedding model: {str(e)}")
                 # Fall back to a simpler model
                 try:
                     warning("Falling back to bge-small-en model")
-                    Settings.embed_model = HuggingFaceEmbedding(model_name="BAAI/bge-small-en")
+                    fallback_model = HuggingFaceEmbedding(model_name="BAAI/bge-small-en")
+                    Settings.embed_model = fallback_model
                     info("Successfully configured fallback embedding model")
                 except Exception as e2:
                     error(f"Error creating fallback embedding model: {str(e2)}")
+                    # Last resort - create an extremely simple model
+                    try:
+                        warning("Attempting last-resort embedding model")
+                        from llama_index.embeddings.base import SimilarityEmbedding
+                        simple_embed = SimilarityEmbedding()
+                        Settings.embed_model = simple_embed
+                    except Exception as e3:
+                        error(f"All embedding model attempts failed: {str(e3)}")
 
         except Exception as e:
             error(f"Error configuring local embeddings: {str(e)}")
@@ -306,6 +329,189 @@ class LlamaIndexConnector:
             trace(traceback.format_exc())
             return []
 
+    def _get_storage_context(self, workspace: str, create_new: bool = False):
+        """
+        Centralized factory method for creating or loading storage contexts
+
+        Args:
+            workspace (str): Target workspace
+            create_new (bool): Whether to create a new storage context even if files exist
+
+        Returns:
+            StorageContext: The created or loaded storage context
+        """
+        from llama_index.core import StorageContext
+        from llama_index.core.vector_stores.simple import SimpleVectorStore
+
+        # Get vector store directory
+        vector_dir = os.path.join("data", workspace, "vector_store")
+        ensure_dir(vector_dir)
+
+        # Check if vector store files exist
+        docstore_path = os.path.join(vector_dir, "docstore.json")
+        index_store_path = os.path.join(vector_dir, "index_store.json")
+        vector_store_path = os.path.join(vector_dir, "vector_store.json")
+
+        files_exist = (os.path.exists(docstore_path) and
+                       os.path.exists(index_store_path) and
+                       os.path.exists(vector_store_path))
+
+        if files_exist and not create_new:
+            # Load existing storage context
+            print(f"Loading existing storage context from {vector_dir}")
+            try:
+                # Ensure embedding model is configured before loading storage context
+                self._configure_local_embeddings()
+                storage_context = StorageContext.from_defaults(persist_dir=vector_dir)
+                return storage_context
+            except Exception as e:
+                print(f"Error loading storage context: {str(e)}")
+                # Fall through to create new context
+
+        # Create new storage context with consistent collection name
+        print(f"Creating new storage context with consistent collection name")
+        # Ensure embedding model is configured before creating storage context
+        self._configure_local_embeddings()
+        vector_store = SimpleVectorStore(collection_name="vector_store")
+        storage_context = StorageContext.from_defaults(vector_store=vector_store)
+
+        return storage_context
+
+    def init_vector_store(self, workspace: str) -> bool:
+        """
+        Initialize a vector store for a workspace
+
+        Args:
+            workspace (str): Target workspace
+
+        Returns:
+            bool: Success flag
+        """
+        print(f"Initializing LlamaIndex vector store for workspace: {workspace}")
+
+        try:
+            # Setup embedding model
+            self._configure_local_embeddings()
+
+            # Ensure NLTK is initialized
+            _ensure_nltk_initialized()
+
+            # Import LlamaIndex components
+            from llama_index.core import VectorStoreIndex, load_index_from_storage
+
+            # Get vector store directory
+            vector_dir = os.path.join("data", workspace, "vector_store")
+            ensure_dir(vector_dir)
+            print(f"Vector store directory: {vector_dir}")
+
+            # Check for vector store files
+            docstore_path = os.path.join(vector_dir, "docstore.json")
+            index_store_path = os.path.join(vector_dir, "index_store.json")
+            vector_store_path = os.path.join(vector_dir, "vector_store.json")
+
+            # Look for prefixed vector store files and handle them
+            self._handle_prefixed_vector_files(vector_dir, vector_store_path)
+
+            # Check if files exist after possible migration
+            files_exist = (os.path.exists(docstore_path) and
+                           os.path.exists(index_store_path) and
+                           os.path.exists(vector_store_path))
+
+            print(f"Vector store files exist: {files_exist}")
+
+            if not files_exist:
+                # Create new empty index with storage context
+                self.storage_context = self._get_storage_context(workspace, create_new=True)
+
+                # Make sure embedding model is explicitly set
+                from llama_index.core import Settings
+                if not Settings.embed_model:
+                    self._configure_local_embeddings()
+
+                self.index = VectorStoreIndex(
+                    [],
+                    storage_context=self.storage_context
+                )
+
+                # Persist the empty index
+                self.storage_context.persist(persist_dir=vector_dir)
+                print("Initialized new empty vector store")
+            else:
+                # Load existing index with centralized storage context
+                try:
+                    self.storage_context = self._get_storage_context(workspace)
+                    self.index = load_index_from_storage(self.storage_context)
+
+                    # Check if index was loaded properly
+                    if self.index and hasattr(self.index, 'docstore') and self.index.docstore:
+                        doc_count = len(self.index.docstore.docs) if self.index.docstore.docs else 0
+                        print(f"Successfully loaded vector store with {doc_count} documents")
+                    else:
+                        print("Warning: Index loaded but may be empty or invalid")
+                except Exception as e:
+                    print(f"Error loading vector store: {str(e)}")
+                    import traceback
+                    print(traceback.format_exc())
+
+                    # Create new vector store due to load error
+                    self.storage_context = self._get_storage_context(workspace, create_new=True)
+                    self.index = VectorStoreIndex(
+                        [],
+                        storage_context=self.storage_context
+                    )
+
+                    # Persist the empty index
+                    self.storage_context.persist(persist_dir=vector_dir)
+                    print("Initialized new empty vector store after load failure")
+
+            return True
+
+        except Exception as e:
+            print(f"Error initializing LlamaIndex vector store: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
+            return False
+
+    def _handle_prefixed_vector_files(self, vector_dir, vector_store_path):
+        """
+        Handle prefixed vector store files by copying the largest to vector_store.json
+
+        Args:
+            vector_dir (str): Vector store directory
+            vector_store_path (str): Path to the expected vector_store.json file
+        """
+        # Skip if vector_store.json already exists
+        if os.path.exists(vector_store_path):
+            return
+
+        prefixed_vector_files = [f for f in os.listdir(vector_dir)
+                                 if f.endswith('__vector_store.json') or
+                                 f.endswith('_vector_store.json')]
+
+        if not prefixed_vector_files:
+            return
+
+        print(f"Found prefixed vector store files but no vector_store.json. Attempting quick fix...")
+
+        # Use the largest prefixed file
+        largest_file = None
+        largest_size = 0
+
+        for file in prefixed_vector_files:
+            file_path = os.path.join(vector_dir, file)
+            file_size = os.path.getsize(file_path)
+            if file_size > largest_size:
+                largest_size = file_size
+                largest_file = file
+
+        if largest_file:
+            print(f"Using {largest_file} as vector_store.json")
+            import shutil
+            shutil.copy2(
+                os.path.join(vector_dir, largest_file),
+                vector_store_path
+            )
+
     def inspect_index_store(self, workspace):
         """
         Thoroughly inspect the LlamaIndex index store for a given workspace
@@ -382,6 +588,9 @@ class LlamaIndexConnector:
         # Try to load index and get details
         print("\nAttempting to Load Index:")
         try:
+            # Ensure embedding model is configured
+            self._configure_local_embeddings()
+
             from llama_index.core import load_index_from_storage, StorageContext
 
             # Create storage context
@@ -417,170 +626,3 @@ class LlamaIndexConnector:
             traceback.print_exc()
 
         return None  # Placeholder return
-
-    def _get_storage_context(self, workspace: str, create_new: bool = False):
-        """
-        Centralized factory method for creating or loading storage contexts
-
-        Args:
-            workspace (str): Target workspace
-            create_new (bool): Whether to create a new storage context even if files exist
-
-        Returns:
-            StorageContext: The created or loaded storage context
-        """
-        from llama_index.core import StorageContext
-        from llama_index.core.vector_stores.simple import SimpleVectorStore
-
-        # Get vector store directory
-        vector_dir = os.path.join("data", workspace, "vector_store")
-        ensure_dir(vector_dir)
-
-        # Check if vector store files exist
-        docstore_path = os.path.join(vector_dir, "docstore.json")
-        index_store_path = os.path.join(vector_dir, "index_store.json")
-        vector_store_path = os.path.join(vector_dir, "vector_store.json")
-
-        files_exist = (os.path.exists(docstore_path) and
-                       os.path.exists(index_store_path) and
-                       os.path.exists(vector_store_path))
-
-        if files_exist and not create_new:
-            # Load existing storage context
-            print(f"Loading existing storage context from {vector_dir}")
-            try:
-                storage_context = StorageContext.from_defaults(persist_dir=vector_dir)
-                return storage_context
-            except Exception as e:
-                print(f"Error loading storage context: {str(e)}")
-                # Fall through to create new context
-
-        # Create new storage context with consistent collection name
-        print(f"Creating new storage context with consistent collection name")
-        vector_store = SimpleVectorStore(collection_name="vector_store")
-        storage_context = StorageContext.from_defaults(vector_store=vector_store)
-
-        return storage_context
-
-    def init_vector_store(self, workspace: str) -> bool:
-        """
-        Initialize a vector store for a workspace
-
-        Args:
-            workspace (str): Target workspace
-
-        Returns:
-            bool: Success flag
-        """
-        print(f"Initializing LlamaIndex vector store for workspace: {workspace}")
-
-        try:
-            _ensure_nltk_initialized()
-
-            # Import LlamaIndex components
-            from llama_index.core import VectorStoreIndex, load_index_from_storage
-
-            # Get vector store directory
-            vector_dir = os.path.join("data", workspace, "vector_store")
-            ensure_dir(vector_dir)
-            print(f"Vector store directory: {vector_dir}")
-
-            # Check for vector store files
-            docstore_path = os.path.join(vector_dir, "docstore.json")
-            index_store_path = os.path.join(vector_dir, "index_store.json")
-            vector_store_path = os.path.join(vector_dir, "vector_store.json")
-
-            # Look for prefixed vector store files and handle them
-            self._handle_prefixed_vector_files(vector_dir, vector_store_path)
-
-            # Check if files exist after possible migration
-            files_exist = (os.path.exists(docstore_path) and
-                           os.path.exists(index_store_path) and
-                           os.path.exists(vector_store_path))
-
-            print(f"Vector store files exist: {files_exist}")
-
-            if not files_exist:
-                # Create new empty index with storage context
-                self.storage_context = self._get_storage_context(workspace, create_new=True)
-                self.index = VectorStoreIndex(
-                    [],
-                    storage_context=self.storage_context
-                )
-
-                # Persist the empty index
-                self.storage_context.persist(persist_dir=vector_dir)
-                print("Initialized new empty vector store")
-            else:
-                # Load existing index with centralized storage context
-                try:
-                    self.storage_context = self._get_storage_context(workspace)
-                    self.index = load_index_from_storage(self.storage_context)
-
-                    # Check if index was loaded properly
-                    if self.index and hasattr(self.index, 'docstore') and self.index.docstore:
-                        doc_count = len(self.index.docstore.docs) if self.index.docstore.docs else 0
-                        print(f"Successfully loaded vector store with {doc_count} documents")
-                    else:
-                        print("Warning: Index loaded but may be empty or invalid")
-                except Exception as e:
-                    print(f"Error loading vector store: {str(e)}")
-
-                    # Create new vector store due to load error
-                    self.storage_context = self._get_storage_context(workspace, create_new=True)
-                    self.index = VectorStoreIndex(
-                        [],
-                        storage_context=self.storage_context
-                    )
-
-                    # Persist the empty index
-                    self.storage_context.persist(persist_dir=vector_dir)
-                    print("Initialized new empty vector store after load failure")
-
-            return True
-
-        except Exception as e:
-            print(f"Error initializing LlamaIndex vector store: {str(e)}")
-            import traceback
-            print(traceback.format_exc())
-            return False
-
-    def _handle_prefixed_vector_files(self, vector_dir, vector_store_path):
-        """
-        Handle prefixed vector store files by copying the largest to vector_store.json
-
-        Args:
-            vector_dir (str): Vector store directory
-            vector_store_path (str): Path to the expected vector_store.json file
-        """
-        # Skip if vector_store.json already exists
-        if os.path.exists(vector_store_path):
-            return
-
-        prefixed_vector_files = [f for f in os.listdir(vector_dir)
-                                 if f.endswith('__vector_store.json') or
-                                 f.endswith('_vector_store.json')]
-
-        if not prefixed_vector_files:
-            return
-
-        print(f"Found prefixed vector store files but no vector_store.json. Attempting quick fix...")
-
-        # Use the largest prefixed file
-        largest_file = None
-        largest_size = 0
-
-        for file in prefixed_vector_files:
-            file_path = os.path.join(vector_dir, file)
-            file_size = os.path.getsize(file_path)
-            if file_size > largest_size:
-                largest_size = file_size
-                largest_file = file
-
-        if largest_file:
-            print(f"Using {largest_file} as vector_store.json")
-            import shutil
-            shutil.copy2(
-                os.path.join(vector_dir, largest_file),
-                vector_store_path
-            )
