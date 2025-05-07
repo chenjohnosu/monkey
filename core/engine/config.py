@@ -83,8 +83,15 @@ class Config:
                 'exit_on_error': True  # Exit batch processing on first error by default
             },
             'keywords': {
-                'method': 'tf-idf',  # Default method
-                'max_ngram_size': 2  # Default for multi-word phrases
+                'method': 'spacy',  # Changed default to SpaCy
+                'max_ngram_size': 2,  # Default n-gram size
+                'available_methods': [
+                    'spacy',      # Primary SpaCy-based extraction
+                    'tf-idf',     # Traditional TF-IDF method
+                    'rake-nltk',  # RAKE algorithm
+                    'yake',       # YAKE keyword extraction
+                    'keybert'     # BERT-based keyword extraction
+                ]
             },
             'spacy': {  # Add a new section for spaCy configuration
                 'en_model': 'en_core_web_sm',

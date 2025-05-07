@@ -593,28 +593,32 @@ class CommandProcessor:
         elif subcommand == 'log':
             # Handle log configuration
             self._config_log(args[1:] if len(args) > 1 else [])
+
         elif subcommand == 'key':
             if len(args) < 2:
-                current_method = self.config.get('keywords.method', 'tf-idf')
+                current_method = self.config.get('keywords.method', 'spacy')
                 print(f"Current keyword extraction method: {current_method}")
-                print("Available methods: tf-idf, rake-nltk, yake, keybert")
+                print("Available methods:")
+                print("  - spacy (recommended)")
+                print("  - tf-idf")
+                print("  - rake-nltk")
+                print("  - yake")
+                print("  - keybert")
                 return
 
-            # Get method namev
+            # Get method name
             method = args[1].lower()
 
             # Validate method
-            valid_methods = ['tf-idf', 'rake-nltk', 'yake', 'keybert']
-            if method not in valid_methods:
-                print(f"Invalid keyword extraction method: {method}")
-                print(f"Must be one of: {', '.join(valid_methods)}")
+            validated_method = self._validate_keyword_method(method)
+            if not validated_method:
                 return
 
             # Set new method
-            self.config.set('keywords.method', method)
-            print(f"Keyword extraction method set to: {method}")
+            self.config.set('keywords.method', validated_method)
+            print(f"Keyword extraction method set to: {validated_method}")
 
-            # Configure max_ngram_size if provided
+            # Configure n-gram size if provided
             if len(args) > 2 and args[2].isdigit():
                 ngram_size = int(args[2])
                 self.config.set('keywords.max_ngram_size', ngram_size)

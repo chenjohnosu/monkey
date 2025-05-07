@@ -33,9 +33,6 @@ try:
     original_stdout = sys.stdout
     sys.stdout = io.StringIO()  # Redirect to string buffer
 
-    import jieba
-    jieba.initialize()  # Explicitly initialize once
-
     # Restore stdout
     sys.stdout = original_stdout
 
