@@ -1,16 +1,8 @@
 """
-Language module initialization
+Language module initialization with SpaCy as primary tokenization tool
 """
 
-"""
-core/language/__init__.py - Update to expose spaCy tokenizer
-"""
-
-"""
-Language module initialization
-"""
-
-# Import from spacy tokenizer module
+# Import SpaCy implementations (primary)
 from core.language.spacy_tokenizer import (
     SPACY_AVAILABLE,
     SpacyTokenizer,
@@ -20,7 +12,7 @@ from core.language.spacy_tokenizer import (
     load_stopwords
 )
 
-# Import from existing modules for backward compatibility
+# Import legacy implementation for backward compatibility
 from core.language.tokenizer import (
     JIEBA_AVAILABLE,
     get_jieba_instance,
@@ -33,7 +25,7 @@ from core.language.detector import LanguageDetector
 from core.language.processor import TextProcessor
 
 __all__ = [
-    # spaCy implementations
+    # SpaCy implementations (primary)
     'SPACY_AVAILABLE',
     'SpacyTokenizer',
     'SpacyTextProcessor',

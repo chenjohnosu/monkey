@@ -22,6 +22,8 @@ from core.engine.output import OutputManager
 from core.language.processor import TextProcessor
 from core.language.tokenizer import ChineseTokenizer, JIEBA_AVAILABLE
 from core.engine.common import safe_execute
+from core.language.spacy_tokenizer import get_spacy_model, SPACY_AVAILABLE
+from collections import defaultdict
 
 # Conditional imports with improved handling
 JIEBA_AVAILABLE = False
@@ -1229,3 +1231,261 @@ class ThemeAnalyzer:
                 "error": str(e),
                 "themes": [{"name": "Clustering Error", "score": 0, "documents": []}]
             }
+
+    def _extract_named_entities(self, docs: List[Dict]) -> List[Dict]:
+        """
+        Extract named entities using spaCy with LLM fallback for enhanced accuracy
+
+        Args:
+            docs (List[Dict]): Documents to extract entities from
+
+        Returns:
+            List[Dict]: Extracted named entities
+        """
+        # Group documents by language
+        docs_by_language = defaultdict(list)
+        for doc in docs:
+            language = doc.get("language", "en")
+            docs_by_language[language].append(doc)
+
+        # Prepare results
+        all_entities = []
+
+        # Process entities for each language
+        for language, language_docs in docs_by_language.items():
+            print(f"\nProcessing Named Entities for {language} language. Total documents: {len(language_docs)}")
+
+            try:
+                # Attempt SpaCy-based NER first
+                ner_entities = self._extract_spacy_entities(language_docs, language)
+
+                # If SpaCy fails or returns minimal results, use LLM fallback
+                if not ner_entities or len(ner_entities) < 5:
+                    print("SpaCy NER returned minimal results. Attempting LLM-based extraction.")
+                    llm_entities = self._extract_llm_entities(language_docs, language)
+                    ner_entities.extend(llm_entities)
+
+                # Extend all entities
+                all_entities.extend(ner_entities)
+
+            except Exception as e:
+                print(f"Error extracting entities for {language}: {str(e)}")
+                import traceback
+                traceback.print_exc()
+
+        # Post-processing and deduplication
+        deduplicated_entities = self._deduplicate_entities(all_entities)
+
+        # Sort and limit entities
+        sorted_entities = sorted(
+            deduplicated_entities,
+            key=lambda x: (x.get('documents', 0), x.get('count', 0)),
+            reverse=True
+        )
+
+        # Limit to top 100 entities
+        top_entities = sorted_entities[:100]
+
+        print(f"\nTotal unique entities found: {len(sorted_entities)}")
+        print("Top 10 entities:")
+        for i, entity in enumerate(top_entities[:10], 1):
+            print(f"  {i}. {entity['value']}: count={entity['count']}, documents={entity['documents']}")
+
+        return top_entities
+
+    def _extract_spacy_entities(self, docs: List[Dict], language: str) -> List[Dict]:
+        """
+        Extract named entities using spaCy
+
+        Args:
+            docs (List[Dict]): Documents to extract entities from
+            language (str): Language code
+
+        Returns:
+            List[Dict]: Extracted named entities
+        """
+        from core.language.spacy_tokenizer import get_spacy_model
+
+        # Get appropriate spaCy model
+        model = get_spacy_model(language)
+        if not model:
+            print(f"No spaCy model available for language: {language}")
+            return []
+
+        # Entity tracking
+        entity_counts = defaultdict(lambda: {
+            'value': '',
+            'count': 0,
+            'documents': 0,
+            'types': set(),
+            'sources': set()
+        })
+
+        # Process each document
+        for doc_info in docs:
+            text = doc_info.get('content', '')
+            source = doc_info.get('source', 'unknown')
+
+            try:
+                # Process text with spaCy
+                spacy_doc = model(text)
+
+                # Extract named entities
+                for ent in spacy_doc.ents:
+                    # Normalize entity
+                    normalized_value = ent.text.strip()
+
+                    # Skip very short or empty entities
+                    if len(normalized_value) < 2:
+                        continue
+
+                    # Update entity information
+                    entity_key = normalized_value.lower()
+                    entity_info = entity_counts[entity_key]
+
+                    entity_info['value'] = normalized_value
+                    entity_info['count'] += 1
+                    entity_info['documents'] += 1
+                    entity_info['types'].add(ent.label_)
+                    entity_info['sources'].add(source)
+
+            except Exception as e:
+                print(f"Error processing document with spaCy: {str(e)}")
+
+        # Convert to list and enrich
+        entities = []
+        for entity_info in entity_counts.values():
+            entity = {
+                'value': entity_info['value'],
+                'count': entity_info['count'],
+                'documents': entity_info['documents'],
+                'types': list(entity_info['types']),
+                'sources': list(entity_info['sources'])
+            }
+            entities.append(entity)
+
+        return entities
+
+    def _extract_llm_entities(self, docs: List[Dict], language: str) -> List[Dict]:
+        """
+        Extract named entities using LLM as a fallback method
+
+        Args:
+            docs (List[Dict]): Documents to extract entities from
+            language (str): Language code
+
+        Returns:
+            List[Dict]: Extracted named entities
+        """
+        # Check if LLM connector is available
+        if not hasattr(self, 'llm_connector') or not self.llm_connector:
+            print("LLM connector not available for entity extraction")
+            return []
+
+        try:
+            # Combine document texts
+            combined_text = " ".join([
+                doc.get('content', '')[:5000] for doc in docs  # Limit to first 5000 chars per doc
+            ])
+
+            # Prepare LLM prompt based on language
+            if language == 'zh':
+                prompt = f"""请从以下文本中提取命名实体。
+    要求：
+    1. 提取人名、地名、组织机构名
+    2. 只返回实体列表，每行一个实体
+    3. 不需要额外解释
+
+    文本内容：{combined_text}"""
+            else:
+                prompt = f"""Extract named entities from the following text.
+    Requirements:
+    1. Extract person names, locations, organizations
+    2. Return only the list of entities
+    3. No additional explanation needed
+
+    Text content: {combined_text}"""
+
+            # Generate response
+            model = self.config.get('llm.default_model', 'mistral')
+            response = self.llm_connector.generate(
+                prompt,
+                model=model,
+                max_tokens=500,
+                temperature=0.3  # Lower temperature for more precise extraction
+            )
+
+            # Process response
+            entities = []
+
+            # Split response into lines and clean
+            raw_entities = [
+                entity.strip()
+                for entity in response.split('\n')
+                if entity.strip() and len(entity.strip()) > 1
+            ]
+
+            # Deduplicate and count
+            entity_counts = defaultdict(lambda: {
+                'value': '',
+                'count': 0,
+                'documents': len(docs)
+            })
+
+            for entity in raw_entities:
+                entity_key = entity.lower()
+                entity_info = entity_counts[entity_key]
+                entity_info['value'] = entity
+                entity_info['count'] += 1
+
+            # Convert to list
+            entities = [
+                {
+                    'value': info['value'],
+                    'count': info['count'],
+                    'documents': info['documents']
+                }
+                for info in entity_counts.values()
+            ]
+
+            return entities
+
+        except Exception as e:
+            print(f"Error in LLM-based entity extraction: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return []
+
+    def _deduplicate_entities(self, entities: List[Dict]) -> List[Dict]:
+        """
+        Deduplicate and merge similar entities
+
+        Args:
+            entities (List[Dict]): List of entities to deduplicate
+
+        Returns:
+            List[Dict]: Deduplicated list of entities
+        """
+        # Merge similar entities
+        entity_map = {}
+        for entity in entities:
+            normalized_key = entity['value'].lower()
+
+            # If entity already exists, merge
+            if normalized_key in entity_map:
+                existing = entity_map[normalized_key]
+                existing['count'] += entity.get('count', 0)
+                existing['documents'] = min(
+                    existing.get('documents', 0) + entity.get('documents', 0),
+                    len(entity.get('sources', []))
+                )
+
+                # Merge types if available
+                if 'types' in existing and 'types' in entity:
+                    existing['types'] = list(set(existing['types'] + entity['types']))
+            else:
+                # Add new entity
+                entity_map[normalized_key] = entity.copy()
+
+        # Convert back to list and sort
+        return list(entity_map.values())

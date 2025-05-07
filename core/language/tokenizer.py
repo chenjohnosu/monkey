@@ -1,25 +1,18 @@
 """
-core/language/tokenizer.py - Compatibility layer for spaCy tokenization
-Re-exports functionality from spacy_tokenizer.py for backward compatibility
+Compatibility layer for tokenization, primarily using spaCy
 """
 
 import warnings
+from typing import List, Set, Optional
 
-# Import functionality from spacy_tokenizer
+# Import spaCy implementations
 from core.language.spacy_tokenizer import (
+    SpacyTokenizer as NewTokenizer,
     SPACY_AVAILABLE,
-    SpacyTokenizer as NewTokenizer,  # Import with different name to avoid name conflict
-    initialize_spacy,
-    get_spacy_model,
     load_stopwords
 )
 
-# Set up backward compatibility flags and functions
-JIEBA_AVAILABLE = False  # Mark as not available
-_JIEBA_INITIALIZED = False
-_JIEBA_INSTANCE = None
-
-# Emit deprecation warning only once
+# Deprecation warning flag
 _shown_warning = False
 
 def _show_deprecation_warning():
@@ -27,14 +20,16 @@ def _show_deprecation_warning():
     global _shown_warning
     if not _shown_warning:
         warnings.warn(
-            "The tokenizer module is deprecated and will be removed in a future version. "
-            "Please use SpacyTokenizer from core.language.spacy_tokenizer instead.",
+            "This tokenizer module is deprecated. Use SpacyTokenizer from core.language.spacy_tokenizer instead.",
             DeprecationWarning,
             stacklevel=2
         )
         _shown_warning = True
 
-# Compatibility functions
+# Flags for backward compatibility
+SPACY_AVAILABLE = SPACY_AVAILABLE
+JIEBA_AVAILABLE = False  # Set to False as jieba is no longer primary
+
 def initialize_jieba():
     """Compatibility function that does nothing"""
     _show_deprecation_warning()
@@ -45,83 +40,73 @@ def get_jieba_instance():
     _show_deprecation_warning()
     return None
 
-# Create compatibility version of the original Tokenizer class
 class Tokenizer:
-    """Compatibility class that wraps SpacyTokenizer"""
+    """Compatibility tokenizer class wrapping SpacyTokenizer"""
 
-    def __init__(self, config=None):
+    def __init__(self, config=None, stopwords: Optional[Set[str]] = None):
         """Initialize the tokenizer"""
         _show_deprecation_warning()
         self.config = config
-        self.spacy_tokenizer = NewTokenizer(config)
+        self.spacy_tokenizer = NewTokenizer(config, stopwords)
 
-    def tokenize(self, text, language=None):
+    def tokenize(self, text: str, language: Optional[str] = None) -> List[str]:
         """
-        Tokenize text based on language
+        Tokenize text using SpacyTokenizer
 
         Args:
-            text (str): The text to tokenize
-            language (str, optional): Language code. If None, language will be auto-detected.
+            text (str): Text to tokenize
+            language (str, optional): Language code
 
         Returns:
-            list: Tokens
+            List[str]: Tokenized text
         """
         return self.spacy_tokenizer.tokenize(text, language)
 
-    def get_ngrams(self, tokens, n=2):
+    def get_ngrams(self, tokens: List[str], n: int = 2) -> List[tuple]:
         """
         Generate n-grams from tokens
 
         Args:
-            tokens (list): Token list
+            tokens (List[str]): Token list
             n (int): Size of n-gram
 
         Returns:
-            list: N-grams
+            List[tuple]: N-grams
         """
         return self.spacy_tokenizer.get_ngrams(tokens, n)
 
-# Re-export the ChineseTokenizer class that now uses spaCy internally
 class ChineseTokenizer:
-    """Tokenizer for Chinese text using spaCy (formerly jieba)"""
+    """Tokenizer for Chinese text using SpacyTokenizer"""
 
-    def __init__(self, stopwords=None):
+    def __init__(self, stopwords: Optional[Set[str]] = None):
         """
         Initialize the tokenizer
 
         Args:
-            stopwords (set, optional): Set of stopwords to filter
+            stopwords (Set[str], optional): Set of stopwords to filter
         """
         _show_deprecation_warning()
         self.stopwords = stopwords or set()
-        self.space_chars = {" ", "　", "\u00A0", "\t", "\n", "\r", "\f", "\v"}
-        if self.stopwords:
-            self.stopwords.update(self.space_chars)
-        else:
-            self.stopwords = self.space_chars.copy()
-
         self.tokenizer = NewTokenizer(stopwords=self.stopwords)
 
-    def __call__(self, text):
+    def __call__(self, text: str) -> List[str]:
         """
-        Tokenize Chinese text and filter stopwords
+        Tokenize Chinese text
 
         Args:
             text (str): Text to tokenize
 
         Returns:
-            list: List of tokens
+            List[str]: Tokenized text
         """
         if not text:
             return []
 
         tokens = self.tokenizer.tokenize(text, language='zh')
 
-        # Filter out stopwords and any whitespace tokens
-        # Double filtering to ensure spaces are always removed
+        # Additional filtering to maintain backward compatibility
         tokens = [token for token in tokens
                   if token not in self.stopwords
-                  and token.strip()
-                  and token not in self.space_chars]
+                  and token.strip()]
 
         return tokens
