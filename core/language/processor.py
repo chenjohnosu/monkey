@@ -1,5 +1,5 @@
 """
-core/language/processor.py - Update TextProcessor to use spaCy
+core/language/processor.py - Text processing with spaCy integration
 """
 
 import os
@@ -7,20 +7,18 @@ import re
 from core.engine.logging import debug, warning, info, error
 from core.language.detector import LanguageDetector
 
-# Import spaCy functionality if available
+# Import spaCy functionality
 try:
     from core.language.spacy_tokenizer import (
         SPACY_AVAILABLE,
         initialize_spacy,
         get_spacy_model,
-        load_stopwords
+        load_stopwords,
+        SpacyTextProcessor
     )
 except ImportError:
     SPACY_AVAILABLE = False
     warning("spaCy integration not available, falling back to traditional methods")
-
-# Keep backward compatibility with jieba
-from core.language.tokenizer import JIEBA_AVAILABLE, get_jieba_instance
 
 
 class TextProcessor:
@@ -37,6 +35,9 @@ class TextProcessor:
             try:
                 initialize_spacy()
                 debug(config, "Using spaCy for text processing")
+
+                # Create a spaCy processor for delegation
+                self.spacy_processor = SpacyTextProcessor(config)
             except Exception as e:
                 error(f"Error initializing spaCy: {str(e)}")
                 self.use_spacy = False
@@ -107,22 +108,23 @@ class TextProcessor:
                 'tokens': 0
             }
 
+        # If spaCy is available, delegate to spaCy processor
+        if self.use_spacy:
+            return self.spacy_processor.preprocess(text)
+
+        # Otherwise use traditional methods
+
         # Detect language
         language = self.language_detector.detect(text)
 
-        # Choose processing method based on available tools
-        if self.use_spacy:
-            # Use spaCy-based processing
-            processed_text, token_count = self._preprocess_with_spacy(text, language)
+        # Apply language-specific preprocessing
+        if language == 'zh':
+            processed_text = self._preprocess_chinese(text)
         else:
-            # Apply traditional language-specific preprocessing
-            if language == 'zh':
-                processed_text = self._preprocess_chinese(text)
-            else:
-                processed_text = self._preprocess_english(text)
+            processed_text = self._preprocess_english(text)
 
-            # Count tokens appropriately based on language
-            token_count = self._count_tokens(processed_text, language)
+        # Count tokens
+        token_count = self._count_tokens(processed_text, language)
 
         return {
             'original': text,
@@ -131,49 +133,6 @@ class TextProcessor:
             'length': len(text),
             'tokens': token_count
         }
-
-    def _preprocess_with_spacy(self, text, language):
-        """
-        Preprocess text using spaCy
-
-        Args:
-            text (str): Text to process
-            language (str): Language code
-
-        Returns:
-            Tuple[str, int]: Processed text and token count
-        """
-        try:
-            # Get appropriate spaCy model
-            nlp = get_spacy_model(language)
-            if not nlp:
-                # Fall back to traditional methods if model is unavailable
-                if language == 'zh':
-                    return self._preprocess_chinese(text), self._count_tokens(text, language)
-                else:
-                    return self._preprocess_english(text), self._count_tokens(text, language)
-
-            # Process with spaCy
-            doc = nlp(text)
-
-            # Filter out stopwords and punctuation
-            tokens = [token.text for token in doc if not token.is_stop and not token.is_punct]
-
-            # Join tokens appropriately based on language
-            if language == 'zh':
-                processed_text = ''.join(tokens)
-            else:
-                processed_text = ' '.join(tokens)
-
-            return processed_text, len(tokens)
-
-        except Exception as e:
-            debug(self.config, f"spaCy processing error: {str(e)}")
-            # Fall back to traditional methods
-            if language == 'zh':
-                return self._preprocess_chinese(text), self._count_tokens(text, language)
-            else:
-                return self._preprocess_english(text), self._count_tokens(text, language)
 
     def _preprocess_english(self, text):
         """Preprocess English text"""
@@ -206,24 +165,10 @@ class TextProcessor:
         # Remove extra spaces
         text = re.sub(r'\s+', ' ', text).strip()
 
-        # Remove stopwords if available
+        # Character-based stopword removal
         if 'zh' in self.stopwords and self.stopwords['zh']:
-            if JIEBA_AVAILABLE:
-                # Use jieba for word segmentation using our centralized instance
-                jieba_instance = get_jieba_instance()
-                if jieba_instance:
-                    segments = list(jieba_instance.cut(text))
-                    # Filter out stopwords
-                    segments = [word for word in segments if word not in self.stopwords['zh']]
-                    text = ''.join(segments)
-                else:
-                    # Character-based stopword removal as fallback
-                    for stopword in self.stopwords['zh']:
-                        text = text.replace(stopword, '')
-            else:
-                # Character-based stopword removal as fallback
-                for stopword in self.stopwords['zh']:
-                    text = text.replace(stopword, '')
+            for stopword in self.stopwords['zh']:
+                text = text.replace(stopword, '')
 
         return text
 
@@ -239,13 +184,7 @@ class TextProcessor:
             int: Token count
         """
         if language == 'zh':
-            if JIEBA_AVAILABLE:
-                jieba_instance = get_jieba_instance()
-                if jieba_instance:
-                    return len(list(jieba_instance.cut(text)))
-                else:
-                    return len(text)  # Character count as fallback
-            else:
-                return len(text)  # Character count as fallback
+            # Character count as fallback for Chinese
+            return len(text)
         else:
             return len(text.split())

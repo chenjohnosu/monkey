@@ -11,6 +11,7 @@ from collections import Counter
 
 from core.engine.logging import debug, warning, info, error, trace
 from core.engine.dependencies import require, is_available
+from core.language.spacy_tokenizer import SPACY_AVAILABLE, get_spacy_model, load_stopwords
 
 
 def extract_keywords(config, texts, language="en", top_n=10, stopwords=None):
@@ -28,7 +29,7 @@ def extract_keywords(config, texts, language="en", top_n=10, stopwords=None):
         List[str]: Extracted keywords
     """
     # Get configured method
-    method = config.get('keywords.method', 'tf-idf')
+    method = config.get('keywords.method', 'spacy')
 
     # Log which method is being used
     debug(config, f"Extracting keywords using {method} method for {len(texts)} texts in {language}")
@@ -38,7 +39,9 @@ def extract_keywords(config, texts, language="en", top_n=10, stopwords=None):
         stopwords = load_chinese_stopwords()
 
     # Call appropriate method
-    if method == 'rake-nltk':
+    if method == 'spacy':
+        return extract_keywords_spacy(config, texts, language, top_n, stopwords)
+    elif method == 'rake-nltk':
         return extract_keywords_rake(config, texts, language, top_n, stopwords)
     elif method == 'yake':
         return extract_keywords_yake(config, texts, language, top_n, stopwords)
@@ -46,6 +49,102 @@ def extract_keywords(config, texts, language="en", top_n=10, stopwords=None):
         return extract_keywords_keybert(config, texts, language, top_n, stopwords)
     else:
         # Default to TF-IDF
+        return extract_keywords_tfidf(config, texts, language, top_n, stopwords)
+
+
+def extract_keywords_spacy(config, texts, language="en", top_n=10, stopwords=None):
+    """
+    Extract keywords using spaCy's linguistic features
+
+    Args:
+        config: Configuration object
+        texts (List[str]): Collection of texts
+        language (str): Language code
+        top_n (int): Number of keywords to extract
+        stopwords (Set[str]): Stopwords to filter out
+
+    Returns:
+        List[str]: Extracted keywords
+    """
+    if not SPACY_AVAILABLE:
+        warning("spaCy not available for keyword extraction, falling back to TF-IDF")
+        return extract_keywords_tfidf(config, texts, language, top_n, stopwords)
+
+    debug(config, f"Extracting keywords with spaCy from {len(texts)} texts in {language}")
+
+    if not texts:
+        return []
+
+    try:
+        # Load appropriate spaCy model
+        nlp = get_spacy_model(language)
+        if not nlp:
+            warning(f"No spaCy model available for {language}, falling back to TF-IDF")
+            return extract_keywords_tfidf(config, texts, language, top_n, stopwords)
+
+        # Combine texts into a manageable chunk to process
+        combined_text = " ".join(texts)
+        if len(combined_text) > 100000:  # Limit text length to avoid memory issues
+            combined_text = combined_text[:100000]
+
+        # Process with spaCy
+        doc = nlp(combined_text)
+
+        # Count term frequencies considering various factors
+        term_freqs = Counter()
+
+        # Extract important terms based on POS tags
+        for token in doc:
+            # Skip stopwords, punctuation and very short words
+            if token.is_stop or token.is_punct or len(token.text) < 2:
+                continue
+
+            # Focus on nouns, verbs, and adjectives as they often form meaningful keywords
+            if token.pos_ in ('NOUN', 'PROPN', 'VERB', 'ADJ'):
+                # Use lemma for normalization in non-Chinese languages
+                if language != 'zh':
+                    term = token.lemma_.lower()
+                else:
+                    term = token.text
+
+                # Skip very short terms and custom stopwords
+                if len(term) < 2 or (stopwords and term in stopwords):
+                    continue
+
+                # Weight terms by their part of speech (nouns are more important)
+                weight = 1.0
+                if token.pos_ in ('NOUN', 'PROPN'):
+                    weight = 1.5
+                elif token.pos_ == 'VERB':
+                    weight = 1.0
+                elif token.pos_ == 'ADJ':
+                    weight = 0.8
+
+                term_freqs[term] += weight
+
+        # Extract named entities as they make good keywords
+        for ent in doc.ents:
+            if stopwords and ent.text.lower() in stopwords:
+                continue
+            term_freqs[ent.text] += 2.0  # Give entities higher weight
+
+        # Extract noun phrases (for multi-word keywords)
+        noun_phrases = []
+        for chunk in doc.noun_chunks:
+            # Clean the chunk text
+            clean_chunk = ' '.join([token.text for token in chunk
+                                    if not token.is_stop and not token.is_punct])
+            if clean_chunk and len(clean_chunk) > 2:
+                noun_phrases.append(clean_chunk)
+                term_freqs[clean_chunk] += 1.5  # Give noun phrases good weight
+
+        # Get the top keywords
+        return [term for term, _ in term_freqs.most_common(top_n)]
+
+    except Exception as e:
+        debug(config, f"Error extracting keywords with spaCy: {str(e)}")
+        import traceback
+        trace(traceback.format_exc())
         return extract_keywords_tfidf(config, texts, language, top_n, stopwords)
 
 
@@ -370,14 +469,14 @@ def _keybert_chinese_extraction(config, kw_model, text, max_ngram_size, stop_wor
         List[str]: Extracted keywords or None if unsuccessful
     """
     try:
-        from core.language.tokenizer import get_jieba_instance, JIEBA_AVAILABLE
-
-        if JIEBA_AVAILABLE:
-            jieba_instance = get_jieba_instance()
-            if jieba_instance:
-                # Use custom tokenizer for KeyBERT
+        # Use spaCy for tokenization
+        if SPACY_AVAILABLE:
+            nlp = get_spacy_model('zh')
+            if nlp:
+                # Create a custom tokenizer function
                 def chinese_tokenizer(text):
-                    return list(jieba_instance.cut(text))
+                    doc = nlp(text)
+                    return [token.text for token in doc if not token.is_punct]
 
                 # Extract keywords with custom tokenizer
                 keywords = kw_model.extract_keywords(
@@ -408,33 +507,32 @@ def preprocess_chinese_text(config, texts, segment=True, join=True):
     Args:
         config: Configuration object
         texts (List[str]): Input texts
-        segment (bool): Whether to segment with jieba
+        segment (bool): Whether to segment with spaCy
         join (bool): Whether to join words with spaces
 
     Returns:
         Union[str, List[str]]: Processed text(s)
     """
     try:
-        from core.language.tokenizer import get_jieba_instance, JIEBA_AVAILABLE
-
-        if not segment or not JIEBA_AVAILABLE:
+        # If no segmentation needed or spaCy not available
+        if not segment or not SPACY_AVAILABLE:
             # Return as-is or joined
             return " ".join(texts) if join else texts
 
-        jieba_instance = get_jieba_instance()
-        if not jieba_instance:
+        nlp = get_spacy_model('zh')
+        if not nlp:
             return " ".join(texts) if join else texts
 
         # Segment each text
         segmented_texts = []
         for text in texts:
-            words = jieba_instance.cut(text)
+            doc = nlp(text)
             if join:
                 # Join with spaces to create format similar to English words
-                segmented_text = " ".join(words)
+                segmented_text = " ".join([token.text for token in doc])
             else:
                 # Keep as list of words
-                segmented_text = list(words)
+                segmented_text = [token.text for token in doc]
             segmented_texts.append(segmented_text)
 
         # Return segmented texts
@@ -518,19 +616,29 @@ def configure_vectorizer(config, doc_count, language=None, chinese_stopwords=Non
     # Configure language-specific parameters
     if is_chinese:
         try:
-            from core.language.tokenizer import ChineseTokenizer
-            tokenizer = ChineseTokenizer(stopwords=chinese_stopwords)
+            # Create a tokenizer that uses spaCy
+            def spacy_chinese_tokenizer(text):
+                nlp = get_spacy_model('zh')
+                if nlp:
+                    doc = nlp(text)
+                    return [token.text for token in doc if not token.is_punct]
+                # Fallback to character-based
+                return list(text)
 
             # Create vectorizer for Chinese text
             vectorizer = TfidfVectorizer(
                 min_df=min_df,
                 max_df=max_df,
-                stop_words=None,  # Using custom tokenizer
-                tokenizer=tokenizer
+                stop_words=None,  # Use tokenizer-based filtering
+                tokenizer=spacy_chinese_tokenizer
             )
-        except ImportError:
-            error("ChineseTokenizer not available")
-            return None
+        except Exception as e:
+            error(f"Error creating Chinese vectorizer: {str(e)}")
+            # Fallback to basic vectorizer
+            vectorizer = TfidfVectorizer(
+                min_df=min_df,
+                max_df=max_df
+            )
     else:
         # Create vectorizer for English text
         vectorizer = TfidfVectorizer(

@@ -7,6 +7,8 @@ from collections import Counter, defaultdict
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 
+import numpy as np
+
 from core.engine.keywords import extract_keywords, configure_vectorizer
 from core.engine.utils import ensure_dir
 
@@ -14,8 +16,19 @@ from core.engine.logging import debug, warning, info, error, trace
 from core.engine.storage import StorageManager
 from core.engine.output import OutputManager
 from core.language.processor import TextProcessor
-from core.language.tokenizer import JIEBA_AVAILABLE, get_jieba_instance
 from core.engine.common import safe_execute
+
+# Check spaCy availability
+try:
+    from core.language.spacy_tokenizer import (
+        SPACY_AVAILABLE,
+        get_spacy_model,
+        initialize_spacy,
+        load_stopwords
+    )
+except ImportError:
+    SPACY_AVAILABLE = False
+    warning("spaCy not available, falling back to traditional methods")
 
 # Check scikit-learn availability
 try:
@@ -46,6 +59,18 @@ class TopicModeler:
         self.output_manager = output_manager or OutputManager(config)
         self.text_processor = text_processor or TextProcessor(config)
 
+        # Check for spaCy availability
+        self.use_spacy = False
+        try:
+            if SPACY_AVAILABLE and config.get('system.use_spacy', True):
+                self.use_spacy = True
+                # Initialize spaCy models
+                initialize_spacy()
+                debug(config, "Using spaCy for topic modeling")
+        except Exception as e:
+            debug(config, f"Error initializing spaCy: {str(e)}")
+            self.use_spacy = False
+
         # Initialize LLM connector for topic interpretation
         self.llm_connector = safe_execute(
             self._init_llm_connector,
@@ -53,8 +78,7 @@ class TopicModeler:
         )
 
         # Load stopwords
-        self.chinese_stopwords = self._load_stopwords('chinese')
-        self.english_stopwords = self._load_stopwords('english')
+        self.stopwords = self._load_stopwords()
 
         debug(config, "Topic modeler initialized")
 
@@ -66,44 +90,47 @@ class TopicModeler:
         debug(self.config, "LLM connector initialized for topic modeling")
         return llm_connector
 
-    def _load_stopwords(self, language):
-        """
-        Load stopwords for a given language
+    def _load_stopwords(self):
+        """Load stopwords for supported languages"""
+        stopwords = {}
 
-        Args:
-            language (str): Language to load stopwords for
+        # Use spaCy stopwords if available
+        if self.use_spacy:
+            try:
+                stopwords['en'] = load_stopwords('en')
+                stopwords['zh'] = load_stopwords('zh')
+                debug(self.config, "Loaded stopwords from spaCy")
+                return stopwords
+            except Exception as e:
+                debug(self.config, f"Error loading spaCy stopwords: {str(e)}")
 
-        Returns:
-            set: Stopwords for the specified language
-        """
-        stopwords = set()
+        # Fallback to loading from files
         lexicon_dir = 'lexicon'
         ensure_dir(lexicon_dir)
 
-        filename = f'stopwords_{language}.txt'
-        filepath = os.path.join(lexicon_dir, filename)
-
+        # Load English stopwords
         try:
-            with open(filepath, 'r', encoding='utf-8') as file:
-                stopwords = set(line.strip() for line in file if line.strip())
-            debug(self.config, f"Loaded {len(stopwords)} {language} stopwords")
+            with open(os.path.join(lexicon_dir, 'stopwords_en.txt'), 'r', encoding='utf-8') as file:
+                stopwords['en'] = set(line.strip() for line in file if line.strip())
+            debug(self.config, f"Loaded {len(stopwords['en'])} English stopwords")
         except FileNotFoundError:
-            debug(self.config, f"No {language} stopwords file found")
+            stopwords['en'] = set()
+            debug(self.config, "English stopwords file not found")
 
-            # Fallback to default stopwords
-            if language == 'english':
-                stopwords = {
-                    "the", "and", "a", "to", "of", "in", "is", "that", "it",
-                    "with", "for", "as", "was", "on", "are", "by", "this"
-                }
-            elif language == 'chinese':
-                stopwords = {"的", "了", "和", "是", "就", "都", "而", "及"}
+        # Load Chinese stopwords
+        try:
+            with open(os.path.join(lexicon_dir, 'stopwords_zh.txt'), 'r', encoding='utf-8') as file:
+                stopwords['zh'] = set(line.strip() for line in file if line.strip())
+            debug(self.config, f"Loaded {len(stopwords['zh'])} Chinese stopwords")
+        except FileNotFoundError:
+            stopwords['zh'] = set()
+            debug(self.config, "Chinese stopwords file not found")
 
         return stopwords
 
     def analyze(self, workspace, method='all'):
         """
-        Analyze topics in a workspace
+        Analyze topics in a workspace with spaCy enhancement
 
         Args:
             workspace (str): The workspace to analyze
@@ -115,7 +142,7 @@ class TopicModeler:
         debug(self.config, f"Analyzing topics in workspace '{workspace}' using method '{method}'")
 
         # Print keyword extraction method information
-        keyword_method = self.config.get('keywords.method', 'tf-idf')
+        keyword_method = self.config.get('keywords.method', 'spacy')
         max_ngram_size = self.config.get('keywords.max_ngram_size', 2)
         print(f"\nKeyword extraction: {keyword_method.upper()}, n-gram size: {max_ngram_size}")
 
@@ -125,8 +152,8 @@ class TopicModeler:
 
         if lower_method not in valid_methods:
             self.output_manager.print_formatted('feedback',
-                f"Invalid method: {method}. Must be one of: {', '.join(valid_methods)}",
-                success=False)
+                                                f"Invalid method: {method}. Must be one of: {', '.join(valid_methods)}",
+                                                success=False)
             return {}
 
         # Convert to lowercase for consistent handling
@@ -136,8 +163,8 @@ class TopicModeler:
         docs = self._validate_and_load_documents(workspace)
         if not docs:
             self.output_manager.print_formatted('feedback',
-                f"No documents found in workspace '{workspace}'",
-                success=False)
+                                                f"No documents found in workspace '{workspace}'",
+                                                success=False)
             return {
                 "method": "Topic Modeling",
                 "error": "No documents found in workspace",
@@ -230,10 +257,10 @@ class TopicModeler:
 
     def _preprocess_documents(self, docs):
         """
-        Preprocess documents for topic modeling, incorporating original files
+        Preprocess documents for topic modeling, using spaCy for enhanced processing
 
         Args:
-            docs (List[Dict]): Raw input documents from data directory
+            docs (List[Dict]): Raw documents from data directory
 
         Returns:
             Tuple[List[Dict], Counter]: Processed documents and language counts
@@ -268,10 +295,44 @@ class TopicModeler:
                 except Exception as e:
                     debug(self.config, f"Error loading original file: {str(e)}")
 
-            # Prefer processed content for better topic modeling results
-            text_to_use = processed_content if processed_content else content
+            # If using spaCy, perform enhanced preprocessing
+            if self.use_spacy and content:
+                try:
+                    # Get appropriate spaCy model for language
+                    from core.language.spacy_tokenizer import get_spacy_model
+                    nlp = get_spacy_model(language)
+
+                    if nlp:
+                        # Limit content length to avoid memory issues
+                        text_to_process = content[:20000]  # Reasonable limit
+
+                        # Process with spaCy
+                        doc_obj = nlp(text_to_process)
+
+                        # Extract text without stopwords and punctuation
+                        # For topic modeling, we want to remove noise
+                        if language == 'zh':
+                            # For Chinese, join without spaces
+                            processed_text = ''.join([
+                                token.text for token in doc_obj
+                                if not token.is_stop and not token.is_punct and len(token.text.strip()) > 0
+                            ])
+                        else:
+                            # For other languages, join with spaces
+                            processed_text = ' '.join([
+                                token.lemma_ if token.lemma_ != '-PRON-' else token.text
+                                for token in doc_obj
+                                if not token.is_stop and not token.is_punct and len(token.text.strip()) > 0
+                            ])
+
+                        # Use enhanced processed text
+                        processed_content = processed_text
+                except Exception as e:
+                    debug(self.config, f"Error in spaCy preprocessing: {str(e)}")
+                    # Fall back to existing processed content
 
             # Skip empty documents
+            text_to_use = processed_content if processed_content else content
             if not text_to_use:
                 debug(self.config, f"Empty document skipped: {source_path}")
                 continue
@@ -810,3 +871,416 @@ class TopicModeler:
             processed_results[key] = processed_result
 
         return processed_results
+
+    def _extract_chinese_keywords(self, docs: List[Dict]) -> List[Dict]:
+        """
+        Extract keywords from Chinese document content using spaCy
+
+        Args:
+            docs (List[Dict]): Chinese documents
+
+        Returns:
+            List[Dict]: Extracted keywords
+        """
+        # Log extraction attempt
+        print(f"Extracting keywords from {len(docs)} Chinese documents")
+
+        # Check if documents contain content
+        if not docs or all(not doc.get("content") for doc in docs):
+            print("No valid content found in Chinese documents")
+            return []
+
+        try:
+            # Get spaCy model if available
+            if self.use_spacy:
+                from core.language.spacy_tokenizer import get_spacy_model
+                nlp = get_spacy_model('zh')
+
+                if nlp:
+                    print("Using spaCy for Chinese keyword extraction")
+
+                    # Extract all texts for processing
+                    all_texts = [doc["content"] for doc in docs if doc.get("content")]
+                    combined_text = "".join(all_texts)
+
+                    # Process with spaCy
+                    processed_doc = nlp(combined_text[:50000])  # Limit size for memory
+
+                    # Extract noun phrases and entities as potential keywords
+                    keywords = []
+
+                    # Track frequencies
+                    token_freq = Counter()
+
+                    # Count token frequencies, focusing on nouns and proper nouns
+                    for token in processed_doc:
+                        if not token.is_stop and not token.is_punct and len(token.text) >= 2:
+                            # Give higher weight to nouns and named entities
+                            if token.pos_ in ('NOUN', 'PROPN'):
+                                token_freq[token.text] += 2
+                            else:
+                                token_freq[token.text] += 1
+
+                    # Add named entities with high weight
+                    for ent in processed_doc.ents:
+                        if len(ent.text) >= 2:
+                            token_freq[ent.text] += 3
+
+                    # Extract top tokens by frequency
+                    for token, count in token_freq.most_common(30):
+                        # Count document occurrences
+                        doc_count = sum(1 for doc in docs if token in doc.get("content", ""))
+
+                        # Skip tokens that appear in too few documents
+                        if doc_count < 2 and len(docs) > 3:
+                            continue
+
+                        # Calculate score
+                        score = count / sum(token_freq.values()) if token_freq else 0
+
+                        # Add to keywords
+                        keywords.append({
+                            "keyword": token,
+                            "score": float(score),
+                            "documents": doc_count,
+                            "doc_sources": [doc["source"] for doc in docs if token in doc.get("content", "")]
+                        })
+
+                    print(f"Extracted {len(keywords)} keywords using spaCy")
+                    return keywords
+
+            # Fall back to character-based n-gram extraction if spaCy not available
+            # Count frequencies of character and word n-grams
+            character_counts = Counter()
+            bigram_counts = Counter()
+            trigram_counts = Counter()
+
+            # Document sources for tracking
+            doc_sources = [doc["source"] for doc in docs]
+
+            # Count frequencies
+            for doc in docs:
+                text = doc["content"]
+                if not text:
+                    continue
+
+                # Count characters
+                character_counts.update(text)
+
+                # Count n-grams
+                for i in range(len(text) - 1):
+                    # Bigrams
+                    if i < len(text) - 1:
+                        bigram = text[i:i + 2]
+                        bigram_counts[bigram] += 1
+
+                    # Trigrams
+                    if i < len(text) - 2:
+                        trigram = text[i:i + 3]
+                        trigram_counts[trigram] += 1
+
+            # Track document sources for each n-gram
+            bigram_doc_sources = defaultdict(list)
+            trigram_doc_sources = defaultdict(list)
+
+            for doc_idx, doc in enumerate(docs):
+                text = doc["content"]
+                if not text:
+                    continue
+
+                # Track bigrams
+                for i in range(len(text) - 1):
+                    if i < len(text) - 1:
+                        bigram = text[i:i + 2]
+                        bigram_doc_sources[bigram].append(doc_sources[doc_idx])
+
+                # Track trigrams
+                for i in range(len(text) - 2):
+                    if i < len(text) - 2:
+                        trigram = text[i:i + 3]
+                        trigram_doc_sources[trigram].append(doc_sources[doc_idx])
+
+            # Combine and sort keywords
+            keywords = []
+
+            # Add top bigrams
+            for bigram, count in bigram_counts.most_common(15):
+                if len(bigram) < 2 or count < 2:
+                    continue
+
+                # Check if bigram is in stopwords
+                if bigram in self.stopwords.get('zh', set()):
+                    continue
+
+                score = count / sum(bigram_counts.values()) if bigram_counts else 0
+                doc_sources_list = list(set(bigram_doc_sources[bigram]))
+
+                keywords.append({
+                    "keyword": bigram,
+                    "score": float(score),  # Ensure we use a regular Python float
+                    "documents": len(doc_sources_list),
+                    "doc_sources": doc_sources_list
+                })
+
+            # Add top trigrams
+            for trigram, count in trigram_counts.most_common(15):
+                if len(trigram) < 3 or count < 2:
+                    continue
+
+                # Skip trigrams that are entirely in stopwords
+                if all(char in self.stopwords.get('zh', set()) for char in trigram):
+                    continue
+
+                score = count / sum(trigram_counts.values()) if trigram_counts else 0
+                doc_sources_list = list(set(trigram_doc_sources[trigram]))
+
+                keywords.append({
+                    "keyword": trigram,
+                    "score": float(score),  # Ensure we use a regular Python float
+                    "documents": len(doc_sources_list),
+                    "doc_sources": doc_sources_list
+                })
+
+            print(f"Found {len(keywords)} keywords in Chinese documents (bigrams and trigrams)")
+
+            # Sort keywords by score
+            keywords.sort(key=lambda x: x["score"], reverse=True)
+
+            # Return top keywords
+            return keywords[:30]  # Return more keywords to ensure we have enough after filtering
+
+        except Exception as e:
+            print(f"Error extracting Chinese keywords: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
+            return []
+
+    def _extract_english_keywords(self, docs: List[Dict]) -> List[Dict]:
+        """
+        Extract keywords from English document content with improved error handling
+
+        Args:
+            docs (List[Dict]): English documents
+
+        Returns:
+            List[Dict]: Extracted keywords
+        """
+        # Extract document texts
+        doc_texts = [doc["content"] for doc in docs]
+        doc_sources = [doc["source"] for doc in docs]
+
+        # Log extraction attempt
+        print(f"Extracting keywords from {len(doc_texts)} English documents")
+
+        # Check if documents contain content
+        if not doc_texts or all(not text for text in doc_texts):
+            print("No valid content found in English documents")
+            return []
+
+        # Try spaCy-based extraction first
+        if self.use_spacy:
+            try:
+                from core.language.spacy_tokenizer import get_spacy_model
+                nlp = get_spacy_model('en')
+
+                if nlp:
+                    print("Using spaCy for English keyword extraction")
+
+                    # Create mapping to store document sources for each keyword
+                    keyword_doc_mapping = defaultdict(list)
+
+                    # Combine texts for efficient processing, with limits to avoid memory issues
+                    combined_text = " ".join(doc_texts)
+                    if len(combined_text) > 100000:
+                        combined_text = combined_text[:100000]  # Reasonable limit
+
+                    # Process with spaCy
+                    doc = nlp(combined_text)
+
+                    # Count noun phrases, entities, and important tokens
+                    counts = Counter()
+
+                    # Add noun chunks (noun phrases)
+                    for chunk in doc.noun_chunks:
+                        # Clean up the phrase
+                        clean_phrase = " ".join([token.lemma_ for token in chunk
+                                                 if not token.is_stop and not token.is_punct])
+                        if clean_phrase and len(clean_phrase) > 3:
+                            counts[clean_phrase] += 2  # Give more weight to noun phrases
+
+                    # Add named entities
+                    for ent in doc.ents:
+                        if len(ent.text) > 2:
+                            counts[ent.text] += 3  # Give even more weight to entities
+
+                    # Add important tokens (nouns, verbs, adjectives)
+                    for token in doc:
+                        if token.pos_ in ['NOUN', 'PROPN', 'VERB', 'ADJ'] and not token.is_stop:
+                            counts[token.lemma_] += 1
+
+                    # Calculate document occurrence for each term
+                    for term in counts:
+                        for doc_idx, doc_text in enumerate(doc_texts):
+                            if term.lower() in doc_text.lower():
+                                keyword_doc_mapping[term].append(doc_sources[doc_idx])
+
+                    # Create keyword objects
+                    keywords = []
+                    for term, count in counts.most_common(50):  # Get more candidates
+                        # Skip very short terms and terms in too few documents
+                        if len(term) < 3:
+                            continue
+
+                        doc_sources_list = list(set(keyword_doc_mapping[term]))
+
+                        # For small document sets, accept terms in just one document
+                        min_docs = 2 if len(docs) > 4 else 1
+                        if len(doc_sources_list) < min_docs:
+                            continue
+
+                        # Calculate term score based on frequency and document coverage
+                        score = count / sum(counts.values()) if counts else 0
+
+                        keywords.append({
+                            "keyword": term,
+                            "score": float(score),
+                            "documents": len(doc_sources_list),
+                            "doc_sources": doc_sources_list
+                        })
+
+                    # Keep top keywords
+                    return keywords[:30]
+            except Exception as e:
+                print(f"Error in spaCy keyword extraction: {str(e)}")
+                # Fall back to TF-IDF
+
+        # Fall back to TF-IDF based extraction
+        try:
+            # Use TF-IDF vectorizer to identify important terms
+            vectorizer = TfidfVectorizer(
+                min_df=1,  # Lower min_df for small document sets
+                max_df=0.95,
+                stop_words="english"
+            )
+
+            # Fit TF-IDF on documents
+            tfidf_matrix = vectorizer.fit_transform(doc_texts)
+
+            # Get feature names
+            feature_names = vectorizer.get_feature_names_out()
+
+            print(f"Extracted {len(feature_names)} unique terms from English documents")
+
+            # Calculate average TF-IDF scores across documents
+            avg_scores = np.asarray(tfidf_matrix.mean(axis=0)).ravel()
+
+            # Count documents containing each term
+            term_doc_counts = defaultdict(int)
+            keyword_doc_mapping = defaultdict(list)
+
+            for doc_id, doc_text in enumerate(doc_texts):
+                # Create a set of terms in this document
+                doc_terms = set(doc_text.split())
+
+                # Check each term in feature names
+                for term in feature_names:
+                    if term in doc_text.lower():
+                        term_doc_counts[term] += 1
+                        keyword_doc_mapping[term].append(doc_sources[doc_id])
+
+            # Create keyword list
+            keywords = []
+            for i, term in enumerate(feature_names):
+                # Skip very short terms
+                if len(term) < 3:
+                    continue
+
+                score = avg_scores[i]
+                doc_count = term_doc_counts.get(term, 0)
+
+                # Only include terms that appear in at least one document
+                if doc_count > 0:
+                    keywords.append({
+                        "keyword": term,
+                        "score": float(score),  # Convert numpy float to Python float
+                        "documents": doc_count,
+                        "doc_sources": keyword_doc_mapping.get(term, [])
+                    })
+
+            # Sort by score and document count
+            keywords.sort(key=lambda x: (x["score"], x["documents"]), reverse=True)
+
+            print(f"Found {len(keywords)} keywords in English documents")
+
+            # Limit to top keywords
+            return keywords[:30]  # Return more keywords to ensure we have enough after filtering
+
+        except Exception as e:
+            print(f"Error extracting English keywords: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
+            return []
+
+    def _analyze_content_keywords(self, doc_contents: List[Dict]) -> Dict[str, Any]:
+        """
+        Extract and analyze keywords from document content using spaCy
+
+        Args:
+            doc_contents (List[Dict]): Preprocessed document content
+
+        Returns:
+            Dict: Analysis results
+        """
+        debug(self.config, "Analyzing content keywords")
+
+        # Group documents by language
+        docs_by_language = defaultdict(list)
+        for doc in doc_contents:
+            language = doc["language"]
+            docs_by_language[language].append(doc)
+
+        # Extract keywords by language
+        all_keywords = []
+
+        # Print information about document grouping
+        print(
+            f"Documents grouped by language: {', '.join([f'{lang}: {len(docs)}' for lang, docs in docs_by_language.items()])}")
+
+        # Process each language group
+        for language, docs in docs_by_language.items():
+            if language == "zh":
+                print(f"Processing {len(docs)} Chinese documents")
+                keywords = self._extract_chinese_keywords(docs)
+            else:
+                print(f"Processing {len(docs)} documents in language: {language}")
+                keywords = self._extract_english_keywords(docs)
+
+            print(f"Extracted {len(keywords)} keywords for language: {language}")
+            all_keywords.extend(keywords)
+
+        # Sort keywords by score
+        all_keywords.sort(key=lambda x: x["score"], reverse=True)
+
+        # Take top keywords
+        top_keywords = all_keywords[:20]
+
+        print(f"Final keyword count: {len(top_keywords)}")
+
+        # Create proper themes format with keyword info
+        formatted_keywords = []
+        for kw in top_keywords:
+            formatted_kw = {
+                "keyword": kw["keyword"],
+                "score": kw["score"],
+                "documents": kw["documents"]
+            }
+            # Include document sources if available
+            if "doc_sources" in kw:
+                formatted_kw["documents_list"] = kw["doc_sources"]
+
+            formatted_keywords.append(formatted_kw)
+
+        return {
+            "method": "Content Keyword Analysis",
+            "themes": formatted_keywords
+        }

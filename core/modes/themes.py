@@ -1342,9 +1342,12 @@ class ThemeAnalyzer:
 
                     entity_info['value'] = normalized_value
                     entity_info['count'] += 1
-                    entity_info['documents'] += 1
                     entity_info['types'].add(ent.label_)
                     entity_info['sources'].add(source)
+
+                # If we have a valid document and there are sources, count it as a document
+                if source and source not in entity_info['sources']:
+                    entity_info['documents'] += 1
 
             except Exception as e:
                 print(f"Error processing document with spaCy: {str(e)}")
@@ -1355,7 +1358,7 @@ class ThemeAnalyzer:
             entity = {
                 'value': entity_info['value'],
                 'count': entity_info['count'],
-                'documents': entity_info['documents'],
+                'documents': len(entity_info['sources']),
                 'types': list(entity_info['types']),
                 'sources': list(entity_info['sources'])
             }
@@ -1375,7 +1378,19 @@ class ThemeAnalyzer:
             List[Dict]: Extracted named entities
         """
         # Check if LLM connector is available
+        if not hasattr(self, 'factory') or not self.factory:
+            print("LLM factory not available for entity extraction")
+            return []
+
+        # Create LLM connector if needed
         if not hasattr(self, 'llm_connector') or not self.llm_connector:
+            try:
+                self.llm_connector = self.factory.get_llm_connector()
+            except Exception as e:
+                print(f"Error creating LLM connector: {str(e)}")
+                return []
+
+        if not self.llm_connector:
             print("LLM connector not available for entity extraction")
             return []
 

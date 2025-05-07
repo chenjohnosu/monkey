@@ -329,8 +329,11 @@ class SpacyTextProcessor:
         """Initialize the text processor with spaCy"""
         self.config = config
 
+        # Check if spaCy should be used
+        self.use_spacy = SPACY_AVAILABLE and config.get('system.use_spacy', True)
+
         # Initialize spaCy models
-        if SPACY_AVAILABLE:
+        if self.use_spacy:
             self.models = initialize_spacy()
         else:
             self.models = {}
@@ -376,26 +379,67 @@ class SpacyTextProcessor:
         else:
             debug(self.config, f"Using traditional methods for {language} text processing")
 
-        # Apply language-specific preprocessing
-        if language == 'zh':
-            processed_text = self._preprocess_chinese(text)
-        else:
-            processed_text = self._preprocess_english(text)
+            # Apply language-specific preprocessing
+            if language == 'zh':
+                processed_text = self._preprocess_chinese(text)
+            else:
+                processed_text = self._preprocess_english(text)
 
-        # Count tokens
-        tokens = self.tokenizer.tokenize(processed_text, language)
+            # Count tokens
+            tokens = self.tokenizer.tokenize(processed_text, language)
+            token_count = len(tokens)
 
         return {
             'original': text,
             'processed': processed_text,
             'language': language,
             'length': len(text),
-            'tokens': len(tokens)
+            'tokens': token_count
         }
+
+    def _preprocess_with_spacy(self, text, language):
+        """
+        Preprocess text using spaCy
+
+        Args:
+            text (str): Text to preprocess
+            language (str): Language code
+
+        Returns:
+            tuple: (processed_text, token_count)
+        """
+        model = get_spacy_model(language)
+        if not model:
+            # Fall back to basic preprocessing
+            if language == 'zh':
+                processed_text = self._preprocess_chinese(text)
+            else:
+                processed_text = self._preprocess_english(text)
+
+            tokens = self.tokenizer.tokenize(processed_text, language)
+            return processed_text, len(tokens)
+
+        # Process with spaCy
+        doc = model(text)
+
+        # Remove stopwords and punctuation
+        tokens = [token.text for token in doc if not token.is_stop and not token.is_punct]
+
+        # Lemmatize for English if configured
+        if language == 'en' and self.config.get('text.use_lemmatization', True):
+            tokens = [token.lemma_ for token in doc if not token.is_stop and not token.is_punct]
+
+        # Join tokens appropriately based on language
+        if language == 'zh':
+            processed_text = ''.join(tokens)
+        else:
+            processed_text = ' '.join(tokens)
+
+        return processed_text, len(tokens)
 
     def _preprocess_english(self, text):
         """
-        Preprocess English text
+        Preprocess English text using basic methods
 
         Args:
             text (str): Text to preprocess
@@ -403,42 +447,26 @@ class SpacyTextProcessor:
         Returns:
             str: Preprocessed text
         """
-        debug(self.config, "Preprocessing English text")
+        import re
 
-        if SPACY_AVAILABLE and 'en' in self.models:
-            # Use spaCy for preprocessing
-            doc = self.models['en'](text)
+        # Convert to lowercase
+        text = text.lower()
 
-            # Remove stopwords and punctuation
-            tokens = [token.text for token in doc if not token.is_stop and not token.is_punct]
+        # Remove punctuation and special characters
+        text = re.sub(r'[^\w\s]', ' ', text)
 
-            # Lemmatize if configured
-            if self.config and self.config.get('text.use_lemmatization', True):
-                tokens = [token.lemma_ for token in doc if not token.is_stop and not token.is_punct]
+        # Remove extra whitespace
+        text = re.sub(r'\s+', ' ', text).strip()
 
-            return ' '.join(tokens)
-        else:
-            # Fallback to basic preprocessing
-            import re
+        # Basic tokenization and stopword removal
+        words = text.split()
+        words = [word for word in words if word not in self.english_stopwords]
 
-            # Convert to lowercase
-            text = text.lower()
-
-            # Remove punctuation and special characters
-            text = re.sub(r'[^\w\s]', ' ', text)
-
-            # Remove extra whitespace
-            text = re.sub(r'\s+', ' ', text).strip()
-
-            # Basic tokenization and stopword removal
-            words = text.split()
-            words = [word for word in words if word not in self.english_stopwords]
-
-            return ' '.join(words)
+        return ' '.join(words)
 
     def _preprocess_chinese(self, text):
         """
-        Preprocess Chinese text
+        Preprocess Chinese text using basic methods
 
         Args:
             text (str): Text to preprocess
@@ -446,34 +474,20 @@ class SpacyTextProcessor:
         Returns:
             str: Preprocessed text
         """
-        debug(self.config, "Preprocessing Chinese text")
+        import re
 
-        if SPACY_AVAILABLE and 'zh' in self.models:
-            # Use spaCy for preprocessing
-            doc = self.models['zh'](text)
+        # Remove non-Chinese characters, keeping Chinese punctuation
+        chinese_pattern = r'[^\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]+'
+        text = re.sub(chinese_pattern, ' ', text)
 
-            # Remove stopwords and punctuation
-            tokens = [token.text for token in doc if not token.is_stop and not token.is_punct]
+        # Remove extra spaces
+        text = re.sub(r'\s+', ' ', text).strip()
 
-            # Join tokens
-            return ''.join(tokens)
-        else:
-            # Fallback to basic preprocessing
-            import re
+        # Remove stopwords character by character
+        for stopword in self.chinese_stopwords:
+            text = text.replace(stopword, '')
 
-            # Remove non-Chinese characters, keeping Chinese punctuation
-            chinese_pattern = r'[^\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]+'
-            text = re.sub(chinese_pattern, ' ', text)
-
-            # Remove extra spaces
-            text = re.sub(r'\s+', ' ', text).strip()
-
-            # Remove stopwords if available
-            if self.chinese_stopwords:
-                for stopword in self.chinese_stopwords:
-                    text = text.replace(stopword, '')
-
-            return text
+        return text
 
     def _detect_language(self, text):
         """

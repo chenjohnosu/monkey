@@ -17,7 +17,7 @@ from core.language.spacy_tokenizer import (
 
 # Global flags
 SPACY_AVAILABLE = SPACY_AVAILABLE
-JIEBA_AVAILABLE = False  # Explicitly set to False
+JIEBA_AVAILABLE = False  # We're removing jieba dependencies
 
 def _show_deprecation_warning(method_name: str):
     """

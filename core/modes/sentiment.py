@@ -16,6 +16,17 @@ from core.engine.common import safe_execute
 
 from core.engine.utils import split_text_into_chunks, ensure_dir
 
+# Check spaCy availability
+try:
+    from core.language.spacy_tokenizer import (
+        SPACY_AVAILABLE,
+        get_spacy_model,
+        initialize_spacy,
+        load_stopwords
+    )
+except ImportError:
+    SPACY_AVAILABLE = False
+    warning("spaCy not available, falling back to simpler sentiment analysis")
 
 # Try to import sentiment analysis libraries - use what's available
 try:
@@ -50,6 +61,18 @@ class SentimentAnalyzer:
         self.output_manager = output_manager or OutputManager(config)
         self.text_processor = text_processor or TextProcessor(config)
 
+        # Check for spaCy availability
+        self.use_spacy = False
+        try:
+            from core.language.spacy_tokenizer import SPACY_AVAILABLE, initialize_spacy
+            if SPACY_AVAILABLE and config.get('system.use_spacy', True):
+                self.use_spacy = True
+                # Initialize spaCy models
+                initialize_spacy()
+                debug(config, "Using spaCy for sentiment analysis")
+        except ImportError:
+            debug(config, "spaCy not available for sentiment analysis")
+
         # Initialize LLM connector factory for summarization
         self.llm_connector = safe_execute(
             self._init_llm_connector,
@@ -63,15 +86,17 @@ class SentimentAnalyzer:
         self.en_sentiment_analyzer = None
         self.zh_sentiment_analyzer = None
 
-        if TRANSFORMERS_AVAILABLE:
+        if not self.use_spacy and TRANSFORMERS_AVAILABLE:
+            debug(config, "spaCy not available, initializing transformers for sentiment analysis")
             self.en_sentiment_analyzer = safe_execute(
                 self._init_english_sentiment_analyzer,
                 error_message="Error initializing English sentiment analyzer"
             )
 
-        # Initialize NLTK VADER sentiment analyzer for English if available
+        # Initialize NLTK VADER sentiment analyzer for English if available and spaCy not available
         self.vader_analyzer = None
-        if NLTK_AVAILABLE:
+        if not self.use_spacy and NLTK_AVAILABLE:
+            debug(config, "spaCy not available, initializing VADER for sentiment analysis")
             self.vader_analyzer = safe_execute(
                 self._init_vader_analyzer,
                 error_message="Error initializing VADER sentiment analyzer"
@@ -163,7 +188,7 @@ class SentimentAnalyzer:
 
     def analyze(self, workspace, method='all'):
         """
-        Perform sentiment analysis on documents in a workspace
+        Perform sentiment analysis on documents in a workspace with spaCy enhancements
 
         Args:
             workspace (str): The workspace to analyze
@@ -175,8 +200,8 @@ class SentimentAnalyzer:
         valid_methods = ['all', 'basic', 'advanced']
         if method not in valid_methods:
             self.output_manager.print_formatted('feedback',
-                f"Invalid method: {method}. Must be one of: {', '.join(valid_methods)}",
-                success=False)
+                                                f"Invalid method: {method}. Must be one of: {', '.join(valid_methods)}",
+                                                success=False)
             return
 
         # Load and validate documents
@@ -188,14 +213,15 @@ class SentimentAnalyzer:
 
         if not docs:
             self.output_manager.print_formatted('feedback',
-                f"No documents found in workspace '{workspace}'",
-                success=False)
+                                                f"No documents found in workspace '{workspace}'",
+                                                success=False)
             return
 
         print(f"Analyzing sentiment in {len(docs)} documents from workspace '{workspace}'")
 
         # Extract and preprocess document content
-        doc_contents, doc_languages = self._extract_document_contents(docs)
+        doc_contents = self._preprocess_document_texts(docs)
+        doc_languages = Counter([doc["language"] for doc in doc_contents])
 
         # Display language distribution
         self._display_language_stats(doc_languages)
@@ -285,7 +311,7 @@ class SentimentAnalyzer:
 
     def _analyze_basic_sentiment(self, doc_contents):
         """
-        Perform basic sentiment analysis using lexicon-based approach
+        Perform basic sentiment analysis using spaCy-enhanced approach
 
         Args:
             doc_contents (List[Dict]): Preprocessed document content
@@ -305,10 +331,11 @@ class SentimentAnalyzer:
 
         # Process each document
         for doc in doc_contents:
-            doc_id = doc["id"]
-            language = doc["language"]
-            text = doc["content"]
-            source = doc["source"]
+            doc_id = doc.get("id", 0)
+            language = doc.get("language", "en")
+            # Use sentiment_text if available, otherwise fall back to content
+            text = doc.get("sentiment_text", doc.get("content", ""))
+            source = doc.get("source", "unknown")
 
             # Analyze sentiment based on language
             if language == "zh":
@@ -351,103 +378,6 @@ class SentimentAnalyzer:
         }
 
         return results
-
-    def _analyze_english_sentiment(self, text):
-        """
-        Analyze sentiment in English text
-
-        Args:
-            text (str): English text to analyze
-
-        Returns:
-            Tuple: (sentiment score, sentiment label)
-        """
-        # Use transformers if available
-        if self.en_sentiment_analyzer:
-            try:
-                # Truncate if too long
-                truncated_text = text[:1024]
-                result = self.en_sentiment_analyzer(truncated_text)[0]
-                label = result["label"]
-                score = result["score"]
-
-                # Normalize label and score
-                if label == "POSITIVE":
-                    sentiment_label = "positive"
-                    sentiment_score = score
-                elif label == "NEGATIVE":
-                    sentiment_label = "negative"
-                    sentiment_score = -score
-                else:
-                    sentiment_label = "neutral"
-                    sentiment_score = 0.0
-
-                return sentiment_score, sentiment_label
-            except Exception as e:
-                debug(self.config, f"Error in transformer sentiment analysis: {str(e)}")
-                # Fall back to VADER or lexicon
-
-        # Use VADER if available
-        if self.vader_analyzer:
-            try:
-                # Truncate if too long
-                truncated_text = text[:5000]  # VADER handles longer text than transformers
-                scores = self.vader_analyzer.polarity_scores(truncated_text)
-                compound_score = scores["compound"]
-
-                # Determine sentiment label based on compound score
-                if compound_score >= 0.05:
-                    sentiment_label = "positive"
-                elif compound_score <= -0.05:
-                    sentiment_label = "negative"
-                else:
-                    sentiment_label = "neutral"
-
-                return compound_score, sentiment_label
-            except Exception as e:
-                debug(self.config, f"Error in VADER sentiment analysis: {str(e)}")
-                # Fall back to lexicon
-
-        # Use simple lexicon as fallback
-        return self._analyze_with_simple_lexicon(text, "en")
-
-    def _analyze_chinese_sentiment(self, text):
-        """
-        Analyze sentiment in Chinese text
-
-        Args:
-            text (str): Chinese text to analyze
-
-        Returns:
-            Tuple: (sentiment score, sentiment label)
-        """
-        # Use transformers if available and Chinese sentiment model is loaded
-        if self.zh_sentiment_analyzer:
-            try:
-                # Truncate if too long
-                truncated_text = text[:512]  # Chinese characters may need shorter text
-                result = self.zh_sentiment_analyzer(truncated_text)[0]
-                label = result["label"]
-                score = result["score"]
-
-                # Normalize label
-                if "正面" in label or "积极" in label or "positive" in label.lower():
-                    sentiment_label = "positive"
-                    sentiment_score = score
-                elif "负面" in label or "消极" in label or "negative" in label.lower():
-                    sentiment_label = "negative"
-                    sentiment_score = -score
-                else:
-                    sentiment_label = "neutral"
-                    sentiment_score = 0.0
-
-                return sentiment_score, sentiment_label
-            except Exception as e:
-                debug(self.config, f"Error in Chinese transformer sentiment analysis: {str(e)}")
-                # Fall back to lexicon
-
-        # Use lexicon-based method as primary approach for Chinese
-        return self._analyze_with_chinese_lexicon(text)
 
     def _analyze_with_chinese_lexicon(self, text):
         """
@@ -585,9 +515,9 @@ class SentimentAnalyzer:
 
         # Process each document for detailed analysis
         for doc in doc_contents:
-            doc_id = doc["id"]
+            doc_id = doc.get("id", 0)
             language = doc["language"]
-            text = doc["content"]
+            text = doc.get("sentiment_text", doc.get("content", ""))
             source = doc["source"]
 
             # Extract aspects and their sentiment
@@ -644,6 +574,147 @@ class SentimentAnalyzer:
         results["sentiment_trends"] = trends
 
         return results
+
+    def _extract_sentiment_aspects(self, text, language):
+        """
+        Extract aspects and their associated sentiment using spaCy
+
+        Args:
+            text (str): Text to analyze
+            language (str): Language code
+
+        Returns:
+            List[Dict]: Extracted aspects with sentiment
+        """
+        # Use spaCy for aspect extraction if available
+        if self.use_spacy:
+            try:
+                from core.language.spacy_tokenizer import get_spacy_model
+
+                # Get appropriate model
+                nlp = get_spacy_model(language)
+
+                if nlp:
+                    # Process with spaCy
+                    doc = nlp(text[:5000])  # Limit text length
+
+                    # Extract potential aspects from noun phrases and named entities
+                    aspects = []
+
+                    # Process noun chunks (noun phrases)
+                    for chunk in doc.noun_chunks:
+                        # Only consider chunks that aren't stopwords or punctuation
+                        if not chunk.root.is_stop and not chunk.root.is_punct:
+                            # Get the text of the chunk
+                            aspect_text = chunk.text.strip()
+
+                            # Skip very short aspects
+                            if len(aspect_text) < 2:
+                                continue
+
+                            # Analyze the sentiment of this aspect
+                            # Look at a window of words around the aspect
+                            window_start = max(0, chunk.start - 3)
+                            window_end = min(len(doc), chunk.end + 3)
+
+                            # Extract the context window
+                            context = doc[window_start:window_end].text
+
+                            # Analyze sentiment of the context
+                            if language == 'zh':
+                                sentiment_score, sentiment = self._analyze_chinese_sentiment(context)
+                            else:
+                                sentiment_score, sentiment = self._analyze_english_sentiment(context)
+
+                            # Add aspect with sentiment
+                            aspects.append({
+                                "aspect": aspect_text,
+                                "sentiment": sentiment,
+                                "confidence": min(abs(sentiment_score) + 0.5, 0.9)  # Convert score to confidence
+                            })
+
+                    # Also consider named entities as aspects
+                    for ent in doc.ents:
+                        # Skip very short entities or already covered ones
+                        if len(ent.text) < 2 or any(a["aspect"] == ent.text for a in aspects):
+                            continue
+
+                        # Analyze sentiment in context of entity
+                        window_start = max(0, ent.start - 3)
+                        window_end = min(len(doc), ent.end + 3)
+
+                        # Extract the context window
+                        context = doc[window_start:window_end].text
+
+                        # Analyze sentiment of the context
+                        if language == 'zh':
+                            sentiment_score, sentiment = self._analyze_chinese_sentiment(context)
+                        else:
+                            sentiment_score, sentiment = self._analyze_english_sentiment(context)
+
+                        # Add entity as aspect
+                        aspects.append({
+                            "aspect": ent.text,
+                            "sentiment": sentiment,
+                            "confidence": min(abs(sentiment_score) + 0.5, 0.9)
+                        })
+
+                    # Deduplicate and sort aspects
+                    unique_aspects = {}
+                    for aspect in aspects:
+                        key = aspect["aspect"].lower()
+                        if key not in unique_aspects or aspect["confidence"] > unique_aspects[key]["confidence"]:
+                            unique_aspects[key] = aspect
+
+                    # Convert to list and sort by confidence
+                    sorted_aspects = sorted(
+                        unique_aspects.values(),
+                        key=lambda x: x["confidence"],
+                        reverse=True
+                    )
+
+                    # Return top aspects
+                    return sorted_aspects[:10]
+
+            except Exception as e:
+                debug(self.config, f"Error extracting aspects with spaCy: {str(e)}")
+                # Fall back to LLM or traditional extraction
+
+        # Use LLM to extract aspects if available
+        if self.llm_connector:
+            try:
+                return self._extract_aspects_with_llm(text, language)
+            except Exception as e:
+                debug(self.config, f"Error extracting aspects with LLM: {str(e)}")
+                # Fall back to traditional extraction
+
+        # Otherwise use rule-based extraction
+        if language == "zh":
+            # Extract aspects from Chinese text
+            return self._extract_chinese_aspects(text)
+        else:
+            # Extract aspects from English text
+            return self._extract_english_aspects(text)
+
+    def _analyze_document_sentiment(self, text, language):
+        """
+        Analyze overall sentiment in a document with spaCy enhancements
+
+        Args:
+            text (str): Text to analyze
+            language (str): Language code
+
+        Returns:
+            Tuple: (sentiment score, sentiment label)
+        """
+        debug(self.config, f"Analyzing document sentiment for {language} text")
+
+        # For Chinese documents
+        if language == "zh":
+            return self._analyze_chinese_sentiment(text)
+
+        # For English documents
+        return self._analyze_english_sentiment(text)
 
     def _analyze_document_sentiment(self, text, language):
         """
@@ -964,69 +1035,6 @@ Output only the list of aspects without any other explanation."""
 
         return aspects
 
-    def _identify_emotional_tone(self, text, language):
-        """
-        Identify emotional tone in the text
-
-        Args:
-            text (str): Text to analyze
-            language (str): Language code
-
-        Returns:
-            str: Identified emotional tone
-        """
-        # Define emotion lexicons
-        emotions = {
-            "joy": {"happy", "pleased", "delighted", "excited", "satisfied", "glad", "thrilled",
-                    "enthusiastic", "cheerful", "content"},
-            "anger": {"angry", "annoyed", "irritated", "frustrated", "furious", "outraged",
-                      "hostile", "mad", "upset", "enraged"},
-            "sadness": {"sad", "unhappy", "disappointed", "depressed", "gloomy", "heartbroken",
-                        "miserable", "melancholy", "sorrowful", "downcast"},
-            "fear": {"afraid", "scared", "frightened", "terrified", "anxious", "worried",
-                     "nervous", "concerned", "uneasy", "alarmed"},
-            "surprise": {"surprised", "amazed", "astonished", "stunned", "shocked",
-                         "startled", "unexpected", "remarkable", "extraordinary"}
-        }
-
-        # Chinese emotion lexicons
-        zh_emotions = {
-            "joy": {"快乐", "高兴", "开心", "兴奋", "满意", "愉快", "欣喜", "欢乐", "喜悦", "舒心"},
-            "anger": {"生气", "愤怒", "恼火", "不满", "烦躁", "恼怒", "气愤", "暴怒", "气恼", "恼"},
-            "sadness": {"悲伤", "难过", "失望", "伤心", "忧郁", "悲痛", "忧伤", "痛苦", "悲", "丧气"},
-            "fear": {"害怕", "恐惧", "担忧", "忧虑", "惊恐", "惊慌", "紧张", "焦虑", "担心", "慌张"},
-            "surprise": {"惊讶", "惊奇", "震惊", "意外", "吃惊", "惊讶", "惊愕", "诧异", "错愕", "惊异"}
-        }
-
-        # Lowercase the text for English
-        if language != "zh":
-            text = text.lower()
-
-        # Count emotion words
-        emotion_counts = {emotion: 0 for emotion in emotions}
-
-        if language == "zh":
-            # For Chinese text
-            for emotion, words in zh_emotions.items():
-                for word in words:
-                    if word in text:
-                        emotion_counts[emotion] += text.count(word)
-        else:
-            # For English text
-            for emotion, words in emotions.items():
-                for word in words:
-                    if f" {word} " in f" {text} ":  # Add spaces to match whole words
-                        emotion_counts[emotion] += 1
-
-        # Find the dominant emotion
-        dominant_emotion = max(emotion_counts.items(), key=lambda x: x[1])
-
-        # If no emotions detected, return "neutral"
-        if dominant_emotion[1] == 0:
-            return "neutral"
-
-        return dominant_emotion[0]
-
     def _identify_sentiment_trends(self, doc_analyses):
         """
         Identify sentiment trends across documents
@@ -1225,3 +1233,461 @@ Please summarize the sentiment profile in 2-3 concise sentences, focusing on the
         filepath = self.output_manager.save_sentiment_analysis(workspace, results, method, output_format)
 
         self.output_manager.print_formatted('feedback', f"Results saved to: {filepath}", success=True)
+
+    def _analyze_english_sentiment(self, text):
+        """
+        Analyze sentiment in English text using spaCy with fallbacks
+
+        Args:
+            text (str): English text to analyze
+
+        Returns:
+            Tuple: (sentiment score, sentiment label)
+        """
+        # Try spaCy approach first if available
+        if SPACY_AVAILABLE:
+            try:
+                from core.language.spacy_tokenizer import get_spacy_model
+                nlp = get_spacy_model('en')
+
+                # If we have a spaCy model, use it for sentiment analysis
+                if nlp:
+                    # Truncate if too long to avoid memory issues
+                    truncated_text = text[:5000]
+                    doc = nlp(truncated_text)
+
+                    # Analyze lexical indicators of sentiment
+                    positive_markers = 0
+                    negative_markers = 0
+
+                    # Word lists for sentiment markers
+                    positive_words = {
+                        "good", "great", "excellent", "positive", "wonderful", "happy", "pleased",
+                        "satisfied", "success", "successful", "best", "better", "benefit",
+                        "effective", "recommend", "like", "love", "enjoy", "amazing", "awesome"
+                    }
+
+                    negative_words = {
+                        "bad", "poor", "terrible", "negative", "unhappy", "disappointed",
+                        "disappointing", "fail", "failure", "worst", "worse", "problem",
+                        "difficult", "hard", "complaint", "hate", "dislike", "awful"
+                    }
+
+                    # Intensity modifiers
+                    intensifiers = {
+                        "very": 1.5, "really": 1.5, "extremely": 2.0, "incredibly": 2.0,
+                        "absolutely": 2.0, "completely": 1.8, "totally": 1.8
+                    }
+
+                    # Negation words
+                    negations = {"not", "no", "never", "none", "neither", "nor", "hardly", "barely"}
+
+                    # Track preceding modifiers
+                    is_negated = False
+                    intensity_factor = 1.0
+
+                    # Analyze each token
+                    for token in doc:
+                        # Check if token is a negation
+                        if token.text.lower() in negations:
+                            is_negated = True
+                            continue
+
+                        # Check if token is an intensifier
+                        if token.text.lower() in intensifiers:
+                            intensity_factor = intensifiers[token.text.lower()]
+                            continue
+
+                        # Get token lemma for matching
+                        lemma = token.lemma_.lower()
+
+                        # Check if token is sentiment-bearing
+                        if lemma in positive_words:
+                            if is_negated:
+                                negative_markers += 1 * intensity_factor
+                            else:
+                                positive_markers += 1 * intensity_factor
+                        elif lemma in negative_words:
+                            if is_negated:
+                                positive_markers += 0.5 * intensity_factor  # Negated negative is weakly positive
+                            else:
+                                negative_markers += 1 * intensity_factor
+
+                        # Reset modifiers
+                        is_negated = False
+                        intensity_factor = 1.0
+
+                    # Calculate sentiment score
+                    total_markers = positive_markers + negative_markers
+                    if total_markers > 0:
+                        sentiment_score = (positive_markers - negative_markers) / total_markers
+                    else:
+                        sentiment_score = 0.0
+
+                    # Apply threshold for sentiment label
+                    if sentiment_score > 0.05:
+                        sentiment_label = "positive"
+                    elif sentiment_score < -0.05:
+                        sentiment_label = "negative"
+                    else:
+                        sentiment_label = "neutral"
+
+                    return sentiment_score, sentiment_label
+
+            except Exception as e:
+                debug(self.config, f"Error in spaCy sentiment analysis: {str(e)}")
+                # Fall back to VADER or transformer model
+
+        # Use transformers if available
+        if hasattr(self, 'en_sentiment_analyzer') and self.en_sentiment_analyzer:
+            try:
+                # Truncate if too long
+                truncated_text = text[:1024]
+                result = self.en_sentiment_analyzer(truncated_text)[0]
+                label = result["label"]
+                score = result["score"]
+
+                # Normalize label and score
+                if label == "POSITIVE":
+                    sentiment_label = "positive"
+                    sentiment_score = score
+                elif label == "NEGATIVE":
+                    sentiment_label = "negative"
+                    sentiment_score = -score
+                else:
+                    sentiment_label = "neutral"
+                    sentiment_score = 0.0
+
+                return sentiment_score, sentiment_label
+            except Exception as e:
+                debug(self.config, f"Error in transformer sentiment analysis: {str(e)}")
+                # Fall back to VADER or lexicon
+
+        # Use VADER if available
+        if hasattr(self, 'vader_analyzer') and self.vader_analyzer:
+            try:
+                # Truncate if too long
+                truncated_text = text[:5000]  # VADER handles longer text than transformers
+                scores = self.vader_analyzer.polarity_scores(truncated_text)
+                compound_score = scores["compound"]
+
+                # Determine sentiment label based on compound score
+                if compound_score >= 0.05:
+                    sentiment_label = "positive"
+                elif compound_score <= -0.05:
+                    sentiment_label = "negative"
+                else:
+                    sentiment_label = "neutral"
+
+                return compound_score, sentiment_label
+            except Exception as e:
+                debug(self.config, f"Error in VADER sentiment analysis: {str(e)}")
+                # Fall back to lexicon
+
+        # Use simple lexicon as fallback
+        return self._analyze_with_simple_lexicon(text, "en")
+
+    def _analyze_chinese_sentiment(self, text):
+        """
+        Analyze sentiment in Chinese text using spaCy with fallbacks
+
+        Args:
+            text (str): Chinese text to analyze
+
+        Returns:
+            Tuple: (sentiment score, sentiment label)
+        """
+        # Try spaCy approach first if available
+        if SPACY_AVAILABLE:
+            try:
+                from core.language.spacy_tokenizer import get_spacy_model
+                nlp = get_spacy_model('zh')
+
+                # If we have a spaCy model, use it for sentiment analysis
+                if nlp:
+                    # Truncate if too long to avoid memory issues
+                    truncated_text = text[:5000]
+                    doc = nlp(truncated_text)
+
+                    # Check if there are sentiment lexicons for Chinese in spaCy
+                    # Since spaCy doesn't have built-in sentiment lexicons for Chinese,
+                    # we'll use our custom lexicons
+
+                    # Load positive and negative words
+                    positives = self.chinese_sentiment_lexicon['positive']
+                    negatives = self.chinese_sentiment_lexicon['negative']
+
+                    # Count positive and negative words
+                    positive_count = 0
+                    negative_count = 0
+
+                    # Track negations for Chinese
+                    negation_words = {"不", "没", "无", "非", "莫", "勿", "未", "别", "甭", "休"}
+                    negated = False
+
+                    for token in doc:
+                        # Check for negation
+                        if token.text in negation_words:
+                            negated = True
+                            continue
+
+                        # Check sentiment
+                        if token.text in positives:
+                            if negated:
+                                negative_count += 1
+                            else:
+                                positive_count += 1
+                        elif token.text in negatives:
+                            if negated:
+                                positive_count += 1
+                            else:
+                                negative_count += 1
+
+                        # Reset negation
+                        negated = False
+
+                    # Calculate sentiment
+                    total_count = positive_count + negative_count
+                    if total_count > 0:
+                        sentiment_score = (positive_count - negative_count) / total_count
+                    else:
+                        sentiment_score = 0.0
+
+                    # Determine label based on score
+                    if sentiment_score > 0.05:
+                        sentiment_label = "positive"
+                    elif sentiment_score < -0.05:
+                        sentiment_label = "negative"
+                    else:
+                        sentiment_label = "neutral"
+
+                    return sentiment_score, sentiment_label
+
+            except Exception as e:
+                debug(self.config, f"Error in spaCy Chinese sentiment analysis: {str(e)}")
+                # Fall back to lexicon-based method
+
+        # Use transformers if available for Chinese
+        if hasattr(self, 'zh_sentiment_analyzer') and self.zh_sentiment_analyzer:
+            try:
+                # Truncate if too long
+                truncated_text = text[:512]  # Chinese characters may need shorter text
+                result = self.zh_sentiment_analyzer(truncated_text)[0]
+                label = result["label"]
+                score = result["score"]
+
+                # Normalize label
+                if "正面" in label or "积极" in label or "positive" in label.lower():
+                    sentiment_label = "positive"
+                    sentiment_score = score
+                elif "负面" in label or "消极" in label or "negative" in label.lower():
+                    sentiment_label = "negative"
+                    sentiment_score = -score
+                else:
+                    sentiment_label = "neutral"
+                    sentiment_score = 0.0
+
+                return sentiment_score, sentiment_label
+            except Exception as e:
+                debug(self.config, f"Error in Chinese transformer sentiment analysis: {str(e)}")
+                # Fall back to lexicon
+
+        # Use lexicon-based method as primary approach for Chinese
+        return self._analyze_with_chinese_lexicon(text)
+
+    def _identify_emotional_tone(self, text, language):
+        """
+        Identify emotional tone in the text using spaCy
+
+        Args:
+            text (str): Text to analyze
+            language (str): Language code
+
+        Returns:
+            str: Identified emotional tone
+        """
+        # Try to use spaCy for emotional tone analysis
+        if SPACY_AVAILABLE:
+            try:
+                from core.language.spacy_tokenizer import get_spacy_model
+                nlp = get_spacy_model(language)
+
+                if nlp:
+                    # Process text with spaCy
+                    truncated_text = text[:5000]  # Limit text length
+                    doc = nlp(truncated_text)
+
+                    # Define emotion lexicons based on language
+                    if language == 'zh':
+                        # Chinese emotion lexicons
+                        emotions = {
+                            "joy": {"快乐", "高兴", "开心", "兴奋", "满意", "愉快", "欣喜", "欢乐", "喜悦", "舒心"},
+                            "anger": {"生气", "愤怒", "恼火", "不满", "烦躁", "恼怒", "气愤", "暴怒", "气恼", "恼"},
+                            "sadness": {"悲伤", "难过", "失望", "伤心", "忧郁", "悲痛", "忧伤", "痛苦", "悲", "丧气"},
+                            "fear": {"害怕", "恐惧", "担忧", "忧虑", "惊恐", "惊慌", "紧张", "焦虑", "担心", "慌张"},
+                            "surprise": {"惊讶", "惊奇", "震惊", "意外", "吃惊", "惊讶", "惊愕", "诧异", "错愕", "惊异"}
+                        }
+
+                        # Count emotion words in Chinese text
+                        emotion_counts = {emotion: 0 for emotion in emotions}
+                        for token in doc:
+                            for emotion, words in emotions.items():
+                                if token.text in words:
+                                    emotion_counts[emotion] += 1
+
+                    else:
+                        # English emotion lexicons
+                        emotions = {
+                            "joy": {"happy", "pleased", "delighted", "excited", "satisfied", "glad", "thrilled",
+                                    "enthusiastic", "cheerful", "content", "joy", "happiness", "delight"},
+                            "anger": {"angry", "annoyed", "irritated", "frustrated", "furious", "outraged",
+                                      "hostile", "mad", "upset", "enraged", "anger", "rage", "fury"},
+                            "sadness": {"sad", "unhappy", "disappointed", "depressed", "gloomy", "heartbroken",
+                                        "miserable", "melancholy", "sorrowful", "downcast", "sadness", "grief"},
+                            "fear": {"afraid", "scared", "frightened", "terrified", "anxious", "worried",
+                                     "nervous", "concerned", "uneasy", "alarmed", "fear", "dread", "terror"},
+                            "surprise": {"surprised", "amazed", "astonished", "stunned", "shocked",
+                                         "startled", "unexpected", "remarkable", "extraordinary", "surprise"}
+                        }
+
+                        # Count emotion words in English text
+                        emotion_counts = {emotion: 0 for emotion in emotions}
+
+                        # Use lemmas for better matching in English
+                        for token in doc:
+                            lemma = token.lemma_.lower()
+                            for emotion, words in emotions.items():
+                                if lemma in words:
+                                    emotion_counts[emotion] += 1
+
+                    # Find the dominant emotion
+                    dominant_emotion = max(emotion_counts.items(), key=lambda x: x[1])
+
+                    # If no emotions detected, return "neutral"
+                    if dominant_emotion[1] == 0:
+                        return "neutral"
+
+                    return dominant_emotion[0]
+
+            except Exception as e:
+                debug(self.config, f"Error in spaCy emotion analysis: {str(e)}")
+                # Fall back to traditional method
+
+        # Define emotion lexicons (traditional method fallback)
+        emotions = {
+            "joy": {"happy", "pleased", "delighted", "excited", "satisfied", "glad", "thrilled",
+                    "enthusiastic", "cheerful", "content"},
+            "anger": {"angry", "annoyed", "irritated", "frustrated", "furious", "outraged",
+                      "hostile", "mad", "upset", "enraged"},
+            "sadness": {"sad", "unhappy", "disappointed", "depressed", "gloomy", "heartbroken",
+                        "miserable", "melancholy", "sorrowful", "downcast"},
+            "fear": {"afraid", "scared", "frightened", "terrified", "anxious", "worried",
+                     "nervous", "concerned", "uneasy", "alarmed"},
+            "surprise": {"surprised", "amazed", "astonished", "stunned", "shocked",
+                         "startled", "unexpected", "remarkable", "extraordinary"}
+        }
+
+        # Chinese emotion lexicons
+        zh_emotions = {
+            "joy": {"快乐", "高兴", "开心", "兴奋", "满意", "愉快", "欣喜", "欢乐", "喜悦", "舒心"},
+            "anger": {"生气", "愤怒", "恼火", "不满", "烦躁", "恼怒", "气愤", "暴怒", "气恼", "恼"},
+            "sadness": {"悲伤", "难过", "失望", "伤心", "忧郁", "悲痛", "忧伤", "痛苦", "悲", "丧气"},
+            "fear": {"害怕", "恐惧", "担忧", "忧虑", "惊恐", "惊慌", "紧张", "焦虑", "担心", "慌张"},
+            "surprise": {"惊讶", "惊奇", "震惊", "意外", "吃惊", "惊讶", "惊愕", "诧异", "错愕", "惊异"}
+        }
+
+        # Lowercase the text for English
+        if language != "zh":
+            text = text.lower()
+
+        # Count emotion words
+        emotion_counts = {emotion: 0 for emotion in emotions}
+
+        if language == "zh":
+            # For Chinese text
+            for emotion, words in zh_emotions.items():
+                for word in words:
+                    if word in text:
+                        emotion_counts[emotion] += text.count(word)
+        else:
+            # For English text
+            for emotion, words in emotions.items():
+                for word in words:
+                    if f" {word} " in f" {text} ":  # Add spaces to match whole words
+                        emotion_counts[emotion] += 1
+
+        # Find the dominant emotion
+        dominant_emotion = max(emotion_counts.items(), key=lambda x: x[1])
+
+        # If no emotions detected, return "neutral"
+        if dominant_emotion[1] == 0:
+            return "neutral"
+
+        return dominant_emotion[0]
+
+    def _preprocess_document_texts(self, docs):
+        """
+        Preprocess document texts for sentiment analysis using spaCy
+
+        Args:
+            docs (List[Dict]): Raw documents
+
+        Returns:
+            List[Dict]: Processed documents with sentiment-friendly content
+        """
+        processed_docs = []
+
+        for doc in docs:
+            # Extract content and metadata
+            content = doc.get("content", "")
+            processed_content = doc.get("processed_content", "")
+            source = doc.get("metadata", {}).get("source", "unknown")
+            language = doc.get("metadata", {}).get("language", "en")
+
+            # For sentiment analysis, we want to keep more of the original text
+            # than we might for other analyses, as sentiment is carried in
+            # words that might be considered stopwords in other contexts
+            if self.use_spacy:
+                try:
+                    from core.language.spacy_tokenizer import get_spacy_model
+
+                    # Get appropriate model for the language
+                    nlp = get_spacy_model(language)
+
+                    if nlp:
+                        # Use a larger chunk of the original text
+                        text_to_process = content[:10000]  # Limit for memory
+
+                        # Process with spaCy
+                        spacy_doc = nlp(text_to_process)
+
+                        # For sentiment, keep all content except punctuation
+                        # Don't remove stopwords as they often carry sentiment
+                        sentiment_text = " ".join(
+                            token.text for token in spacy_doc
+                            if not token.is_punct
+                        )
+
+                        # Add to processed docs
+                        processed_docs.append({
+                            "source": source,
+                            "language": language,
+                            "content": content,
+                            "sentiment_text": sentiment_text,
+                            "processed_content": processed_content
+                        })
+                        continue
+                except Exception as e:
+                    debug(self.config, f"Error preprocessing with spaCy: {str(e)}")
+                    # Fall back to standard preprocessing
+
+            # Use the existing processed content or original content
+            processed_docs.append({
+                "source": source,
+                "language": language,
+                "content": content,
+                "sentiment_text": content,  # Use original for sentiment if no spaCy
+                "processed_content": processed_content
+            })
+
+        return processed_docs
