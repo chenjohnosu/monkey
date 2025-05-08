@@ -14,7 +14,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.decomposition import TruncatedSVD
 from sklearn.cluster import KMeans
 
-from core.engine.keywords import extract_keywords, configure_vectorizer
+from core.engine.keywords import extract_keywords, configure_vectorizer, extract_entities_from_text
 
 from core.engine.logging import debug, warning, info, error
 from core.engine.storage import StorageManager
@@ -25,9 +25,6 @@ from core.engine.common import safe_execute
 from core.language.spacy_tokenizer import get_spacy_model, SPACY_AVAILABLE
 from collections import defaultdict
 
-# Conditional imports with improved handling
-JIEBA_AVAILABLE = False
-jieba = None
 
 try:
     original_stdout = sys.stdout
@@ -216,99 +213,6 @@ class ThemeAnalyzer:
         for lang, count in language_counts.most_common():
             percentage = (count / total) * 100
             print(f"  {lang}: {count} documents ({percentage:.1f}%)")
-
-    def _output_results(self, workspace: str, results: Dict, method: str):
-        """
-        Output theme analysis results using output manager with improved keyword handling
-
-        Args:
-            workspace (str): Workspace name
-            results (Dict): Analysis results
-            method (str): Analysis method
-        """
-        # Use output_manager for formatted display
-        self.output_manager.print_formatted('header', "THEME ANALYSIS RESULTS")
-
-        # Display results for each method
-        for m, result in results.items():
-            self.output_manager.print_formatted('subheader', result.get('method', m))
-
-            # Display method-specific statistics
-            if 'entity_count' in result:
-                self.output_manager.print_formatted('kv', result['entity_count'], key="Total entities")
-            if 'variance_explained' in result:
-                self.output_manager.print_formatted('kv', f"{result['variance_explained']}%", key="Variance explained")
-            if 'clusters' in result:
-                self.output_manager.print_formatted('kv', result['clusters'], key="Number of clusters")
-            if 'error' in result:
-                self.output_manager.print_formatted('feedback', f"Error: {result['error']}", success=False)
-
-            # Display themes
-            themes = result.get('themes', [])
-            if not themes:
-                self.output_manager.print_formatted('feedback', "No themes identified", success=False)
-                continue
-
-            print(f"\nFound {len(themes)} themes/keywords")
-
-            for theme in themes:
-                # Different handling based on theme type
-                if 'keyword' in theme:
-                    # This is a keyword theme from content keyword analysis
-                    self.output_manager.print_formatted('mini_header', f"Keyword: {theme['keyword']}")
-
-                    if 'score' in theme:
-                        self.output_manager.print_formatted('kv', f"{theme['score']:.4f}", key="Score")
-
-                    if 'documents' in theme:
-                        self.output_manager.print_formatted('kv', theme['documents'], key="Documents")
-
-                    # Show documents list if available
-                    if 'documents_list' in theme and isinstance(theme['documents_list'], list):
-                        print("\n  Document sources:")
-                        for doc in theme['documents_list'][:5]:
-                            self.output_manager.print_formatted('list', str(doc), indent=4)
-                        if len(theme['documents_list']) > 5:
-                            print(f"  ... and {len(theme['documents_list']) - 5} more")
-
-                elif 'name' in theme:
-                    # This is a standard theme
-                    self.output_manager.print_formatted('mini_header', theme['name'])
-
-                    # Keywords
-                    if 'keywords' in theme:
-                        self.output_manager.print_formatted('kv', ', '.join(theme['keywords']), key="Keywords")
-
-                    # Various metrics
-                    metrics = [
-                        ('score', 'Score'),
-                        ('frequency', 'Frequency'),
-                        ('centrality', 'Centrality'),
-                        ('document_count', 'Documents')
-                    ]
-                    for key, label in metrics:
-                        if key in theme:
-                            self.output_manager.print_formatted('kv', theme[key], key=label)
-
-                    # Documents
-                    if 'documents' in theme and isinstance(theme['documents'], list):
-                        print("\n  Document files:")
-                        for doc in theme['documents'][:5]:
-                            self.output_manager.print_formatted('list', str(doc), indent=4)
-                        if len(theme['documents']) > 5:
-                            print(f"  ... and {len(theme['documents']) - 5} more")
-
-                    # Descriptions
-                    if 'description' in theme and theme['description']:
-                        print("\n  Description:")
-                        print(f"  {theme['description']}")
-
-        # Save results to file
-        output_format = self.config.get('system.output_format', 'txt')
-        filepath = self.output_manager.save_theme_analysis(workspace, results, method, output_format)
-
-        # Show success message
-        self.output_manager.print_formatted('feedback', f"Results saved to: {filepath}")
 
     def _extract_english_keywords(self, docs: List[Dict]) -> List[Dict]:
         """
@@ -778,86 +682,6 @@ class ThemeAnalyzer:
                 "themes": [{"name": "Analysis Error", "centrality": 0, "nodes": []}]
             }
 
-    def _analyze_named_entities(self, doc_contents: List[Dict]) -> Dict[str, Any]:
-        """
-        Extract and analyze named entities from document content
-
-        Args:
-            doc_contents (List[Dict]): Preprocessed document content
-
-        Returns:
-            Dict: Named entity analysis results
-        """
-        # Print detailed info about what's being processed
-        print(f"Processing {len(doc_contents)} documents for named entity analysis")
-
-        # Group documents by language
-        docs_by_language = defaultdict(list)
-        for doc in doc_contents:
-            language = doc.get("language", "en")
-            docs_by_language[language].append(doc)
-
-        # Prepare results
-        all_entities = []
-
-        # Process entities for each language
-        for language, docs in docs_by_language.items():
-            print(f"\nProcessing {language} language documents. Total: {len(docs)}")
-
-            try:
-                # Extract entities based on language
-                if language == "zh":
-                    language_entities = self._extract_chinese_entities(docs)
-                else:
-                    language_entities = self._extract_english_entities(docs)
-
-                print(f"Extracted {len(language_entities)} entities for {language}")
-
-                # Add all entities without filtering
-                all_entities.extend(language_entities)
-            except Exception as e:
-                print(f"Error extracting entities for {language}: {str(e)}")
-                import traceback
-                traceback.print_exc()
-
-        # Sort entities by frequency and document count
-        if all_entities:
-            sorted_entities = sorted(all_entities, key=lambda x: (x['documents'], x['count']), reverse=True)
-
-            # Take top entities (more than before)
-            top_entities = sorted_entities[:100]  # Take more entities
-
-            print(f"\nTotal unique entities found: {len(sorted_entities)}")
-            print("Top 10 entities:")
-            for i, entity in enumerate(top_entities[:10]):
-                print(f"  {entity['value']}: count={entity['count']}, documents={entity['documents']}")
-
-            # Generate themes
-            themes = []
-            for entity in top_entities[:30]:  # Generate more themes
-                themes.append({
-                    'name': f"Theme: {entity['value']}",
-                    'keywords': [entity['value']],
-                    'frequency': entity['count'],
-                    'document_count': entity['documents']
-                })
-
-            # Return results with all entities counted as significant
-            return {
-                "method": "Named Entity Analysis",
-                "entity_count": len(sorted_entities),
-                "significant_entities": len(sorted_entities),  # Count all as significant
-                "themes": themes
-            }
-        else:
-            print("No entities found")
-            return {
-                "method": "Named Entity Analysis",
-                "entity_count": 0,
-                "significant_entities": 0,
-                "themes": []
-            }
-
     def _extract_chinese_entities(self, docs: List[Dict]) -> List[Dict]:
         """
         Extract named entities from Chinese text with improved detection
@@ -1028,206 +852,6 @@ class ThemeAnalyzer:
 
         # Don't filter entities - add all of them
         return entities
-
-    def _analyze_latent_semantics(self, doc_contents: List[Dict]) -> Dict[str, Any]:
-        """
-        Analyze latent semantic themes using LSA/SVD
-
-        Args:
-            doc_contents (List[Dict]): Preprocessed document content
-
-        Returns:
-            Dict: Latent semantic analysis results
-        """
-        debug(self.config, "Analyzing latent semantic themes")
-
-        # Extract document texts and sources
-        doc_texts = [doc["processed_content"] for doc in doc_contents]
-        doc_sources = [doc["source"] for doc in doc_contents]
-
-        # Check if we have enough documents
-        if len(doc_texts) < 2:
-            return {
-                "method": "Latent Semantic Analysis",
-                "themes": [{"name": "Insufficient documents for LSA", "score": 0, "keywords": []}]
-            }
-
-        # Determine primary language
-        languages = [doc["language"] for doc in doc_contents]
-        primary_language = Counter(languages).most_common(1)[0][0]
-        is_chinese = primary_language == "zh"
-
-        try:
-            # Configure vectorizer based on language
-            vectorizer = configure_vectorizer(
-                self.config,
-                len(doc_texts),
-                primary_language,
-                self.chinese_stopwords if is_chinese else None
-            )
-
-            # Transform documents to TF-IDF space
-            X = vectorizer.fit_transform(doc_texts)
-            feature_names = vectorizer.get_feature_names_out()
-
-            # Determine number of components
-            n_components = min(len(doc_texts) - 1, X.shape[1], 5)
-            n_components = max(1, n_components)
-
-            # Apply SVD to find latent semantic dimensions
-            svd = TruncatedSVD(n_components=n_components)
-            svd = TruncatedSVD(n_components=n_components)
-            X_svd = svd.fit_transform(X)
-
-            # Process each semantic component
-            themes = []
-            for i, component in enumerate(svd.components_):
-                # Get top terms for this component
-                max_terms = min(10, len(feature_names))
-                top_term_indices = component.argsort()[-(max_terms):][::-1]
-                top_terms = [feature_names[idx] for idx in top_term_indices]
-
-                # Calculate explained variance
-                explained_variance = svd.explained_variance_ratio_[i]
-
-                # Find top documents for this theme
-                theme_scores = X_svd[:, i]
-                top_doc_indices = theme_scores.argsort()[::-1][:5]
-                top_doc_sources = [doc_sources[idx] for idx in top_doc_indices]
-
-                # Generate theme representation
-                theme_name = f"Semantic Theme {i + 1}: {', '.join(top_terms[:3])}"
-
-                themes.append({
-                    "name": theme_name,
-                    "score": round(float(explained_variance), 2),
-                    "keywords": top_terms,
-                    "documents": top_doc_sources,
-                    "variance_explained": round(float(explained_variance) * 100, 1)
-                })
-
-            # Sort themes by variance explained
-            themes.sort(key=lambda x: x["score"], reverse=True)
-
-            return {
-                "method": "Latent Semantic Analysis",
-                "variance_explained": round(float(sum(svd.explained_variance_ratio_)) * 100, 1),
-                "themes": themes
-            }
-
-        except Exception as e:
-            debug(self.config, f"Error in latent semantic analysis: {str(e)}")
-            import traceback
-            debug(self.config, traceback.format_exc())
-
-            return {
-                "method": "Latent Semantic Analysis",
-                "error": str(e),
-                "themes": [{"name": "Analysis Error", "score": 0, "keywords": []}]
-            }
-
-    def _analyze_document_clusters(self, doc_contents: List[Dict]) -> Dict[str, Any]:
-        """
-        Cluster documents by content similarity
-
-        Args:
-            doc_contents (List[Dict]): Preprocessed document content
-
-        Returns:
-            Dict: Document clustering results
-        """
-        debug(self.config, "Clustering documents")
-
-        # Extract document texts and sources
-        doc_texts = [doc["processed_content"] for doc in doc_contents]
-        doc_sources = [doc["source"] for doc in doc_contents]
-
-        # Check document count
-        if len(doc_texts) < 2:
-            return {
-                "method": "Document Clustering",
-                "themes": [{"name": "Insufficient documents for clustering", "score": 0, "documents": []}]
-            }
-
-        # Determine primary language
-        languages = [doc["language"] for doc in doc_contents]
-        primary_language = Counter(languages).most_common(1)[0][0]
-        is_chinese = primary_language == "zh"
-
-        try:
-            # Configure vectorizer based on language
-            vectorizer = configure_vectorizer(
-                self.config,
-                len(doc_texts),
-                primary_language,
-                self.chinese_stopwords if is_chinese else None
-            )
-
-            # Transform documents to TF-IDF space
-            X = vectorizer.fit_transform(doc_texts)
-
-            # Determine number of clusters
-            n_docs = len(doc_texts)
-            max_clusters = min(3, max(2, n_docs // 2))
-            n_clusters = min(max_clusters, n_docs - 1)
-
-            # Perform clustering
-            kmeans = kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-            clusters = kmeans.fit_predict(X)
-
-            # Extract cluster themes
-            themes = []
-            for cluster_id in range(n_clusters):
-                # Get documents in this cluster
-                cluster_mask = (clusters == cluster_id)
-                cluster_doc_indices = [i for i, mask in enumerate(cluster_mask) if mask]
-
-                if not cluster_doc_indices:
-                    continue
-
-                # Extract documents and sources for this cluster
-                cluster_texts = [doc_texts[i] for i in cluster_doc_indices]
-                cluster_sources = [doc_sources[i] for i in cluster_doc_indices]
-
-                # Extract keywords for this cluster
-                keywords = extract_keywords(
-                    self.config,
-                    cluster_texts,
-                    language=primary_language,
-                    top_n=5,
-                    stopwords=self.chinese_stopwords if is_chinese else self.english_stopwords
-                )
-
-                # Create theme
-                theme_name = f"Cluster: {', '.join(keywords[:3])}"
-
-                themes.append({
-                    "name": theme_name,
-                    "score": len(cluster_doc_indices) / len(doc_texts),
-                    "keywords": keywords,
-                    "documents": cluster_sources,
-                    "document_count": len(cluster_sources)
-                })
-
-            # Sort clusters by size
-            themes.sort(key=lambda x: x["document_count"], reverse=True)
-
-            return {
-                "method": "Document Clustering",
-                "clusters": n_clusters,
-                "themes": themes
-            }
-
-        except Exception as e:
-            debug(self.config, f"Error in document clustering: {str(e)}")
-            import traceback
-            debug(self.config, traceback.format_exc())
-
-            return {
-                "method": "Document Clustering",
-                "error": str(e),
-                "themes": [{"name": "Clustering Error", "score": 0, "documents": []}]
-            }
 
     def _extract_named_entities(self, docs: List[Dict]) -> List[Dict]:
         """
@@ -1501,3 +1125,610 @@ class ThemeAnalyzer:
 
         # Convert back to list and sort
         return list(entity_map.values())
+
+    def _analyze_named_entities(self, doc_contents: List[Dict]) -> Dict[str, Any]:
+        """
+        Extract and analyze named entities from document content using SpaCy
+
+        Args:
+            doc_contents (List[Dict]): Preprocessed document content
+
+        Returns:
+            Dict: Named entity analysis results
+        """
+        # Print detailed info about what's being processed
+        print(f"Processing {len(doc_contents)} documents for named entity analysis")
+
+        # Group documents by language
+        docs_by_language = defaultdict(list)
+        for doc in doc_contents:
+            language = doc.get("language", "en")
+            docs_by_language[language].append(doc)
+
+        # Prepare results
+        all_entities = []
+
+        # Process entities for each language
+        for language, docs in docs_by_language.items():
+            print(f"\nProcessing {language} language documents. Total: {len(docs)}")
+
+            try:
+                # Extract entities using the shared extraction function
+                doc_texts = [doc.get("content", "") for doc in docs]
+                doc_sources = [doc.get("source", "unknown") for doc in docs]
+
+                # Extract entities using SpaCy
+                entities = extract_entities_from_text(
+                    self.config,
+                    doc_texts,
+                    language,
+                    stopwords=self.stopwords[language] if language in self.stopwords else None
+                )
+
+                print(f"Extracted {len(entities)} entities for {language}")
+
+                # Map entities to documents
+                for entity in entities:
+                    entity_text = entity['text']
+                    doc_count = 0
+                    entity_sources = []
+
+                    for idx, text in enumerate(doc_texts):
+                        if entity_text in text:
+                            doc_count += 1
+                            entity_sources.append(doc_sources[idx])
+
+                    # Only add entities that appear in documents
+                    if doc_count > 0:
+                        all_entities.append({
+                            'value': entity_text,
+                            'count': entity['count'],
+                            'documents': doc_count,
+                            'type': entity['type'],
+                            'sources': entity_sources
+                        })
+
+            except Exception as e:
+                print(f"Error extracting entities for {language}: {str(e)}")
+                import traceback
+                traceback.print_exc()
+
+        # Sort entities by frequency and document count
+        if all_entities:
+            sorted_entities = sorted(all_entities, key=lambda x: (x['documents'], x['count']), reverse=True)
+
+            # Take top entities (more than before)
+            top_entities = sorted_entities[:100]  # Take more entities
+
+            print(f"\nTotal unique entities found: {len(sorted_entities)}")
+            print("Top 10 entities:")
+            for i, entity in enumerate(top_entities[:10]):
+                print(f"  {entity['value']}: count={entity['count']}, documents={entity['documents']}")
+
+            # Generate themes
+            themes = []
+            for entity in top_entities[:30]:  # Generate more themes
+                themes.append({
+                    'name': f"Theme: {entity['value']}",
+                    'keywords': [entity['value']],
+                    'frequency': entity['count'],
+                    'document_count': entity['documents'],
+                    'type': entity.get('type', 'UNKNOWN')
+                })
+
+            # Return results with all entities counted as significant
+            return {
+                "method": "Named Entity Analysis",
+                "entity_count": len(sorted_entities),
+                "significant_entities": len(sorted_entities),  # Count all as significant
+                "themes": themes
+            }
+        else:
+            print("No entities found")
+            return {
+                "method": "Named Entity Analysis",
+                "entity_count": 0,
+                "significant_entities": 0,
+                "themes": []
+            }
+
+    def _analyze_latent_semantics(self, doc_contents: List[Dict]) -> Dict[str, Any]:
+        """
+        Analyze latent semantic themes using LSA/SVD
+
+        Args:
+            doc_contents (List[Dict]): Preprocessed document content
+
+        Returns:
+            Dict: Latent semantic analysis results
+        """
+        debug(self.config, "Analyzing latent semantic themes")
+
+        if not SKLEARN_AVAILABLE:
+            return {
+                "method": "Latent Semantic Analysis",
+                "error": "scikit-learn is required for LSA analysis",
+                "themes": []
+            }
+
+        # Extract document texts and sources
+        doc_texts = [doc["processed_content"] for doc in doc_contents]
+        doc_sources = [doc["source"] for doc in doc_contents]
+
+        # Check if we have enough documents
+        if len(doc_texts) < 2:
+            return {
+                "method": "Latent Semantic Analysis",
+                "themes": [{"name": "Insufficient documents for LSA", "score": 0, "keywords": []}]
+            }
+
+        # Determine primary language
+        languages = [doc["language"] for doc in doc_contents]
+        primary_language = Counter(languages).most_common(1)[0][0]
+
+        try:
+            # Configure vectorizer based on language
+            vectorizer = configure_vectorizer(
+                self.config,
+                len(doc_texts),
+                primary_language,
+                self.stopwords[primary_language] if primary_language in self.stopwords else None
+            )
+
+            # Transform documents to TF-IDF space
+            X = vectorizer.fit_transform(doc_texts)
+            feature_names = vectorizer.get_feature_names_out()
+
+            # Determine number of components
+            n_components = min(len(doc_texts) - 1, X.shape[1], 5)
+            n_components = max(1, n_components)
+
+            # Apply SVD to find latent semantic dimensions
+            svd = TruncatedSVD(n_components=n_components)
+            X_svd = svd.fit_transform(X)
+
+            # Process each semantic component
+            themes = []
+            for i, component in enumerate(svd.components_):
+                # Get top terms for this component
+                max_terms = min(10, len(feature_names))
+                top_term_indices = component.argsort()[-(max_terms):][::-1]
+                top_terms = [feature_names[idx] for idx in top_term_indices]
+
+                # Calculate explained variance
+                explained_variance = svd.explained_variance_ratio_[i]
+
+                # Find top documents for this theme
+                theme_scores = X_svd[:, i]
+                top_doc_indices = theme_scores.argsort()[::-1][:5]
+                top_doc_sources = [doc_sources[idx] for idx in top_doc_indices]
+
+                # Generate theme representation
+                theme_name = f"Semantic Theme {i + 1}: {', '.join(top_terms[:3])}"
+
+                themes.append({
+                    "name": theme_name,
+                    "score": round(float(explained_variance), 2),
+                    "keywords": top_terms,
+                    "documents": top_doc_sources,
+                    "variance_explained": round(float(explained_variance) * 100, 1)
+                })
+
+            # Sort themes by variance explained
+            themes.sort(key=lambda x: x["score"], reverse=True)
+
+            return {
+                "method": "Latent Semantic Analysis",
+                "variance_explained": round(float(sum(svd.explained_variance_ratio_)) * 100, 1),
+                "themes": themes
+            }
+
+        except Exception as e:
+            debug(self.config, f"Error in latent semantic analysis: {str(e)}")
+            import traceback
+            debug(self.config, traceback.format_exc())
+
+            return {
+                "method": "Latent Semantic Analysis",
+                "error": str(e),
+                "themes": [{"name": "Analysis Error", "score": 0, "keywords": []}]
+            }
+
+    def _analyze_document_clusters(self, doc_contents: List[Dict]) -> Dict[str, Any]:
+        """
+        Cluster documents by content similarity
+
+        Args:
+            doc_contents (List[Dict]): Preprocessed document content
+
+        Returns:
+            Dict: Document clustering results
+        """
+        debug(self.config, "Clustering documents")
+
+        if not SKLEARN_AVAILABLE:
+            return {
+                "method": "Document Clustering",
+                "error": "scikit-learn is required for document clustering",
+                "themes": []
+            }
+
+        # Extract document texts and sources
+        doc_texts = [doc["processed_content"] for doc in doc_contents]
+        doc_sources = [doc["source"] for doc in doc_contents]
+
+        # Check document count
+        if len(doc_texts) < 2:
+            return {
+                "method": "Document Clustering",
+                "themes": [{"name": "Insufficient documents for clustering", "score": 0, "documents": []}]
+            }
+
+        # Determine primary language
+        languages = [doc["language"] for doc in doc_contents]
+        primary_language = Counter(languages).most_common(1)[0][0]
+
+        try:
+            # Configure vectorizer based on language
+            vectorizer = configure_vectorizer(
+                self.config,
+                len(doc_texts),
+                primary_language,
+                self.stopwords[primary_language] if primary_language in self.stopwords else None
+            )
+
+            # Transform documents to TF-IDF space
+            X = vectorizer.fit_transform(doc_texts)
+
+            # Determine number of clusters
+            n_docs = len(doc_texts)
+            max_clusters = min(3, max(2, n_docs // 2))
+            n_clusters = min(max_clusters, n_docs - 1)
+
+            # Perform clustering
+            kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+            clusters = kmeans.fit_predict(X)
+
+            # Extract cluster themes
+            themes = []
+            for cluster_id in range(n_clusters):
+                # Get documents in this cluster
+                cluster_mask = (clusters == cluster_id)
+                cluster_doc_indices = [i for i, mask in enumerate(cluster_mask) if mask]
+
+                if not cluster_doc_indices:
+                    continue
+
+                # Extract documents and sources for this cluster
+                cluster_texts = [doc_texts[i] for i in cluster_doc_indices]
+                cluster_sources = [doc_sources[i] for i in cluster_doc_indices]
+
+                # Extract keywords for this cluster
+                keywords = extract_keywords(
+                    self.config,
+                    cluster_texts,
+                    language=primary_language,
+                    top_n=5,
+                    stopwords=self.stopwords[primary_language] if primary_language in self.stopwords else None
+                )
+
+                # Create theme
+                theme_name = f"Cluster: {', '.join(keywords[:3])}"
+
+                themes.append({
+                    "name": theme_name,
+                    "score": len(cluster_doc_indices) / len(doc_texts),
+                    "keywords": keywords,
+                    "documents": cluster_sources,
+                    "document_count": len(cluster_sources)
+                })
+
+            # Sort clusters by size
+            themes.sort(key=lambda x: x["document_count"], reverse=True)
+
+            return {
+                "method": "Document Clustering",
+                "clusters": n_clusters,
+                "themes": themes
+            }
+
+        except Exception as e:
+            debug(self.config, f"Error in document clustering: {str(e)}")
+            import traceback
+            debug(self.config, traceback.format_exc())
+
+            return {
+                "method": "Document Clustering",
+                "error": str(e),
+                "themes": [{"name": "Clustering Error", "score": 0, "documents": []}]
+            }
+
+    def _analyze_lda_topics(self, doc_contents: List[Dict]) -> Dict[str, Any]:
+        """
+        Perform Latent Dirichlet Allocation topic modeling
+
+        Args:
+            doc_contents (List[Dict]): Documents to analyze
+
+        Returns:
+            Dict: LDA topic analysis results
+        """
+        if not SKLEARN_AVAILABLE:
+            return {"method": "Latent Dirichlet Allocation", "error": "scikit-learn not available", "themes": []}
+
+        try:
+            # Prepare documents
+            doc_texts = [doc["processed_content"] for doc in doc_contents]
+            doc_sources = [doc["source"] for doc in doc_contents]
+
+            # Determine primary language
+            languages = [doc["language"] for doc in doc_contents]
+            primary_language = Counter(languages).most_common(1)[0][0]
+
+            # Configure vectorization
+            vectorizer = configure_vectorizer(
+                self.config,
+                len(doc_texts),
+                primary_language,
+                self.stopwords[primary_language] if primary_language in self.stopwords else None
+            )
+
+            # Create document-term matrix
+            doc_term_matrix = vectorizer.fit_transform(doc_texts)
+
+            # Determine number of topics
+            n_topics = min(max(5, len(doc_contents) // 3), 10)
+
+            # Apply LDA
+            lda_model = LatentDirichletAllocation(
+                n_components=n_topics,
+                random_state=42,
+                max_iter=10
+            )
+            lda_output = lda_model.fit_transform(doc_term_matrix)
+
+            # Extract topics
+            feature_names = vectorizer.get_feature_names_out()
+            topics = []
+
+            for topic_idx, topic in enumerate(lda_model.components_):
+                # Get top words
+                top_words_idx = topic.argsort()[:-10 - 1:-1]
+                top_words = [feature_names[i] for i in top_words_idx]
+
+                # Calculate topic contribution
+                topic_contribution = lda_output[:, topic_idx]
+                top_docs_idx = topic_contribution.argsort()[::-1][:5]
+                top_docs = [doc_sources[i] for i in top_docs_idx]
+
+                # Generate topic description with LLM if available
+                description = None
+                if self.llm_connector:
+                    description = self._generate_topic_description(top_words)
+
+                topics.append({
+                    "name": f"Topic {topic_idx + 1}: {', '.join(top_words[:3])}",
+                    "keywords": top_words,
+                    "documents": top_docs,
+                    "document_count": len([i for i, score in enumerate(topic_contribution) if score > 0.1]),
+                    "score": float(topic.max() / topic.sum()),  # Convert to Python float
+                    "description": description
+                })
+
+            return {
+                "method": "Latent Dirichlet Allocation",
+                "language": primary_language,
+                "topics": topics
+            }
+
+        except Exception as e:
+            debug(self.config, f"LDA Topic Modeling Error: {str(e)}")
+            import traceback
+            debug(self.config, traceback.format_exc())
+            return {"method": "Latent Dirichlet Allocation", "error": str(e), "themes": []}
+
+    def _analyze_nmf_topics(self, doc_contents: List[Dict]) -> Dict[str, Any]:
+        """
+        Perform Non-Negative Matrix Factorization topic modeling
+
+        Args:
+            doc_contents (List[Dict]): Documents to analyze
+
+        Returns:
+            Dict: NMF topic analysis results
+        """
+        if not SKLEARN_AVAILABLE:
+            return {"method": "Non-Negative Matrix Factorization", "error": "scikit-learn not available", "themes": []}
+
+        try:
+            # Prepare documents
+            doc_texts = [doc["processed_content"] for doc in doc_contents]
+            doc_sources = [doc["source"] for doc in doc_contents]
+
+            # Determine primary language
+            languages = [doc["language"] for doc in doc_contents]
+            primary_language = Counter(languages).most_common(1)[0][0]
+
+            # Configure vectorization
+            vectorizer = configure_vectorizer(
+                self.config,
+                len(doc_texts),
+                primary_language,
+                self.stopwords[primary_language] if primary_language in self.stopwords else None
+            )
+
+            # Create document-term matrix
+            doc_term_matrix = vectorizer.fit_transform(doc_texts)
+
+            # Determine number of topics dynamically
+            n_topics = min(max(5, len(doc_contents) // 3), 10)
+
+            # Import NMF here to avoid confusion with the optional imports
+            from sklearn.decomposition import NMF
+
+            # Initialize NMF model
+            nmf_model = NMF(
+                n_components=n_topics,
+                random_state=42,
+                max_iter=200
+            )
+
+            # Fit the model
+            nmf_output = nmf_model.fit_transform(doc_term_matrix)
+
+            # Extract feature names
+            feature_names = vectorizer.get_feature_names_out()
+            topics = []
+
+            for topic_idx, topic in enumerate(nmf_model.components_):
+                # Get top words for this topic
+                top_words_idx = topic.argsort()[:-10 - 1:-1]
+                top_words = [feature_names[i] for i in top_words_idx]
+
+                # Calculate topic contribution to documents
+                topic_contribution = nmf_output[:, topic_idx]
+                top_docs_idx = topic_contribution.argsort()[::-1][:5]
+                top_docs = [doc_sources[i] for i in top_docs_idx]
+
+                # Generate topic summary using LLM if available
+                description = None
+                if self.llm_connector:
+                    description = self._generate_topic_description(top_words)
+
+                # Create topic representation
+                topics.append({
+                    "name": f"Topic {topic_idx + 1}: {', '.join(top_words[:3])}",
+                    "keywords": top_words,
+                    "documents": top_docs,
+                    "document_count": len([i for i, score in enumerate(topic_contribution) if score > 0.1]),
+                    "score": round(float(topic.max() / topic.sum()), 2),
+                    "description": description
+                })
+
+            return {
+                "method": "Non-Negative Matrix Factorization",
+                "language": primary_language,
+                "topics": topics
+            }
+
+        except Exception as e:
+            debug(self.config, f"NMF Topic Modeling Error: {str(e)}")
+            import traceback
+            debug(self.config, traceback.format_exc())
+            return {"method": "Non-Negative Matrix Factorization", "error": str(e), "themes": []}
+
+    def _generate_topic_description(self, keywords):
+        """Generate a description for a topic using LLM"""
+        if not self.llm_connector:
+            return None
+
+        try:
+            prompt = f"""Analyze these keywords and provide a concise topic description (1-2 sentences):
+            Keywords: {', '.join(keywords[:10])}
+
+            What conceptual area do these words represent? Please be specific but concise."""
+
+            model = self.config.get('llm.default_model', 'mistral')
+            description = self.llm_connector.generate(
+                prompt,
+                model=model,
+                max_tokens=100,
+                temperature=0.3  # Lower temperature for more precision
+            )
+            return description.strip()
+        except Exception as e:
+            debug(self.config, f"Error generating topic description: {str(e)}")
+            return None
+
+    def _output_results(self, workspace: str, results: Dict, method: str):
+        """
+        Output theme analysis results using output manager with improved keyword handling
+
+        Args:
+            workspace (str): Workspace name
+            results (Dict): Analysis results
+            method (str): Analysis method
+        """
+        # Use output_manager for formatted display
+        self.output_manager.print_formatted('header', "THEME ANALYSIS RESULTS")
+
+        # Display results for each method
+        for m, result in results.items():
+            self.output_manager.print_formatted('subheader', result.get('method', m))
+
+            # Display method-specific statistics
+            if 'entity_count' in result:
+                self.output_manager.print_formatted('kv', result['entity_count'], key="Total entities")
+            if 'variance_explained' in result:
+                self.output_manager.print_formatted('kv', f"{result['variance_explained']}%", key="Variance explained")
+            if 'clusters' in result:
+                self.output_manager.print_formatted('kv', result['clusters'], key="Number of clusters")
+            if 'error' in result:
+                self.output_manager.print_formatted('feedback', f"Error: {result['error']}", success=False)
+
+            # Display themes
+            themes = result.get('themes', [])
+            if not themes:
+                self.output_manager.print_formatted('feedback', "No themes identified", success=False)
+                continue
+
+            print(f"\nFound {len(themes)} themes/keywords")
+
+            for theme in themes:
+                # Different handling based on theme type
+                if 'keyword' in theme:
+                    # This is a keyword theme from content keyword analysis
+                    self.output_manager.print_formatted('mini_header', f"Keyword: {theme['keyword']}")
+
+                    if 'score' in theme:
+                        self.output_manager.print_formatted('kv', f"{theme['score']:.4f}", key="Score")
+
+                    if 'documents' in theme:
+                        self.output_manager.print_formatted('kv', theme['documents'], key="Documents")
+
+                    # Show documents list if available
+                    if 'documents_list' in theme and isinstance(theme['documents_list'], list):
+                        print("\n  Document sources:")
+                        for doc in theme['documents_list'][:5]:
+                            self.output_manager.print_formatted('list', str(doc), indent=4)
+                        if len(theme['documents_list']) > 5:
+                            print(f"  ... and {len(theme['documents_list']) - 5} more")
+
+                elif 'name' in theme:
+                    # This is a standard theme
+                    self.output_manager.print_formatted('mini_header', theme['name'])
+
+                    # Keywords
+                    if 'keywords' in theme:
+                        self.output_manager.print_formatted('kv', ', '.join(theme['keywords']), key="Keywords")
+
+                    # Various metrics
+                    metrics = [
+                        ('score', 'Score'),
+                        ('frequency', 'Frequency'),
+                        ('centrality', 'Centrality'),
+                        ('document_count', 'Documents')
+                    ]
+                    for key, label in metrics:
+                        if key in theme:
+                            self.output_manager.print_formatted('kv', theme[key], key=label)
+
+                    # Documents
+                    if 'documents' in theme and isinstance(theme['documents'], list):
+                        print("\n  Document files:")
+                        for doc in theme['documents'][:5]:
+                            self.output_manager.print_formatted('list', str(doc), indent=4)
+                        if len(theme['documents']) > 5:
+                            print(f"  ... and {len(theme['documents']) - 5} more")
+
+                    # Descriptions
+                    if 'description' in theme and theme['description']:
+                        print("\n  Description:")
+                        print(f"  {theme['description']}")
+
+        # Save results to file
+        output_format = self.config.get('system.output_format', 'txt')
+        filepath = self.output_manager.save_theme_analysis(workspace, results, method, output_format)
+
+        # Show success message
+        self.output_manager.print_formatted('feedback', f"Results saved to: {filepath}")
