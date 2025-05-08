@@ -2,17 +2,25 @@
 Theme analysis module with enhanced content-based processing
 """
 
+
 import os
 import sys
 import io
 import numpy as np
 from collections import Counter, defaultdict
 from typing import Dict, List, Any, Tuple
+from core.engine.logging import warning
 
-import networkx as nx
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.decomposition import TruncatedSVD
-from sklearn.cluster import KMeans
+try:
+    import networkx as nx
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.decomposition import TruncatedSVD, LatentDirichletAllocation
+    from sklearn.cluster import KMeans
+    SKLEARN_AVAILABLE = True
+except ImportError:
+    SKLEARN_AVAILABLE = False
+    warning("scikit-learn not available, falling back to simplified theme analysis")
+
 
 from core.engine.keywords import extract_keywords, configure_vectorizer, extract_entities_from_text
 
@@ -24,19 +32,6 @@ from core.language.tokenizer import ChineseTokenizer, JIEBA_AVAILABLE
 from core.engine.common import safe_execute
 from core.language.spacy_tokenizer import get_spacy_model, SPACY_AVAILABLE
 from collections import defaultdict
-
-
-try:
-    original_stdout = sys.stdout
-    sys.stdout = io.StringIO()  # Redirect to string buffer
-
-    # Restore stdout
-    sys.stdout = original_stdout
-
-    JIEBA_AVAILABLE = True
-except ImportError:
-    warning("jieba not available. Chinese text processing will be limited.")
-    jieba = None
 
 try:
     from community import best_partition
