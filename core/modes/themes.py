@@ -23,6 +23,7 @@ from core.engine.output import OutputManager
 from core.language.processor import TextProcessor
 from core.engine.common import safe_execute
 from core.language.spacy_tokenizer import get_spacy_model, SPACY_AVAILABLE
+from core.engine.dependencies import require, is_available
 
 try:
     from community import best_partition
@@ -42,9 +43,16 @@ class ThemeAnalyzer:
         # Check if spaCy should be used
         self.use_spacy = SPACY_AVAILABLE and config.get('system.use_spacy', True)
 
+        # Add dependency check for scikit-learn
+        self.sklearn_available = require('sklearn', 'theme analysis')
+
         # Initialize stopwords
         self.stopwords = {}
         self._prepare_stopwords()
+
+        # Store language-specific stopwords in accessible attributes for convenience
+        self.english_stopwords = self.stopwords.get('en', set())
+        self.chinese_stopwords = self.stopwords.get('zh', set())
 
         # Initialize LLM connector factory
         try:
@@ -131,6 +139,19 @@ class ThemeAnalyzer:
             print(f"Invalid method: {method}. Must be one of: {', '.join(valid_methods)}")
             return {}
 
+        # Check if scikit-learn is available for methods that need it
+        sklearn_methods = ['lsa', 'cluster', 'lda', 'nmf']
+        if method in sklearn_methods or method == 'all':
+            if not require('sklearn', 'theme analysis'):
+                if method != 'all':
+                    print(f"Method '{method}' requires scikit-learn, which is not available.")
+                    return {
+                        "method": f"{method} analysis",
+                        "error": "scikit-learn not available",
+                        "themes": []
+                    }
+                print("Some methods require scikit-learn, which is not available. These will be skipped.")
+
         # Load documents
         docs = self.storage_manager.get_documents(workspace)
         if not docs:
@@ -167,12 +188,22 @@ class ThemeAnalyzer:
         # Run selected methods
         for analysis_method, handler in all_methods.items():
             if method in ['all', analysis_method]:
+                # Skip scikit-learn based methods if not available
+                if analysis_method in sklearn_methods and not self.sklearn_available and method == 'all':
+                    info(f"Skipping {analysis_method} analysis - scikit-learn not available")
+                    continue
+
                 try:
                     results[analysis_method] = handler(doc_contents)
                 except Exception as e:
                     error(f"Error in {analysis_method} analysis: {str(e)}")
                     import traceback
                     debug(self.config, traceback.format_exc())
+                    results[analysis_method] = {
+                        "method": f"{analysis_method.capitalize()} Analysis",
+                        "error": str(e),
+                        "themes": []
+                    }
 
         # Output results
         self._output_results(workspace, results, method)
@@ -233,7 +264,7 @@ class ThemeAnalyzer:
 
         for lang, count in language_counts.most_common():
             percentage = (count / total) * 100
-            print(f"  {lang}: {count} documents ({percentage:.1f}%)"
+            print(f"  {lang}: {count} documents ({percentage:.1f}%)")
 
     def _analyze_content_keywords(self, doc_contents: List[Dict]) -> Dict[str, Any]:
         """
@@ -336,6 +367,14 @@ class ThemeAnalyzer:
         is_chinese = primary_language == "zh"
 
         try:
+            # Check for required dependencies
+            if not require('sklearn', 'cosine similarity calculation') or not require('networkx', 'network analysis'):
+                return {
+                    "method": "Content Network Analysis",
+                    "error": "Required dependencies not available",
+                    "themes": []
+                }
+
             # Configure vectorizer based on language
             vectorizer = configure_vectorizer(
                 self.config,
@@ -352,6 +391,7 @@ class ThemeAnalyzer:
             similarity_matrix = cosine_similarity(tfidf_matrix)
 
             # Build document similarity network
+            import networkx as nx
             doc_network = nx.Graph()
 
             # Add nodes for documents
@@ -380,8 +420,16 @@ class ThemeAnalyzer:
 
             # Detect document communities
             try:
-                # Try Louvain method first
-                partition = best_partition(doc_network)
+                # Try Louvain method if available
+                if require('community', 'community detection'):
+                    from community import best_partition
+                    partition = best_partition(doc_network)
+                else:
+                    # Fallback to connected components
+                    partition = {}
+                    for i, component in enumerate(nx.connected_components(doc_network)):
+                        for node in component:
+                            partition[node] = i
             except Exception:
                 # Fallback to connected components
                 partition = {}
@@ -586,70 +634,20 @@ class ThemeAnalyzer:
         primary_language = Counter(languages).most_common(1)[0][0]
 
         try:
+            # Check if scikit-learn is available
+            if not require('sklearn', 'latent semantic analysis'):
+                return {
+                    "method": "Latent Semantic Analysis",
+                    "error": "scikit-learn not available",
+                    "themes": []
+                }
+
             # Configure vectorizer based on language
             vectorizer = configure_vectorizer(
                 self.config,
                 len(doc_texts),
                 primary_language,
                 self.stopwords[primary_language] if primary_language in self.stopwords else None
-            )
-
-            # Create document-term matrix
-            doc_term_matrix = vectorizer.fit_transform(doc_texts)
-
-            # Determine number of topics dynamically
-            n_topics = min(max(5, len(doc_contents) // 3), 10)
-
-            # Initialize NMF model
-            nmf_model = NMF(
-                n_components=n_topics,
-                random_state=42,
-                max_iter=200
-            )
-
-            # Fit the model
-            nmf_output = nmf_model.fit_transform(doc_term_matrix)
-
-            # Extract feature names
-            feature_names = vectorizer.get_feature_names_out()
-            topics = []
-
-            for topic_idx, topic in enumerate(nmf_model.components_):
-                # Get top words for this topic
-                top_words_idx = topic.argsort()[:-10 - 1:-1]
-                top_words = [feature_names[i] for i in top_words_idx]
-
-                # Calculate topic contribution to documents
-                topic_contribution = nmf_output[:, topic_idx]
-                top_docs_idx = topic_contribution.argsort()[::-1][:5]
-                top_docs = [doc_sources[i] for i in top_docs_idx]
-
-                # Generate topic summary using LLM if available
-                description = None
-                if self.llm_connector:
-                    description = self._generate_topic_description(top_words)
-
-                # Create topic representation
-                topics.append({
-                    "name": f"Topic {topic_idx + 1}: {', '.join(top_words[:3])}",
-                    "keywords": top_words,
-                    "documents": top_docs,
-                    "document_count": len([i for i, score in enumerate(topic_contribution) if score > 0.1]),
-                    "score": round(float(topic.max() / topic.sum()), 2),
-                    "description": description
-                })
-
-            return {
-                "method": "Non-Negative Matrix Factorization",
-                "language": primary_language,
-                "topics": topics
-            }
-
-        except Exception as e:
-            debug(self.config, f"NMF Topic Modeling Error: {str(e)}")
-            import traceback
-            debug(self.config, traceback.format_exc())
-            return {"method": "Non-Negative Matrix Factorization", "error": str(e), "themes": []}.stopwords else None
             )
 
             # Transform documents to TF-IDF space
@@ -661,6 +659,7 @@ class ThemeAnalyzer:
             n_components = max(1, n_components)
 
             # Apply SVD to find latent semantic dimensions
+            from sklearn.decomposition import TruncatedSVD
             svd = TruncatedSVD(n_components=n_components)
             X_svd = svd.fit_transform(X)
 
@@ -739,6 +738,14 @@ class ThemeAnalyzer:
         primary_language = Counter(languages).most_common(1)[0][0]
 
         try:
+            # Check if scikit-learn is available
+            if not require('sklearn', 'document clustering'):
+                return {
+                    "method": "Document Clustering",
+                    "error": "scikit-learn not available",
+                    "themes": []
+                }
+
             # Configure vectorizer based on language
             vectorizer = configure_vectorizer(
                 self.config,
@@ -756,6 +763,7 @@ class ThemeAnalyzer:
             n_clusters = min(max_clusters, n_docs - 1)
 
             # Perform clustering
+            from sklearn.cluster import KMeans
             kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
             clusters = kmeans.fit_predict(X)
 
@@ -824,6 +832,14 @@ class ThemeAnalyzer:
             Dict: LDA topic analysis results
         """
         try:
+            # Check if scikit-learn is available
+            if not require('sklearn', 'LDA topic modeling'):
+                return {
+                    "method": "Latent Dirichlet Allocation",
+                    "error": "scikit-learn not available",
+                    "themes": []
+                }
+
             # Prepare documents
             doc_texts = [doc["processed_content"] for doc in doc_contents]
             doc_sources = [doc["source"] for doc in doc_contents]
@@ -847,6 +863,7 @@ class ThemeAnalyzer:
             n_topics = min(max(5, len(doc_contents) // 3), 10)
 
             # Apply LDA
+            from sklearn.decomposition import LatentDirichletAllocation
             lda_model = LatentDirichletAllocation(
                 n_components=n_topics,
                 random_state=42,
@@ -904,8 +921,13 @@ class ThemeAnalyzer:
         Returns:
             Dict: NMF topic analysis results
         """
-        if not SKLEARN_AVAILABLE:
-            return {"method": "Non-Negative Matrix Factorization", "error": "scikit-learn not available", "themes": []}
+        # Check if scikit-learn is available
+        if not require('sklearn', 'NMF topic modeling'):
+            return {
+                "method": "Non-Negative Matrix Factorization",
+                "error": "scikit-learn not available",
+                "themes": []
+            }
 
         try:
             # Prepare documents
@@ -1049,3 +1071,362 @@ class ThemeAnalyzer:
         except Exception as e:
             debug(self.config, f"Error generating topic description: {str(e)}")
             return None
+
+    def _extract_chinese_keywords(self, docs: List[Dict]) -> List[Dict]:
+        """
+        Extract keywords from Chinese document content using spaCy
+
+        Args:
+            docs (List[Dict]): Chinese documents
+
+        Returns:
+            List[Dict]: Extracted keywords
+        """
+        # Log extraction attempt
+        print(f"Extracting keywords from {len(docs)} Chinese documents")
+
+        # Check if documents contain content
+        if not docs or all(not doc.get("content") for doc in docs):
+            print("No valid content found in Chinese documents")
+            return []
+
+        try:
+            # Get spaCy model if available
+            if self.use_spacy:
+                from core.language.spacy_tokenizer import get_spacy_model
+                nlp = get_spacy_model('zh')
+
+                if nlp:
+                    print("Using spaCy for Chinese keyword extraction")
+
+                    # Extract all texts for processing
+                    all_texts = [doc["content"] for doc in docs if doc.get("content")]
+                    combined_text = "".join(all_texts)
+
+                    # Process with spaCy
+                    processed_doc = nlp(combined_text[:50000])  # Limit size for memory
+
+                    # Extract noun phrases and entities as potential keywords
+                    keywords = []
+
+                    # Track frequencies
+                    token_freq = Counter()
+
+                    # Count token frequencies, focusing on nouns and proper nouns
+                    for token in processed_doc:
+                        if not token.is_stop and not token.is_punct and len(token.text) >= 2:
+                            # Give higher weight to nouns and named entities
+                            if token.pos_ in ('NOUN', 'PROPN'):
+                                token_freq[token.text] += 2
+                            else:
+                                token_freq[token.text] += 1
+
+                    # Add named entities with high weight
+                    for ent in processed_doc.ents:
+                        if len(ent.text) >= 2:
+                            token_freq[ent.text] += 3
+
+                    # Extract top tokens by frequency
+                    for token, count in token_freq.most_common(30):
+                        # Count document occurrences
+                        doc_count = sum(1 for doc in docs if token in doc.get("content", ""))
+
+                        # Skip tokens that appear in too few documents
+                        if doc_count < 2 and len(docs) > 3:
+                            continue
+
+                        # Calculate score
+                        score = count / sum(token_freq.values()) if token_freq else 0
+
+                        # Add to keywords
+                        keywords.append({
+                            "keyword": token,
+                            "score": float(score),
+                            "documents": doc_count,
+                            "doc_sources": [doc["source"] for doc in docs if token in doc.get("content", "")]
+                        })
+
+                    print(f"Extracted {len(keywords)} keywords using spaCy")
+                    return keywords
+
+            # Fall back to character-based n-gram extraction
+            # Count frequencies of character and word n-grams
+            character_counts = Counter()
+            bigram_counts = Counter()
+            trigram_counts = Counter()
+
+            # Document sources for tracking
+            doc_sources = [doc["source"] for doc in docs]
+
+            # Count frequencies
+            for doc in docs:
+                text = doc.get("content", "")
+                if not text:
+                    continue
+
+                # Count characters
+                character_counts.update(text)
+
+                # Count n-grams
+                for i in range(len(text) - 1):
+                    # Bigrams
+                    if i < len(text) - 1:
+                        bigram = text[i:i + 2]
+                        bigram_counts[bigram] += 1
+
+                    # Trigrams
+                    if i < len(text) - 2:
+                        trigram = text[i:i + 3]
+                        trigram_counts[trigram] += 1
+
+            # Track document sources for each n-gram
+            bigram_doc_sources = defaultdict(list)
+            trigram_doc_sources = defaultdict(list)
+
+            for doc_idx, doc in enumerate(docs):
+                text = doc.get("content", "")
+                if not text:
+                    continue
+
+                # Track bigrams
+                for i in range(len(text) - 1):
+                    if i < len(text) - 1:
+                        bigram = text[i:i + 2]
+                        bigram_doc_sources[bigram].append(doc_sources[doc_idx])
+
+                # Track trigrams
+                for i in range(len(text) - 2):
+                    if i < len(text) - 2:
+                        trigram = text[i:i + 3]
+                        trigram_doc_sources[trigram].append(doc_sources[doc_idx])
+
+            # Combine and sort keywords
+            keywords = []
+
+            # Add top bigrams
+            for bigram, count in bigram_counts.most_common(15):
+                if len(bigram) < 2 or count < 2:
+                    continue
+
+                # Check if bigram is in stopwords
+                if bigram in self.stopwords.get('zh', set()):
+                    continue
+
+                score = count / sum(bigram_counts.values()) if bigram_counts else 0
+                doc_sources_list = list(set(bigram_doc_sources[bigram]))
+
+                keywords.append({
+                    "keyword": bigram,
+                    "score": float(score),  # Ensure we use a regular Python float
+                    "documents": len(doc_sources_list),
+                    "doc_sources": doc_sources_list
+                })
+
+            # Add top trigrams
+            for trigram, count in trigram_counts.most_common(15):
+                if len(trigram) < 3 or count < 2:
+                    continue
+
+                # Skip trigrams that are entirely in stopwords
+                if all(char in self.stopwords.get('zh', set()) for char in trigram):
+                    continue
+
+                score = count / sum(trigram_counts.values()) if trigram_counts else 0
+                doc_sources_list = list(set(trigram_doc_sources[trigram]))
+
+                keywords.append({
+                    "keyword": trigram,
+                    "score": float(score),  # Ensure we use a regular Python float
+                    "documents": len(doc_sources_list),
+                    "doc_sources": doc_sources_list
+                })
+
+            print(f"Found {len(keywords)} keywords in Chinese documents (bigrams and trigrams)")
+
+            # Sort keywords by score
+            keywords.sort(key=lambda x: x["score"], reverse=True)
+
+            # Return top keywords
+            return keywords[:30]  # Return more keywords to ensure we have enough after filtering
+
+        except Exception as e:
+            print(f"Error extracting Chinese keywords: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
+            return []
+
+    def _extract_english_keywords(self, docs: List[Dict]) -> List[Dict]:
+        """
+        Extract keywords from English document content with improved error handling
+
+        Args:
+            docs (List[Dict]): English documents
+
+        Returns:
+            List[Dict]: Extracted keywords
+        """
+        # Extract document texts
+        doc_texts = [doc.get("content", "") for doc in docs]
+        doc_sources = [doc.get("source", "") for doc in docs]
+
+        # Log extraction attempt
+        print(f"Extracting keywords from {len(doc_texts)} English documents")
+
+        # Check if documents contain content
+        if not doc_texts or all(not text for text in doc_texts):
+            print("No valid content found in English documents")
+            return []
+
+        # Try spaCy-based extraction first
+        if self.use_spacy:
+            try:
+                from core.language.spacy_tokenizer import get_spacy_model
+                nlp = get_spacy_model('en')
+
+                if nlp:
+                    print("Using spaCy for English keyword extraction")
+
+                    # Create mapping to store document sources for each keyword
+                    keyword_doc_mapping = defaultdict(list)
+
+                    # Combine texts for efficient processing, with limits to avoid memory issues
+                    combined_text = " ".join(doc_texts)
+                    if len(combined_text) > 100000:
+                        combined_text = combined_text[:100000]  # Reasonable limit
+
+                    # Process with spaCy
+                    doc = nlp(combined_text)
+
+                    # Count noun phrases, entities, and important tokens
+                    counts = Counter()
+
+                    # Add noun chunks (noun phrases)
+                    for chunk in doc.noun_chunks:
+                        # Clean up the phrase
+                        clean_phrase = " ".join([token.lemma_ for token in chunk
+                                                 if not token.is_stop and not token.is_punct])
+                        if clean_phrase and len(clean_phrase) > 3:
+                            counts[clean_phrase] += 2  # Give more weight to noun phrases
+
+                    # Add named entities
+                    for ent in doc.ents:
+                        if len(ent.text) > 2:
+                            counts[ent.text] += 3  # Give even more weight to entities
+
+                    # Add important tokens (nouns, verbs, adjectives)
+                    for token in doc:
+                        if token.pos_ in ['NOUN', 'PROPN', 'VERB', 'ADJ'] and not token.is_stop:
+                            counts[token.lemma_] += 1
+
+                    # Calculate document occurrence for each term
+                    for term in counts:
+                        for doc_idx, doc_text in enumerate(doc_texts):
+                            if doc_text and term.lower() in doc_text.lower():
+                                keyword_doc_mapping[term].append(doc_sources[doc_idx])
+
+                    # Create keyword objects
+                    keywords = []
+                    for term, count in counts.most_common(50):  # Get more candidates
+                        # Skip very short terms and terms in too few documents
+                        if len(term) < 3:
+                            continue
+
+                        doc_sources_list = list(set(keyword_doc_mapping[term]))
+
+                        # For small document sets, accept terms in just one document
+                        min_docs = 2 if len(docs) > 4 else 1
+                        if len(doc_sources_list) < min_docs:
+                            continue
+
+                        # Calculate term score based on frequency and document coverage
+                        score = count / sum(counts.values()) if counts else 0
+
+                        keywords.append({
+                            "keyword": term,
+                            "score": float(score),
+                            "documents": len(doc_sources_list),
+                            "doc_sources": doc_sources_list
+                        })
+
+                    # Keep top keywords
+                    return keywords[:30]
+            except Exception as e:
+                print(f"Error in spaCy keyword extraction: {str(e)}")
+                # Fall back to TF-IDF
+
+        # Fall back to TF-IDF based extraction if spaCy unavailable or errors
+        try:
+            # Check if scikit-learn is available
+            if not require('sklearn', 'TF-IDF keyword extraction'):
+                print("scikit-learn not available for TF-IDF keyword extraction")
+                # Return minimal results rather than nothing
+                return [{"keyword": "extraction-unavailable", "score": 0.0, "documents": 0, "doc_sources": []}]
+
+            # Use TF-IDF vectorizer to identify important terms
+            from sklearn.feature_extraction.text import TfidfVectorizer
+
+            vectorizer = TfidfVectorizer(
+                min_df=1,  # Lower min_df for small document sets
+                max_df=0.95,
+                stop_words="english"
+            )
+
+            # Fit TF-IDF on documents
+            tfidf_matrix = vectorizer.fit_transform(doc_texts)
+
+            # Get feature names
+            feature_names = vectorizer.get_feature_names_out()
+
+            print(f"Extracted {len(feature_names)} unique terms from English documents")
+
+            # Calculate average TF-IDF scores across documents
+            avg_scores = np.asarray(tfidf_matrix.mean(axis=0)).ravel()
+
+            # Count documents containing each term
+            term_doc_counts = defaultdict(int)
+            keyword_doc_mapping = defaultdict(list)
+
+            for doc_id, doc_text in enumerate(doc_texts):
+                if not doc_text:
+                    continue
+
+                # Check each term in feature names
+                for term in feature_names:
+                    if term in doc_text.lower():
+                        term_doc_counts[term] += 1
+                        keyword_doc_mapping[term].append(doc_sources[doc_id])
+
+            # Create keyword list
+            keywords = []
+            for i, term in enumerate(feature_names):
+                # Skip very short terms
+                if len(term) < 3:
+                    continue
+
+                score = avg_scores[i]
+                doc_count = term_doc_counts.get(term, 0)
+
+                # Only include terms that appear in at least one document
+                if doc_count > 0:
+                    keywords.append({
+                        "keyword": term,
+                        "score": float(score),  # Convert numpy float to Python float
+                        "documents": doc_count,
+                        "doc_sources": keyword_doc_mapping.get(term, [])
+                    })
+
+            # Sort by score and document count
+            keywords.sort(key=lambda x: (x["score"], x["documents"]), reverse=True)
+
+            print(f"Found {len(keywords)} keywords in English documents")
+
+            # Limit to top keywords
+            return keywords[:30]  # Return more keywords to ensure we have enough after filtering
+
+        except Exception as e:
+            print(f"Error extracting English keywords: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
+            return []
+
+
