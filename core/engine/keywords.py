@@ -91,7 +91,6 @@ def extract_noun_phrases(config, texts, language="en", top_n=10, stopwords=None)
         trace(traceback.format_exc())
         return []
 
-
 def extract_entities_from_text(config, texts, language="en", top_n=20, stopwords=None):
     """
     Extract named entities from text using spaCy
@@ -123,6 +122,11 @@ def extract_entities_from_text(config, texts, language="en", top_n=20, stopwords
             warning(f"No spaCy model available for {language}")
             return []
 
+        # Handle Chinese specifically - use custom approach for Chinese
+        if language == 'zh':
+            return _extract_chinese_entities(config, texts, top_n, stopwords, nlp)
+
+        # For non-Chinese languages, use standard approach
         # Combine texts with a length limit to avoid memory issues
         combined_text = " ".join(texts)
         if len(combined_text) > 100000:  # Limit text length to avoid memory issues
@@ -170,6 +174,112 @@ def extract_entities_from_text(config, texts, language="en", top_n=20, stopwords
         trace(traceback.format_exc())
         return []
 
+def _extract_chinese_entities(config, texts, top_n=20, stopwords=None, nlp=None):
+    """
+    Extract entities from Chinese text using a combined approach
+    of spaCy and specialized Chinese text processing
+
+    Args:
+        config: Configuration object
+        texts (List[str]): Collection of Chinese texts
+        top_n (int): Number of entities to extract
+        stopwords (Set[str]): Stopwords to filter out
+        nlp: Optional spaCy Chinese model
+
+    Returns:
+        List[Dict]: Extracted entities with counts
+    """
+    debug(config, f"Extracting Chinese entities from {len(texts)} texts")
+
+    # Prepare to extract various types of entities
+    entity_data = []
+    entity_counts = Counter()
+    entity_types = {}
+
+    # Process each text individually for better performance with Chinese
+    for text in texts:
+        # Limit text length to avoid memory issues
+        if len(text) > 10000:
+            text = text[:10000]
+
+        # Process with spaCy
+        doc = nlp(text)
+
+        # Extract named entities
+        for ent in doc.ents:
+            # Skip very short entities and stopwords
+            if len(ent.text) < 2 or (stopwords and ent.text.lower() in stopwords):
+                continue
+
+            entity_text = ent.text.strip()
+            entity_counts[entity_text] += 1
+            entity_types[entity_text] = ent.label_
+
+        # For Chinese, also extract noun phrases as entities can be missed
+        for chunk in doc.noun_chunks:
+            # Skip very short chunks
+            if len(chunk.text) < 2:
+                continue
+
+            # Skip chunks that are entirely stopwords
+            if stopwords and all(token.text.lower() in stopwords for token in chunk):
+                continue
+
+            entity_text = chunk.text.strip()
+            entity_counts[entity_text] += 1
+            entity_types[entity_text] = "NOUN_PHRASE"
+
+    # For Chinese, also identify potential organization/location names by patterns
+    # These patterns help identify Chinese organizations that might be missed by the model
+    patterns = [
+        r'[\u4e00-\u9fff]{1,4}(公司|集团|银行|学院|大学|协会|中心|部门|机构)',  # Company/org patterns
+        r'[\u4e00-\u9fff]{1,4}(省|市|县|区|镇)',  # Location patterns
+        r'[\u4e00-\u9fff]{2,6}(局|部|委员会|处)',  # Government org patterns
+    ]
+
+    for text in texts:
+        for pattern in patterns:
+            matches = re.findall(pattern, text)
+            for match in matches:
+                # Find the full match
+                full_matches = re.findall(f"[\u4e00-\u9fff]{{1,6}}{match}", text)
+                for full_match in full_matches:
+                    if len(full_match) >= 2 and not (stopwords and full_match in stopwords):
+                        entity_counts[full_match] += 1
+                        entity_types[full_match] = "ORG" if "公司" in match or "集团" in match else "LOC"
+
+    # Convert to list with details
+    for entity_text, count in entity_counts.most_common(top_n * 2):  # Get more candidates for filtering
+        entity_data.append({
+            'text': entity_text,
+            'count': count,
+            'type': entity_types.get(entity_text, "UNKNOWN")
+        })
+
+    # Filter and ensure we have a diverse set of entities
+    filtered_entities = []
+
+    # First add the high frequency entities
+    high_freq = [e for e in entity_data if e['count'] > 1]
+    filtered_entities.extend(high_freq[:int(top_n * 0.7)])  # Use 70% of slots for high frequency
+
+    # Then add entities by type to ensure diversity
+    remaining_slots = top_n - len(filtered_entities)
+    if remaining_slots > 0:
+        # Group by type
+        by_type = defaultdict(list)
+        for e in entity_data:
+            if e not in filtered_entities:
+                by_type[e['type']].append(e)
+
+        # Add some from each type
+        for type_name, entities in by_type.items():
+            # Take up to 2 entities of each remaining type
+            for e in entities[:2]:
+                if len(filtered_entities) < top_n:
+                    filtered_entities.append(e)
+
+    return filtered_entities
 
 def extract_key_phrases(config, texts, language="en", top_n=10, stopwords=None):
     """
@@ -342,162 +452,6 @@ def configure_vectorizer(config, doc_count, language=None, stopwords=None):
         )
         return vectorizer
 
-
-def extract_keywords_tfidf(config, texts, language="en", top_n=10, stopwords=None):
-    """
-    Extract keywords using TF-IDF (fallback method)
-
-    Args:
-        config: Configuration object
-        texts (List[str]): Collection of texts
-        language (str): Language code
-        top_n (int): Number of keywords to extract
-        stopwords (Set[str]): Stopwords to filter out
-
-    Returns:
-        List[str]: Extracted keywords
-    """
-    if not require('sklearn', 'keyword extraction with TF-IDF'):
-        warning("scikit-learn not available for TF-IDF extraction")
-        return []
-
-    debug(config, f"Extracting keywords with TF-IDF from {len(texts)} texts in {language}")
-
-    if not texts:
-        return []
-
-    try:
-        from sklearn.feature_extraction.text import TfidfVectorizer
-
-        # Get vectorizer configured for corpus
-        vectorizer = configure_vectorizer(config, len(texts), language, stopwords)
-        if not vectorizer:
-            return []
-
-        # Create document-term matrix
-        X = vectorizer.fit_transform(texts)
-
-        # Get feature names
-        feature_names = vectorizer.get_feature_names_out()
-
-        # Calculate average TF-IDF score for each term
-        avg_scores = np.asarray(X.mean(axis=0)).ravel()
-
-        # Sort terms by score
-        scored_terms = list(zip(feature_names, avg_scores))
-        sorted_terms = sorted(scored_terms, key=lambda x: x[1], reverse=True)
-
-        # Filter stopwords if provided
-        if stopwords:
-            sorted_terms = [(term, score) for term, score in sorted_terms
-                            if term not in stopwords]
-
-        # Extract keywords
-        keywords = [term for term, score in sorted_terms[:top_n]]
-
-        return keywords
-
-    except Exception as e:
-        debug(config, f"Error extracting keywords with TF-IDF: {str(e)}")
-        import traceback
-        trace(traceback.format_exc())
-        return []
-
-
-def extract_keywords_spacy(config, texts, language="en", top_n=10, stopwords=None):
-    """
-    Extract keywords using spaCy's linguistic features
-
-    Args:
-        config: Configuration object
-        texts (List[str]): Collection of texts
-        language (str): Language code
-        top_n (int): Number of keywords to extract
-        stopwords (Set[str]): Stopwords to filter out
-
-    Returns:
-        List[str]: Extracted keywords
-    """
-    if not SPACY_AVAILABLE:
-        warning("spaCy not available for keyword extraction, falling back to TF-IDF")
-        return extract_keywords_tfidf(config, texts, language, top_n, stopwords)
-
-    debug(config, f"Extracting keywords with spaCy from {len(texts)} texts in {language}")
-
-    if not texts:
-        return []
-
-    try:
-        # Load appropriate spaCy model
-        nlp = get_spacy_model(language)
-        if not nlp:
-            warning(f"No spaCy model available for {language}, falling back to TF-IDF")
-            return extract_keywords_tfidf(config, texts, language, top_n, stopwords)
-
-        # Combine texts into a manageable chunk to process
-        combined_text = " ".join(texts)
-        if len(combined_text) > 100000:  # Limit text length to avoid memory issues
-            combined_text = combined_text[:100000]
-
-        # Process with spaCy
-        doc = nlp(combined_text)
-
-        # Count term frequencies considering various factors
-        term_freqs = Counter()
-
-        # Extract important terms based on POS tags
-        for token in doc:
-            # Skip stopwords, punctuation and very short words
-            if token.is_stop or token.is_punct or len(token.text) < 2:
-                continue
-
-            # Focus on nouns, verbs, and adjectives as they often form meaningful keywords
-            if token.pos_ in ('NOUN', 'PROPN', 'VERB', 'ADJ'):
-                # Use lemma for normalization in non-Chinese languages
-                if language != 'zh':
-                    term = token.lemma_.lower()
-                else:
-                    term = token.text
-
-                # Skip very short terms and custom stopwords
-                if len(term) < 2 or (stopwords and term in stopwords):
-                    continue
-
-                # Weight terms by their part of speech (nouns are more important)
-                weight = 1.0
-                if token.pos_ in ('NOUN', 'PROPN'):
-                    weight = 1.5
-                elif token.pos_ == 'VERB':
-                    weight = 1.0
-                elif token.pos_ == 'ADJ':
-                    weight = 0.8
-
-                term_freqs[term] += weight
-
-        # Extract named entities as they make good keywords
-        for ent in doc.ents:
-            if stopwords and ent.text.lower() in stopwords:
-                continue
-            term_freqs[ent.text] += 2.0  # Give entities higher weight
-
-        # Extract noun phrases (for multi-word keywords)
-        noun_phrases = []
-        for chunk in doc.noun_chunks:
-            # Clean the chunk text
-            clean_chunk = ' '.join([token.text for token in chunk
-                                    if not token.is_stop and not token.is_punct])
-            if clean_chunk and len(clean_chunk) > 2:
-                noun_phrases.append(clean_chunk)
-                term_freqs[clean_chunk] += 1.5  # Give noun phrases good weight
-
-        # Get the top keywords
-        return [term for term, _ in term_freqs.most_common(top_n)]
-
-    except Exception as e:
-        debug(config, f"Error extracting keywords with spaCy: {str(e)}")
-        import traceback
-        trace(traceback.format_exc())
-        return extract_keywords_tfidf(config, texts, language, top_n, stopwords)
 
 
 def extract_keywords(config, texts, language="en", top_n=10, stopwords=None):
