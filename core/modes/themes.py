@@ -500,112 +500,6 @@ class ThemeAnalyzer:
                 "themes": [{"name": "Analysis Error", "centrality": 0, "nodes": []}]
             }
 
-    def _analyze_named_entities(self, doc_contents: List[Dict]) -> Dict[str, Any]:
-        """
-        Extract and analyze named entities from document content using SpaCy
-
-        Args:
-            doc_contents (List[Dict]): Preprocessed document content
-
-        Returns:
-            Dict: Named entity analysis results
-        """
-        # Print detailed info about what's being processed
-        print(f"Processing {len(doc_contents)} documents for named entity analysis")
-
-        # Group documents by language
-        docs_by_language = defaultdict(list)
-        for doc in doc_contents:
-            language = doc.get("language", "en")
-            docs_by_language[language].append(doc)
-
-        # Prepare results
-        all_entities = []
-
-        # Process entities for each language
-        for language, docs in docs_by_language.items():
-            print(f"\nProcessing {language} language documents. Total: {len(docs)}")
-
-            try:
-                # Extract entities using the shared extraction function
-                doc_texts = [doc.get("content", "") for doc in docs]
-                doc_sources = [doc.get("source", "unknown") for doc in docs]
-
-                # Extract entities using SpaCy
-                entities = extract_entities_from_text(
-                    self.config,
-                    doc_texts,
-                    language,
-                    stopwords=self.stopwords[language] if language in self.stopwords else None
-                )
-
-                print(f"Extracted {len(entities)} entities for {language}")
-
-                # Map entities to documents
-                for entity in entities:
-                    entity_text = entity['text']
-                    doc_count = 0
-                    entity_sources = []
-
-                    for idx, text in enumerate(doc_texts):
-                        if entity_text in text:
-                            doc_count += 1
-                            entity_sources.append(doc_sources[idx])
-
-                    # Only add entities that appear in documents
-                    if doc_count > 0:
-                        all_entities.append({
-                            'value': entity_text,
-                            'count': entity['count'],
-                            'documents': doc_count,
-                            'type': entity['type'],
-                            'sources': entity_sources
-                        })
-
-            except Exception as e:
-                print(f"Error extracting entities for {language}: {str(e)}")
-                import traceback
-                traceback.print_exc()
-
-        # Sort entities by frequency and document count
-        if all_entities:
-            sorted_entities = sorted(all_entities, key=lambda x: (x['documents'], x['count']), reverse=True)
-
-            # Take top entities (more than before)
-            top_entities = sorted_entities[:100]  # Take more entities
-
-            print(f"\nTotal unique entities found: {len(sorted_entities)}")
-            print("Top 10 entities:")
-            for i, entity in enumerate(top_entities[:10]):
-                print(f"  {entity['value']}: count={entity['count']}, documents={entity['documents']}")
-
-            # Generate themes
-            themes = []
-            for entity in top_entities[:30]:  # Generate more themes
-                themes.append({
-                    'name': f"Theme: {entity['value']}",
-                    'keywords': [entity['value']],
-                    'frequency': entity['count'],
-                    'document_count': entity['documents'],
-                    'type': entity.get('type', 'UNKNOWN')
-                })
-
-            # Return results with all entities counted as significant
-            return {
-                "method": "Named Entity Analysis",
-                "entity_count": len(sorted_entities),
-                "significant_entities": len(sorted_entities),  # Count all as significant
-                "themes": themes
-            }
-        else:
-            print("No entities found")
-            return {
-                "method": "Named Entity Analysis",
-                "entity_count": 0,
-                "significant_entities": 0,
-                "themes": []
-            }
-
     def _analyze_latent_semantics(self, doc_contents: List[Dict]) -> Dict[str, Any]:
         """
         Analyze latent semantic themes using LSA/SVD
@@ -1429,4 +1323,204 @@ class ThemeAnalyzer:
             print(traceback.format_exc())
             return []
 
+    def _output_results(self, workspace: str, results: Dict, method: str):
+        """
+        Output theme analysis results using output manager
 
+        Args:
+            workspace (str): Workspace name
+            results (Dict): Analysis results
+            method (str): Analysis method
+        """
+        # Use output_manager for formatted display
+        self.output_manager.print_formatted('header', "THEME ANALYSIS RESULTS")
+
+        # Display results for each method
+        for m, result in results.items():
+            self.output_manager.print_formatted('subheader', result.get('method', m))
+
+            # Display method-specific statistics
+            if 'entity_count' in result:
+                self.output_manager.print_formatted('kv', result['entity_count'], key="Total entities")
+            if 'variance_explained' in result:
+                self.output_manager.print_formatted('kv', f"{result['variance_explained']}%", key="Variance explained")
+            if 'clusters' in result:
+                self.output_manager.print_formatted('kv', result['clusters'], key="Number of clusters")
+            if 'error' in result:
+                self.output_manager.print_formatted('feedback', f"Error: {result['error']}", success=False)
+
+            # Display themes
+            themes = result.get('themes', [])
+            if not themes:
+                self.output_manager.print_formatted('feedback', "No themes identified", success=False)
+                continue
+
+            print(f"\nFound {len(themes)} themes/topics")
+
+            for theme in themes:
+                # Print theme name
+                name = theme.get('name', 'Unnamed Theme')
+                self.output_manager.print_formatted('mini_header', name)
+
+                # Print theme keywords
+                if 'keywords' in theme and theme['keywords']:
+                    self.output_manager.print_formatted('kv', ', '.join(theme['keywords']), key="Keywords")
+                elif 'keyword' in theme:
+                    self.output_manager.print_formatted('kv', theme['keyword'], key="Keyword")
+
+                # Print various metrics
+                metrics = [
+                    ('score', 'Score'),
+                    ('frequency', 'Frequency'),
+                    ('centrality', 'Centrality'),
+                    ('document_count', 'Documents'),
+                    ('documents', 'Documents')
+                ]
+
+                for key, label in metrics:
+                    if key in theme and theme[key] is not None:
+                        self.output_manager.print_formatted('kv', theme[key], key=label)
+
+                # Print topic/theme type if available
+                if 'type' in theme:
+                    self.output_manager.print_formatted('kv', theme['type'], key="Type")
+
+                # Print document sources
+                if 'documents' in theme and isinstance(theme['documents'], list) and theme['documents']:
+                    print("\n  Document sources:")
+                    for doc in theme['documents'][:5]:
+                        self.output_manager.print_formatted('list', str(doc), indent=4)
+
+                    if len(theme['documents']) > 5:
+                        print(f"  ... and {len(theme['documents']) - 5} more")
+
+                # Print documents list if available
+                if 'documents_list' in theme and isinstance(theme['documents_list'], list) and theme['documents_list']:
+                    print("\n  Document sources:")
+                    for doc in theme['documents_list'][:5]:
+                        self.output_manager.print_formatted('list', str(doc), indent=4)
+
+                    if len(theme['documents_list']) > 5:
+                        print(f"  ... and {len(theme['documents_list']) - 5} more")
+
+                # Print description if available
+                if 'description' in theme and theme['description']:
+                    print("\n  Description:")
+                    print(f"  {theme['description']}")
+
+        # Save results to file
+        output_format = self.config.get('system.output_format', 'txt')
+        filepath = self.output_manager.save_theme_analysis(workspace, results, method, output_format)
+
+        # Show success message
+        self.output_manager.print_formatted('feedback', f"Results saved to: {filepath}")
+
+    def _analyze_named_entities(self, doc_contents: List[Dict]) -> Dict[str, Any]:
+        """
+        Extract and analyze named entities from document content using SpaCy
+
+        Args:
+            doc_contents (List[Dict]): Preprocessed document content
+
+        Returns:
+            Dict: Named entity analysis results
+        """
+        # Print detailed info about what's being processed
+        print(f"Processing {len(doc_contents)} documents for named entity analysis")
+
+        # Group documents by language
+        docs_by_language = defaultdict(list)
+        for doc in doc_contents:
+            language = doc.get("language", "en")
+            docs_by_language[language].append(doc)
+
+        # Prepare results
+        all_entities = []
+
+        # Process entities for each language
+        for language, docs in docs_by_language.items():
+            print(f"\nProcessing {language} language documents. Total: {len(docs)}")
+
+            try:
+                # Extract entities using the shared extraction function
+                doc_texts = [doc.get("content", "") for doc in docs]  # Use original content for better entity detection
+                doc_sources = [doc.get("source", "unknown") for doc in docs]
+
+                if language == 'zh':
+                    print(f"Using specialized Chinese entity extraction")
+
+                # Extract entities using SpaCy's extract_entities_from_text
+                entities = extract_entities_from_text(
+                    self.config,
+                    doc_texts,
+                    language,
+                    top_n=50,  # Extract more entities initially
+                    stopwords=self.stopwords[language] if language in self.stopwords else None
+                )
+
+                print(f"Extracted {len(entities)} entities for {language}")
+
+                # Map entities to documents
+                for entity in entities:
+                    entity_text = entity['text']
+                    doc_count = 0
+                    entity_sources = []
+
+                    for idx, text in enumerate(doc_texts):
+                        if entity_text in text:
+                            doc_count += 1
+                            entity_sources.append(doc_sources[idx])
+
+                    # Only add entities that appear in documents
+                    if doc_count > 0:
+                        all_entities.append({
+                            'value': entity_text,
+                            'count': entity['count'],
+                            'documents': doc_count,
+                            'type': entity['type'],
+                            'sources': entity_sources
+                        })
+
+            except Exception as e:
+                print(f"Error extracting entities for {language}: {str(e)}")
+                import traceback
+                traceback.print_exc()
+
+        # Sort entities by frequency and document count
+        if all_entities:
+            sorted_entities = sorted(all_entities, key=lambda x: (x['documents'], x['count']), reverse=True)
+
+            # Take top entities (more than before)
+            top_entities = sorted_entities[:100]  # Take more entities
+
+            print(f"\nTotal unique entities found: {len(sorted_entities)}")
+            print("Top 10 entities:")
+            for i, entity in enumerate(top_entities[:10]):
+                print(f"  {entity['value']}: count={entity['count']}, documents={entity['documents']}")
+
+            # Generate themes
+            themes = []
+            for entity in top_entities[:30]:  # Generate more themes
+                themes.append({
+                    'name': f"Theme: {entity['value']}",
+                    'keywords': [entity['value']],
+                    'frequency': entity['count'],
+                    'document_count': entity['documents'],
+                    'type': entity.get('type', 'UNKNOWN')
+                })
+
+            # Return results with all entities counted as significant
+            return {
+                "method": "Named Entity Analysis",
+                "entity_count": len(sorted_entities),
+                "significant_entities": len(sorted_entities),  # Count all as significant
+                "themes": themes
+            }
+        else:
+            print("No entities found")
+            return {
+                "method": "Named Entity Analysis",
+                "entity_count": 0,
+                "significant_entities": 0,
+                "themes": []
+            }
