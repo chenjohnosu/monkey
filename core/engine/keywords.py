@@ -233,7 +233,6 @@ def extract_keywords(config, texts, language="en", top_n=10, stopwords=None):
         warning(f"Method '{method}' is deprecated. Using SpaCy-based extraction instead.")
         return extract_keywords_spacy(config, texts, language, top_n, stopwords)
 
-
 def extract_keywords_spacy(config, texts, language="en", top_n=10, stopwords=None):
     """
     Extract keywords using spaCy's linguistic features
@@ -329,7 +328,6 @@ def extract_keywords_spacy(config, texts, language="en", top_n=10, stopwords=Non
         trace(traceback.format_exc())
         return extract_keywords_tfidf(config, texts, language, top_n, stopwords)
 
-
 def extract_keywords_tfidf(config, texts, language="en", top_n=10, stopwords=None):
     """
     Extract keywords using TF-IDF (fallback method)
@@ -389,7 +387,6 @@ def extract_keywords_tfidf(config, texts, language="en", top_n=10, stopwords=Non
         import traceback
         trace(traceback.format_exc())
         return []
-
 
 def extract_key_phrases(config, texts, language="en", top_n=10, stopwords=None):
     """
@@ -472,7 +469,6 @@ def extract_key_phrases(config, texts, language="en", top_n=10, stopwords=None):
         trace(traceback.format_exc())
         return []
 
-
 def extract_noun_phrases(config, texts, language="en", top_n=10, stopwords=None):
     """
     Extract noun phrases using spaCy
@@ -549,7 +545,6 @@ def extract_noun_phrases(config, texts, language="en", top_n=10, stopwords=None)
         import traceback
         trace(traceback.format_exc())
         return []
-
 
 def configure_vectorizer(config, doc_count, language=None, stopwords=None):
     """

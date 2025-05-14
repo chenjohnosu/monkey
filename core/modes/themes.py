@@ -1449,7 +1449,7 @@ class ThemeAnalyzer:
                 if language == 'zh':
                     print(f"Using specialized Chinese entity extraction")
 
-                # Extract entities using SpaCy's extract_entities_from_text
+                # Extract entities using the enhanced function from core/engine/keywords.py
                 entities = extract_entities_from_text(
                     self.config,
                     doc_texts,
@@ -1524,3 +1524,5 @@ class ThemeAnalyzer:
                 "significant_entities": 0,
                 "themes": []
             }
+
+    

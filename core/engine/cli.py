@@ -38,7 +38,7 @@ class CommandProcessor:
         from core.modes.grind import FileProcessor
         from core.modes.merge import VectorStoreMerger
         from core.modes.sentiment import SentimentAnalyzer
-        from core.modes.topic import TopicModeler
+        from core.modes.XXtopic import TopicModeler
 
         self.theme_analyzer = ThemeAnalyzer(config, self.storage_manager, self.output_manager, self.text_processor)
         self.query_engine = QueryEngine(config, self.storage_manager, self.output_manager, self.text_processor)
