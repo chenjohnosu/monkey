@@ -39,30 +39,44 @@ class ThemeAnalyzer:
         self.output_manager = output_manager or OutputManager(config)
         self.text_processor = text_processor or TextProcessor(config)
 
+        # Check if spaCy should be used
+        self.use_spacy = SPACY_AVAILABLE and config.get('system.use_spacy', True)
+
+        # Initialize stopwords
+        self.stopwords = {}
+        self._prepare_stopwords()
+
         # Initialize LLM connector factory
         try:
             from core.connectors.connector_factory import ConnectorFactory
             self.factory = ConnectorFactory(config)
             self.llm_connector = self.factory.get_llm_connector()
-            debug(config, "LLM connector factory initialized for theme analysis")
+            debug(config, "LLM connector initialized for theme analysis")
         except Exception as e:
             debug(config, f"Error initializing ConnectorFactory: {str(e)}")
             self.factory = None
             self.llm_connector = None
 
-        # Prepare Chinese and English stopwords
-        self._prepare_stopwords()
-
-        # Check for spaCy availability
-        self.use_spacy = False
-        if SPACY_AVAILABLE and config.get('system.use_spacy', True):
-            self.use_spacy = True
-            debug(config, "Using spaCy for theme and topic analysis")
-
         debug(config, "Theme analyzer initialized")
 
     def _prepare_stopwords(self):
         """Prepare stopwords for processing"""
+        # Load using utils if available first
+        if self.use_spacy:
+            try:
+                from core.language.spacy_tokenizer import load_stopwords
+                self.english_stopwords = load_stopwords('en')
+                self.chinese_stopwords = load_stopwords('zh')
+                self.stopwords = {
+                    'en': self.english_stopwords,
+                    'zh': self.chinese_stopwords
+                }
+                debug(self.config, "Loaded stopwords from spaCy")
+                return
+            except Exception as e:
+                debug(self.config, f"Error loading spaCy stopwords: {str(e)}")
+
+        # Fall back to file loading
         self.chinese_stopwords = set()
         self.english_stopwords = set()
 
@@ -70,20 +84,24 @@ class ThemeAnalyzer:
         try:
             with open(os.path.join('lexicon', 'stopwords_zh.txt'), 'r', encoding='utf-8') as f:
                 self.chinese_stopwords = set(line.strip() for line in f if line.strip())
+            debug(self.config, f"Loaded {len(self.chinese_stopwords)} Chinese stopwords from file")
         except FileNotFoundError:
+            debug(self.config, "Chinese stopwords file not found, using default set")
             self.chinese_stopwords = {"的", "了", "和", "是", "就", "都", "而", "及"}
 
         # Load English stopwords
         try:
             with open(os.path.join('lexicon', 'stopwords_en.txt'), 'r', encoding='utf-8') as f:
                 self.english_stopwords = set(line.strip() for line in f if line.strip())
+            debug(self.config, f"Loaded {len(self.english_stopwords)} English stopwords from file")
         except FileNotFoundError:
+            debug(self.config, "English stopwords file not found, using default set")
             self.english_stopwords = {
                 "the", "and", "a", "to", "of", "in", "is", "that", "it",
                 "with", "for", "as", "was", "on", "are", "by", "this"
             }
 
-        # Create a combined stopwords dictionary
+        # Store in combined dictionary
         self.stopwords = {
             'en': self.english_stopwords,
             'zh': self.chinese_stopwords
@@ -215,7 +233,7 @@ class ThemeAnalyzer:
 
         for lang, count in language_counts.most_common():
             percentage = (count / total) * 100
-            print(f"  {lang}: {count} documents ({percentage:.1f}%)")
+            print(f"  {lang}: {count} documents ({percentage:.1f}%)"
 
     def _analyze_content_keywords(self, doc_contents: List[Dict]) -> Dict[str, Any]:
         """
@@ -232,7 +250,7 @@ class ThemeAnalyzer:
         # Group documents by language
         docs_by_language = defaultdict(list)
         for doc in doc_contents:
-            language = doc["language"]
+            language = doc.get("language", "en")
             docs_by_language[language].append(doc)
 
         # Extract keywords by language
@@ -244,40 +262,15 @@ class ThemeAnalyzer:
 
         # Process each language group
         for language, docs in docs_by_language.items():
-            print(f"Processing {len(docs)} documents in language: {language}")
+            if language == "zh":
+                print(f"Processing {len(docs)} Chinese documents")
+                keywords = self._extract_chinese_keywords(docs)
+            else:
+                print(f"Processing {len(docs)} documents in language: {language}")
+                keywords = self._extract_english_keywords(docs)
 
-            # Extract document texts
-            doc_texts = [doc["processed_content"] for doc in docs]
-            doc_sources = [doc["source"] for doc in docs]
-
-            # Extract keywords using the common function
-            keywords = extract_keywords(
-                self.config,
-                doc_texts,
-                language=language,
-                top_n=30,
-                stopwords=self.stopwords.get(language)
-            )
-
-            # Convert to standardized format
-            keyword_objects = []
-            for keyword in keywords:
-                # Count document occurrences
-                doc_count = sum(1 for text in doc_texts if keyword in text)
-                doc_sources_list = [doc_sources[i] for i, text in enumerate(doc_texts) if keyword in text]
-
-                # Calculate score (simple frequency)
-                score = doc_count / len(docs)
-
-                keyword_objects.append({
-                    "keyword": keyword,
-                    "score": float(score),
-                    "documents": doc_count,
-                    "doc_sources": doc_sources_list
-                })
-
-            print(f"Extracted {len(keyword_objects)} keywords for language: {language}")
-            all_keywords.extend(keyword_objects)
+            print(f"Extracted {len(keywords)} keywords for language: {language}")
+            all_keywords.extend(keywords)
 
         # Sort keywords by score
         all_keywords.sort(key=lambda x: x["score"], reverse=True)
@@ -291,9 +284,11 @@ class ThemeAnalyzer:
         formatted_keywords = []
         for kw in top_keywords:
             formatted_kw = {
+                "name": f"Keyword: {kw['keyword']}",
                 "keyword": kw["keyword"],
                 "score": kw["score"],
-                "documents": kw["documents"]
+                "documents": kw["documents"],
+                "keywords": [kw["keyword"]]  # Include as part of keywords array for consistency
             }
             # Include document sources if available
             if "doc_sources" in kw:
@@ -909,18 +904,148 @@ class ThemeAnalyzer:
         Returns:
             Dict: NMF topic analysis results
         """
+        if not SKLEARN_AVAILABLE:
+            return {"method": "Non-Negative Matrix Factorization", "error": "scikit-learn not available", "themes": []}
+
         try:
             # Prepare documents
-            doc_texts = [doc["processed_content"] for doc in doc_contents]
-            doc_sources = [doc["source"] for doc in doc_contents]
+            doc_texts = [doc.get("processed_content", "") for doc in doc_contents]
+            doc_sources = [doc.get("source", "") for doc in doc_contents]
+
+            # Check if we have enough documents with content
+            valid_docs = [text for text in doc_texts if text]
+            if len(valid_docs) < 2:
+                return {
+                    "method": "Non-Negative Matrix Factorization",
+                    "error": "Insufficient documents with content for analysis",
+                    "themes": []
+                }
 
             # Determine primary language
-            languages = [doc["language"] for doc in doc_contents]
+            languages = [doc.get("language", "en") for doc in doc_contents]
             primary_language = Counter(languages).most_common(1)[0][0]
+
+            print(f"Performing NMF topic modeling on {len(valid_docs)} documents in {primary_language}")
 
             # Configure vectorization
             vectorizer = configure_vectorizer(
                 self.config,
-                len(doc_texts),
+                len(valid_docs),
                 primary_language,
-                self.stopwords[primary_language] if primary_language in self
+                self.stopwords.get(primary_language, set())
+            )
+
+            # Create document-term matrix
+            doc_term_matrix = vectorizer.fit_transform(valid_docs)
+
+            # Determine number of topics dynamically
+            n_topics = min(max(3, len(valid_docs) // 3), 10)
+
+            # Import NMF class
+            from sklearn.decomposition import NMF
+
+            # Initialize NMF model with error handling
+            try:
+                nmf_model = NMF(
+                    n_components=n_topics,
+                    random_state=42,
+                    max_iter=500  # Increased iterations for better convergence
+                )
+            except Exception as e:
+                debug(self.config, f"Error initializing NMF with parameters: {str(e)}")
+                # Try with minimal parameters if the first attempt fails
+                nmf_model = NMF(n_components=n_topics)
+
+            # Fit the model
+            nmf_output = nmf_model.fit_transform(doc_term_matrix)
+
+            # Extract feature names
+            feature_names = vectorizer.get_feature_names_out()
+            topics = []
+
+            for topic_idx, topic in enumerate(nmf_model.components_):
+                # Get top words for this topic
+                top_words_idx = topic.argsort()[:-10 - 1:-1]
+                top_words = [feature_names[i] for i in top_words_idx]
+
+                # Calculate topic contribution to documents
+                topic_contribution = nmf_output[:, topic_idx]
+
+                # Find documents with significant contribution from this topic
+                significant_docs = []
+                for i, score in enumerate(topic_contribution):
+                    if score > 0.1:  # Threshold for significance
+                        significant_docs.append(i)
+
+                # Get sources for top documents
+                top_docs_idx = topic_contribution.argsort()[::-1][:5]
+                top_docs = [doc_sources[i] for i in top_docs_idx if i < len(doc_sources)]
+
+                # Calculate normalized score
+                score = float(topic.max() / topic.sum()) if topic.sum() > 0 else 0.0
+
+                # Generate topic name from keywords
+                topic_name = f"Topic {topic_idx + 1}: {', '.join(top_words[:3])}"
+
+                # Generate topic description using LLM if available
+                description = None
+                if hasattr(self, 'llm_connector') and self.llm_connector:
+                    description = self._generate_topic_description(top_words)
+
+                # Create topic representation
+                topics.append({
+                    "name": topic_name,
+                    "keywords": top_words,
+                    "documents": top_docs,
+                    "document_count": len(significant_docs),
+                    "score": round(score, 2),
+                    "description": description,
+                    "language": primary_language  # Include language info
+                })
+
+            return {
+                "method": "Non-Negative Matrix Factorization",
+                "language": primary_language,
+                "topics": topics,
+                "num_topics": n_topics
+            }
+
+        except Exception as e:
+            debug(self.config, f"NMF Topic Modeling Error: {str(e)}")
+            import traceback
+            debug(self.config, traceback.format_exc())
+            return {
+                "method": "Non-Negative Matrix Factorization",
+                "error": str(e),
+                "themes": []
+            }
+
+    def _generate_topic_description(self, keywords):
+        """
+        Generate a description for a topic using LLM
+
+        Args:
+            keywords (List[str]): Keywords representing the topic
+
+        Returns:
+            str: Generated description or None if not available
+        """
+        if not hasattr(self, 'llm_connector') or not self.llm_connector:
+            return None
+
+        try:
+            prompt = f"""Analyze these keywords and provide a concise topic description (1-2 sentences):
+            Keywords: {', '.join(keywords[:10])}
+
+            What conceptual area do these words represent? Provide a specific but concise explanation."""
+
+            model = self.config.get('llm.default_model', 'mistral')
+            description = self.llm_connector.generate(
+                prompt,
+                model=model,
+                max_tokens=100
+            )
+            return description.strip()
+        except Exception as e:
+            debug(self.config, f"Error generating topic description: {str(e)}")
+            return None
