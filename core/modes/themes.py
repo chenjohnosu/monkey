@@ -1,7 +1,7 @@
 """
-Theme analysis module with enhanced content-based processing
+Theme analysis module with enhanced content-based processing and topic modeling
+Consolidated module that includes both theme analysis and topic modeling
 """
-
 
 import os
 import sys
@@ -9,18 +9,11 @@ import io
 import numpy as np
 from collections import Counter, defaultdict
 from typing import Dict, List, Any, Tuple
-from core.engine.logging import warning
 
-try:
-    import networkx as nx
-    from sklearn.feature_extraction.text import TfidfVectorizer
-    from sklearn.decomposition import TruncatedSVD, LatentDirichletAllocation
-    from sklearn.cluster import KMeans
-    SKLEARN_AVAILABLE = True
-except ImportError:
-    SKLEARN_AVAILABLE = False
-    warning("scikit-learn not available, falling back to simplified theme analysis")
-
+import networkx as nx
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.decomposition import TruncatedSVD, LatentDirichletAllocation, NMF
+from sklearn.cluster import KMeans
 
 from core.engine.keywords import extract_keywords, configure_vectorizer, extract_entities_from_text
 
@@ -28,10 +21,8 @@ from core.engine.logging import debug, warning, info, error
 from core.engine.storage import StorageManager
 from core.engine.output import OutputManager
 from core.language.processor import TextProcessor
-from core.language.tokenizer import ChineseTokenizer, JIEBA_AVAILABLE
 from core.engine.common import safe_execute
 from core.language.spacy_tokenizer import get_spacy_model, SPACY_AVAILABLE
-from collections import defaultdict
 
 try:
     from community import best_partition
@@ -39,9 +30,7 @@ except ImportError:
     best_partition = None
 
 class ThemeAnalyzer:
-    """Analyzes themes in document content with enhanced processing capabilities"""
-
-    # Add to ThemeAnalyzer's __init__ method in core/modes/themes.py
+    """Analyzes themes and topics in document content with enhanced processing capabilities"""
 
     def __init__(self, config, storage_manager=None, output_manager=None, text_processor=None):
         """Initialize the theme analyzer with shared components"""
@@ -54,19 +43,21 @@ class ThemeAnalyzer:
         try:
             from core.connectors.connector_factory import ConnectorFactory
             self.factory = ConnectorFactory(config)
+            self.llm_connector = self.factory.get_llm_connector()
             debug(config, "LLM connector factory initialized for theme analysis")
         except Exception as e:
             debug(config, f"Error initializing ConnectorFactory: {str(e)}")
             self.factory = None
+            self.llm_connector = None
 
         # Prepare Chinese and English stopwords
         self._prepare_stopwords()
 
-        # Use the centralized jieba initialization
-        from core.language.tokenizer import JIEBA_AVAILABLE, initialize_jieba
-        if JIEBA_AVAILABLE:
-            initialize_jieba()  # Initialize once using our centralized function
-            debug(config, "Jieba initialized for Chinese text processing")
+        # Check for spaCy availability
+        self.use_spacy = False
+        if SPACY_AVAILABLE and config.get('system.use_spacy', True):
+            self.use_spacy = True
+            debug(config, "Using spaCy for theme and topic analysis")
 
         debug(config, "Theme analyzer initialized")
 
@@ -92,26 +83,32 @@ class ThemeAnalyzer:
                 "with", "for", "as", "was", "on", "are", "by", "this"
             }
 
+        # Create a combined stopwords dictionary
+        self.stopwords = {
+            'en': self.english_stopwords,
+            'zh': self.chinese_stopwords
+        }
+
     def analyze(self, workspace: str, method: str = 'all') -> Dict[str, Any]:
         """
-        Analyze themes in a workspace using multiple methods
+        Analyze themes or topics in a workspace using multiple methods
 
         Args:
             workspace (str): The workspace to analyze
-            method (str): Analysis method ('all', 'nfm', 'net', 'key', 'lsa', 'cluster')
+            method (str): Analysis method ('all', 'nfm', 'net', 'key', 'lsa', 'cluster', 'lda', 'nmf')
 
         Returns:
-            Dict: Analyzed themes
+            Dict: Analyzed themes/topics
         """
         debug(self.config, f"Analyzing themes in workspace '{workspace}' using method '{method}'")
 
         # Print keyword extraction method information
-        keyword_method = self.config.get('keywords.method', 'tf-idf')
+        keyword_method = self.config.get('keywords.method', 'spacy')
         max_ngram_size = self.config.get('keywords.max_ngram_size', 2)
         print(f"\nKeyword extraction: {keyword_method.upper()}, n-gram size: {max_ngram_size}")
 
-        # Validate method
-        valid_methods = ['all', 'nfm', 'net', 'key', 'lsa', 'cluster']
+        # Validate method (combined theme and topic methods)
+        valid_methods = ['all', 'nfm', 'net', 'key', 'lsa', 'cluster', 'lda', 'nmf']
         if method not in valid_methods:
             print(f"Invalid method: {method}. Must be one of: {', '.join(valid_methods)}")
             return {}
@@ -131,7 +128,8 @@ class ThemeAnalyzer:
         # Run selected analysis methods
         results = {}
 
-        method_map = {
+        # Theme analysis methods
+        theme_methods = {
             'nfm': self._analyze_named_entities,
             'net': self._analyze_content_network,
             'key': self._analyze_content_keywords,
@@ -139,7 +137,17 @@ class ThemeAnalyzer:
             'cluster': self._analyze_document_clusters
         }
 
-        for analysis_method, handler in method_map.items():
+        # Topic modeling methods
+        topic_methods = {
+            'lda': self._analyze_lda_topics,
+            'nmf': self._analyze_nmf_topics
+        }
+
+        # Combine all methods
+        all_methods = {**theme_methods, **topic_methods}
+
+        # Run selected methods
+        for analysis_method, handler in all_methods.items():
             if method in ['all', analysis_method]:
                 try:
                     results[analysis_method] = handler(doc_contents)
@@ -209,259 +217,6 @@ class ThemeAnalyzer:
             percentage = (count / total) * 100
             print(f"  {lang}: {count} documents ({percentage:.1f}%)")
 
-    def _extract_english_keywords(self, docs: List[Dict]) -> List[Dict]:
-        """
-        Extract keywords from English document content with improved error handling
-
-        Args:
-            docs (List[Dict]): English documents
-
-        Returns:
-            List[Dict]: Extracted keywords
-        """
-        # Extract document texts
-        doc_texts = [doc["processed_content"] for doc in docs]
-        doc_sources = [doc["source"] for doc in docs]
-
-        # Log extraction attempt
-        print(f"Extracting keywords from {len(doc_texts)} English documents")
-
-        # Create mapping to store document sources for each keyword
-        keyword_doc_mapping = defaultdict(list)
-
-        # Check if documents contain content
-        if not doc_texts or all(not text for text in doc_texts):
-            print("No valid content found in English documents")
-            return []
-
-        try:
-            # Use TF-IDF vectorizer to identify important terms
-            vectorizer = TfidfVectorizer(
-                min_df=1,  # Lower min_df for small document sets
-                max_df=0.95,
-                stop_words="english"
-            )
-
-            # Fit TF-IDF on documents
-            tfidf_matrix = vectorizer.fit_transform(doc_texts)
-
-            # Get feature names
-            feature_names = vectorizer.get_feature_names_out()
-
-            print(f"Extracted {len(feature_names)} unique terms from English documents")
-
-            # Calculate average TF-IDF scores across documents
-            avg_scores = np.asarray(tfidf_matrix.mean(axis=0)).ravel()
-
-            # Count documents containing each term
-            term_doc_counts = defaultdict(int)
-            for doc_id, doc_text in enumerate(doc_texts):
-                # Create a set of terms in this document
-                doc_terms = set(doc_text.split())
-
-                # Check each term in feature names
-                for term in feature_names:
-                    if term in doc_terms:
-                        term_doc_counts[term] += 1
-                        keyword_doc_mapping[term].append(doc_sources[doc_id])
-
-            # Create keyword list
-            keywords = []
-            for i, term in enumerate(feature_names):
-                # Skip very short terms
-                if len(term) < 3:
-                    continue
-
-                score = avg_scores[i]
-                doc_count = term_doc_counts.get(term, 0)
-
-                # Only include terms that appear in at least one document
-                if doc_count > 0:
-                    keywords.append({
-                        "keyword": term,
-                        "score": float(score),  # Convert numpy float to Python float
-                        "documents": doc_count,
-                        "doc_sources": keyword_doc_mapping.get(term, [])
-                    })
-
-            # Sort by score and document count
-            keywords.sort(key=lambda x: (x["score"], x["documents"]), reverse=True)
-
-            print(f"Found {len(keywords)} keywords in English documents")
-
-            # Limit to top keywords
-            return keywords[:30]  # Return more keywords to ensure we have enough after filtering
-
-        except Exception as e:
-            print(f"Error extracting English keywords: {str(e)}")
-            import traceback
-            print(traceback.format_exc())
-            return []
-
-    def _extract_chinese_keywords(self, docs: List[Dict]) -> List[Dict]:
-        """
-        Extract keywords from Chinese document content with improved error handling
-
-        Args:
-            docs (List[Dict]): Chinese documents
-
-        Returns:
-            List[Dict]: Extracted keywords
-        """
-        # Log extraction attempt
-        print(f"Extracting keywords from {len(docs)} Chinese documents")
-
-        # Check if documents contain content
-        if not docs or all(not doc.get("processed_content") for doc in docs):
-            print("No valid content found in Chinese documents")
-            return []
-
-        try:
-            # Count frequencies of character and word n-grams
-            character_counts = Counter()
-            bigram_counts = Counter()
-            trigram_counts = Counter()
-
-            # Document sources for tracking
-            doc_sources = [doc["source"] for doc in docs]
-
-            # Count frequencies
-            for doc in docs:
-                text = doc["processed_content"]
-                if not text:
-                    continue
-
-                # Count characters
-                character_counts.update(text)
-
-                # Count n-grams
-                for i in range(len(text) - 1):
-                    # Bigrams
-                    if i < len(text) - 1:
-                        bigram = text[i:i + 2]
-                        bigram_counts[bigram] += 1
-
-                    # Trigrams
-                    if i < len(text) - 2:
-                        trigram = text[i:i + 3]
-                        trigram_counts[trigram] += 1
-
-            # Track document sources for each n-gram
-            bigram_doc_sources = defaultdict(list)
-            trigram_doc_sources = defaultdict(list)
-
-            for doc_idx, doc in enumerate(docs):
-                text = doc["processed_content"]
-                if not text:
-                    continue
-
-                # Track bigrams
-                for i in range(len(text) - 1):
-                    if i < len(text) - 1:
-                        bigram = text[i:i + 2]
-                        bigram_doc_sources[bigram].append(doc_sources[doc_idx])
-
-                # Track trigrams
-                for i in range(len(text) - 2):
-                    if i < len(text) - 2:
-                        trigram = text[i:i + 3]
-                        trigram_doc_sources[trigram].append(doc_sources[doc_idx])
-
-            # Combine and sort keywords
-            keywords = []
-
-            # Add top bigrams
-            for bigram, count in bigram_counts.most_common(15):
-                if len(bigram) < 2 or count < 2:
-                    continue
-
-                # Check if bigram is in stopwords
-                if bigram in self.chinese_stopwords:
-                    continue
-
-                score = count / sum(bigram_counts.values()) if bigram_counts else 0
-                doc_sources_list = list(set(bigram_doc_sources[bigram]))
-
-                keywords.append({
-                    "keyword": bigram,
-                    "score": float(score),  # Ensure we use a regular Python float
-                    "documents": len(doc_sources_list),
-                    "doc_sources": doc_sources_list
-                })
-
-            # Add top trigrams
-            for trigram, count in trigram_counts.most_common(15):
-                if len(trigram) < 3 or count < 2:
-                    continue
-
-                # Skip trigrams that are entirely in stopwords
-                if all(char in self.chinese_stopwords for char in trigram):
-                    continue
-
-                score = count / sum(trigram_counts.values()) if trigram_counts else 0
-                doc_sources_list = list(set(trigram_doc_sources[trigram]))
-
-                keywords.append({
-                    "keyword": trigram,
-                    "score": float(score),  # Ensure we use a regular Python float
-                    "documents": len(doc_sources_list),
-                    "doc_sources": doc_sources_list
-                })
-
-            print(f"Found {len(keywords)} keywords in Chinese documents (bigrams and trigrams)")
-
-            # If jieba is available, try to extract word-based keywords
-            from core.language.tokenizer import JIEBA_AVAILABLE, get_jieba_instance
-            if JIEBA_AVAILABLE and len(docs) >= 2:
-                print("Using jieba for additional Chinese keyword extraction")
-
-                # Get the initialized jieba instance
-                jieba_instance = get_jieba_instance()
-                if jieba_instance:
-                    # Collect all text
-                    all_text = " ".join([doc["processed_content"] for doc in docs if doc.get("processed_content")])
-
-                    # Tokenize with jieba - using the centralized instance
-                    words = list(jieba_instance.cut(all_text))
-                    word_counts = Counter(words)
-
-                    # Add top words
-                    for word, count in word_counts.most_common(15):
-                        # Skip short words and stopwords
-                        if len(word) < 2 or word in self.chinese_stopwords:
-                            continue
-
-                        # Skip non-Chinese words
-                        if not any('\u4e00' <= char <= '\u9fff' for char in word):
-                            continue
-
-                        score = count / len(words) if words else 0
-
-                        # Determine which documents contain this word
-                        doc_sources_list = []
-                        for doc_idx, doc in enumerate(docs):
-                            if doc.get("processed_content") and word in doc["processed_content"]:
-                                doc_sources_list.append(doc_sources[doc_idx])
-
-                        keywords.append({
-                            "keyword": word,
-                            "score": float(score),
-                            "documents": len(doc_sources_list),
-                            "doc_sources": doc_sources_list
-                        })
-
-            # Sort keywords by score
-            keywords.sort(key=lambda x: x["score"], reverse=True)
-
-            # Return top keywords
-            return keywords[:30]  # Return more keywords to ensure we have enough after filtering
-
-        except Exception as e:
-            print(f"Error extracting Chinese keywords: {str(e)}")
-            import traceback
-            print(traceback.format_exc())
-            return []
-
     def _analyze_content_keywords(self, doc_contents: List[Dict]) -> Dict[str, Any]:
         """
         Extract and analyze keywords from document content
@@ -489,15 +244,40 @@ class ThemeAnalyzer:
 
         # Process each language group
         for language, docs in docs_by_language.items():
-            if language == "zh":
-                print(f"Processing {len(docs)} Chinese documents")
-                keywords = self._extract_chinese_keywords(docs)
-            else:
-                print(f"Processing {len(docs)} documents in language: {language}")
-                keywords = self._extract_english_keywords(docs)
+            print(f"Processing {len(docs)} documents in language: {language}")
 
-            print(f"Extracted {len(keywords)} keywords for language: {language}")
-            all_keywords.extend(keywords)
+            # Extract document texts
+            doc_texts = [doc["processed_content"] for doc in docs]
+            doc_sources = [doc["source"] for doc in docs]
+
+            # Extract keywords using the common function
+            keywords = extract_keywords(
+                self.config,
+                doc_texts,
+                language=language,
+                top_n=30,
+                stopwords=self.stopwords.get(language)
+            )
+
+            # Convert to standardized format
+            keyword_objects = []
+            for keyword in keywords:
+                # Count document occurrences
+                doc_count = sum(1 for text in doc_texts if keyword in text)
+                doc_sources_list = [doc_sources[i] for i, text in enumerate(doc_texts) if keyword in text]
+
+                # Calculate score (simple frequency)
+                score = doc_count / len(docs)
+
+                keyword_objects.append({
+                    "keyword": keyword,
+                    "score": float(score),
+                    "documents": doc_count,
+                    "doc_sources": doc_sources_list
+                })
+
+            print(f"Extracted {len(keyword_objects)} keywords for language: {language}")
+            all_keywords.extend(keyword_objects)
 
         # Sort keywords by score
         all_keywords.sort(key=lambda x: x["score"], reverse=True)
@@ -677,450 +457,6 @@ class ThemeAnalyzer:
                 "themes": [{"name": "Analysis Error", "centrality": 0, "nodes": []}]
             }
 
-    def _extract_chinese_entities(self, docs: List[Dict]) -> List[Dict]:
-        """
-        Extract named entities from Chinese text with improved detection
-
-        Args:
-            docs (List[Dict]): Chinese documents
-
-        Returns:
-            List[Dict]: Extracted entities
-        """
-        entities = []
-
-        # Use more comprehensive entity detection
-        entity_patterns = [
-            # Names (2-4 characters)
-            r'[\u4e00-\u9fff]{2,4}[先生|女士|醫師|教授|博士|護士|老師|醫生]',
-            # Organizations and institutions
-            r'[\u4e00-\u9fff]{2,6}(醫院|診所|學校|協會|公司|機構|中心)',
-            # Specialized terms
-            r'[\u4e00-\u9fff]{2,6}(系統|方案|計畫|研究|專案|服務|領域)',
-            # Location names
-            r'[\u4e00-\u9fff]{2,6}(市|縣|省|區|鄉|鎮|路|街|醫學中心)'
-        ]
-
-        # Compile patterns
-        import re
-        compiled_patterns = [re.compile(pattern) for pattern in entity_patterns]
-
-        # Process each document
-        for doc in docs:
-            text = doc.get('processed_content', '')
-
-            # Use jieba for word segmentation if available
-            from core.language.tokenizer import JIEBA_AVAILABLE, get_jieba_instance
-            if JIEBA_AVAILABLE:
-                # Get the centralized jieba instance
-                jieba_instance = get_jieba_instance()
-                if jieba_instance:
-                    words = list(jieba_instance.cut(text))
-                else:
-                    # Fallback to character-based extraction
-                    words = list(text)
-            else:
-                # Fallback to character-based extraction
-                words = list(text)
-
-            # Collect entities
-            doc_entities = []
-            for pattern in compiled_patterns:
-                doc_entities.extend(pattern.findall(text))
-
-            # Additional character-based filtering
-            char_entities = [
-                word for word in words
-                if (2 <= len(word) <= 4 and
-                    all('\u4e00-\u9fff' in char for char in word) and
-                    word not in self.chinese_stopwords)
-            ]
-            doc_entities.extend(char_entities)
-
-            # Count entity frequencies
-            entity_counts = Counter(doc_entities)
-
-            # Convert to standardized format
-            doc_entity_list = [
-                {
-                    'value': entity,
-                    'count': count,
-                    'documents': 1
-                }
-                for entity, count in entity_counts.items()
-                if count > 1  # Only keep entities appearing more than once
-            ]
-
-            entities.extend(doc_entity_list)
-
-        # Remove duplicates while preserving count information
-        unique_entities = {}
-        for entity in entities:
-            if entity['value'] not in unique_entities:
-                unique_entities[entity['value']] = entity
-            else:
-                unique_entities[entity['value']]['count'] += entity['count']
-                unique_entities[entity['value']]['documents'] += entity['documents']
-
-        return list(unique_entities.values())
-
-    def _extract_english_entities(self, docs: List[Dict]) -> List[Dict]:
-        """
-        Extract entities from English text with improved detection for interview content
-
-        Args:
-            docs (List[Dict]): English documents
-
-        Returns:
-            List[Dict]: Extracted entities
-        """
-        debug(self.config, f"Extracting entities from {len(docs)} English documents")
-
-        # Direct approach - use keywords as entities with NO filtering
-        # For interview data, direct keyword extraction works better than regex patterns
-
-        # Extract document texts
-        doc_texts = [doc.get("processed_content", "") for doc in docs]
-
-        # Create combined text for better keyword context
-        combined_text = " ".join(doc_texts)
-
-        # IMPORTANT: Use a much simpler approach with minimal filtering
-        entities = []
-
-        # 1. First use basic word frequency
-        words = combined_text.lower().split()
-        word_counts = Counter(words)
-
-        # Filter out very short words and convert to entity format
-        for word, count in word_counts.items():
-            if len(word) > 3 and word not in self.english_stopwords:
-                # Count documents containing this word
-                doc_count = sum(1 for text in doc_texts if word in text.lower())
-
-                # Include ALL entities - no minimum threshold
-                entities.append({
-                    'value': word,
-                    'count': count,
-                    'documents': doc_count
-                })
-
-        # 2. Extract multi-word phrases (bigrams and trigrams)
-        # This is crucial for interview content
-        for doc_text in doc_texts:
-            words = doc_text.lower().split()
-
-            # Extract bigrams (pairs of adjacent words)
-            for i in range(len(words) - 1):
-                if len(words[i]) > 3 and len(words[i + 1]) > 3:
-                    bigram = f"{words[i]} {words[i + 1]}"
-
-                    # Count occurrences in all documents
-                    bigram_count = sum(1 for text in doc_texts if bigram in text.lower())
-
-                    # Include if appears in any document
-                    if bigram_count > 0:
-                        entities.append({
-                            'value': bigram,
-                            'count': bigram_count,
-                            'documents': sum(1 for text in doc_texts if bigram in text.lower())
-                        })
-
-            # Extract trigrams (three adjacent words)
-            for i in range(len(words) - 2):
-                if len(words[i]) > 2 and len(words[i + 1]) > 2 and len(words[i + 2]) > 2:
-                    trigram = f"{words[i]} {words[i + 1]} {words[i + 2]}"
-
-                    # Count occurrences in all documents
-                    trigram_count = sum(1 for text in doc_texts if trigram in text.lower())
-
-                    # Include if appears in any document
-                    if trigram_count > 0:
-                        entities.append({
-                            'value': trigram,
-                            'count': trigram_count,
-                            'documents': sum(1 for text in doc_texts if trigram in text.lower())
-                        })
-
-        # Print count to help diagnose
-        debug(self.config, f"Found {len(entities)} potential entities before filtering")
-
-        # Don't filter entities - add all of them
-        return entities
-
-    def _extract_named_entities(self, docs: List[Dict]) -> List[Dict]:
-        """
-        Extract named entities using spaCy with LLM fallback for enhanced accuracy
-
-        Args:
-            docs (List[Dict]): Documents to extract entities from
-
-        Returns:
-            List[Dict]: Extracted named entities
-        """
-        # Group documents by language
-        docs_by_language = defaultdict(list)
-        for doc in docs:
-            language = doc.get("language", "en")
-            docs_by_language[language].append(doc)
-
-        # Prepare results
-        all_entities = []
-
-        # Process entities for each language
-        for language, language_docs in docs_by_language.items():
-            print(f"\nProcessing Named Entities for {language} language. Total documents: {len(language_docs)}")
-
-            try:
-                # Attempt SpaCy-based NER first
-                ner_entities = self._extract_spacy_entities(language_docs, language)
-
-                # If SpaCy fails or returns minimal results, use LLM fallback
-                if not ner_entities or len(ner_entities) < 5:
-                    print("SpaCy NER returned minimal results. Attempting LLM-based extraction.")
-                    llm_entities = self._extract_llm_entities(language_docs, language)
-                    ner_entities.extend(llm_entities)
-
-                # Extend all entities
-                all_entities.extend(ner_entities)
-
-            except Exception as e:
-                print(f"Error extracting entities for {language}: {str(e)}")
-                import traceback
-                traceback.print_exc()
-
-        # Post-processing and deduplication
-        deduplicated_entities = self._deduplicate_entities(all_entities)
-
-        # Sort and limit entities
-        sorted_entities = sorted(
-            deduplicated_entities,
-            key=lambda x: (x.get('documents', 0), x.get('count', 0)),
-            reverse=True
-        )
-
-        # Limit to top 100 entities
-        top_entities = sorted_entities[:100]
-
-        print(f"\nTotal unique entities found: {len(sorted_entities)}")
-        print("Top 10 entities:")
-        for i, entity in enumerate(top_entities[:10], 1):
-            print(f"  {i}. {entity['value']}: count={entity['count']}, documents={entity['documents']}")
-
-        return top_entities
-
-    def _extract_spacy_entities(self, docs: List[Dict], language: str) -> List[Dict]:
-        """
-        Extract named entities using spaCy
-
-        Args:
-            docs (List[Dict]): Documents to extract entities from
-            language (str): Language code
-
-        Returns:
-            List[Dict]: Extracted named entities
-        """
-        from core.language.spacy_tokenizer import get_spacy_model
-
-        # Get appropriate spaCy model
-        model = get_spacy_model(language)
-        if not model:
-            print(f"No spaCy model available for language: {language}")
-            return []
-
-        # Entity tracking
-        entity_counts = defaultdict(lambda: {
-            'value': '',
-            'count': 0,
-            'documents': 0,
-            'types': set(),
-            'sources': set()
-        })
-
-        # Process each document
-        for doc_info in docs:
-            text = doc_info.get('content', '')
-            source = doc_info.get('source', 'unknown')
-
-            try:
-                # Process text with spaCy
-                spacy_doc = model(text)
-
-                # Extract named entities
-                for ent in spacy_doc.ents:
-                    # Normalize entity
-                    normalized_value = ent.text.strip()
-
-                    # Skip very short or empty entities
-                    if len(normalized_value) < 2:
-                        continue
-
-                    # Update entity information
-                    entity_key = normalized_value.lower()
-                    entity_info = entity_counts[entity_key]
-
-                    entity_info['value'] = normalized_value
-                    entity_info['count'] += 1
-                    entity_info['types'].add(ent.label_)
-                    entity_info['sources'].add(source)
-
-                # If we have a valid document and there are sources, count it as a document
-                if source and source not in entity_info['sources']:
-                    entity_info['documents'] += 1
-
-            except Exception as e:
-                print(f"Error processing document with spaCy: {str(e)}")
-
-        # Convert to list and enrich
-        entities = []
-        for entity_info in entity_counts.values():
-            entity = {
-                'value': entity_info['value'],
-                'count': entity_info['count'],
-                'documents': len(entity_info['sources']),
-                'types': list(entity_info['types']),
-                'sources': list(entity_info['sources'])
-            }
-            entities.append(entity)
-
-        return entities
-
-    def _extract_llm_entities(self, docs: List[Dict], language: str) -> List[Dict]:
-        """
-        Extract named entities using LLM as a fallback method
-
-        Args:
-            docs (List[Dict]): Documents to extract entities from
-            language (str): Language code
-
-        Returns:
-            List[Dict]: Extracted named entities
-        """
-        # Check if LLM connector is available
-        if not hasattr(self, 'factory') or not self.factory:
-            print("LLM factory not available for entity extraction")
-            return []
-
-        # Create LLM connector if needed
-        if not hasattr(self, 'llm_connector') or not self.llm_connector:
-            try:
-                self.llm_connector = self.factory.get_llm_connector()
-            except Exception as e:
-                print(f"Error creating LLM connector: {str(e)}")
-                return []
-
-        if not self.llm_connector:
-            print("LLM connector not available for entity extraction")
-            return []
-
-        try:
-            # Combine document texts
-            combined_text = " ".join([
-                doc.get('content', '')[:5000] for doc in docs  # Limit to first 5000 chars per doc
-            ])
-
-            # Prepare LLM prompt based on language
-            if language == 'zh':
-                prompt = f"""请从以下文本中提取命名实体。
-    要求：
-    1. 提取人名、地名、组织机构名
-    2. 只返回实体列表，每行一个实体
-    3. 不需要额外解释
-
-    文本内容：{combined_text}"""
-            else:
-                prompt = f"""Extract named entities from the following text.
-    Requirements:
-    1. Extract person names, locations, organizations
-    2. Return only the list of entities
-    3. No additional explanation needed
-
-    Text content: {combined_text}"""
-
-            # Generate response
-            model = self.config.get('llm.default_model', 'mistral')
-            response = self.llm_connector.generate(
-                prompt,
-                model=model,
-                max_tokens=500,
-                temperature=0.3  # Lower temperature for more precise extraction
-            )
-
-            # Process response
-            entities = []
-
-            # Split response into lines and clean
-            raw_entities = [
-                entity.strip()
-                for entity in response.split('\n')
-                if entity.strip() and len(entity.strip()) > 1
-            ]
-
-            # Deduplicate and count
-            entity_counts = defaultdict(lambda: {
-                'value': '',
-                'count': 0,
-                'documents': len(docs)
-            })
-
-            for entity in raw_entities:
-                entity_key = entity.lower()
-                entity_info = entity_counts[entity_key]
-                entity_info['value'] = entity
-                entity_info['count'] += 1
-
-            # Convert to list
-            entities = [
-                {
-                    'value': info['value'],
-                    'count': info['count'],
-                    'documents': info['documents']
-                }
-                for info in entity_counts.values()
-            ]
-
-            return entities
-
-        except Exception as e:
-            print(f"Error in LLM-based entity extraction: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            return []
-
-    def _deduplicate_entities(self, entities: List[Dict]) -> List[Dict]:
-        """
-        Deduplicate and merge similar entities
-
-        Args:
-            entities (List[Dict]): List of entities to deduplicate
-
-        Returns:
-            List[Dict]: Deduplicated list of entities
-        """
-        # Merge similar entities
-        entity_map = {}
-        for entity in entities:
-            normalized_key = entity['value'].lower()
-
-            # If entity already exists, merge
-            if normalized_key in entity_map:
-                existing = entity_map[normalized_key]
-                existing['count'] += entity.get('count', 0)
-                existing['documents'] = min(
-                    existing.get('documents', 0) + entity.get('documents', 0),
-                    len(entity.get('sources', []))
-                )
-
-                # Merge types if available
-                if 'types' in existing and 'types' in entity:
-                    existing['types'] = list(set(existing['types'] + entity['types']))
-            else:
-                # Add new entity
-                entity_map[normalized_key] = entity.copy()
-
-        # Convert back to list and sort
-        return list(entity_map.values())
-
     def _analyze_named_entities(self, doc_contents: List[Dict]) -> Dict[str, Any]:
         """
         Extract and analyze named entities from document content using SpaCy
@@ -1239,13 +575,6 @@ class ThemeAnalyzer:
         """
         debug(self.config, "Analyzing latent semantic themes")
 
-        if not SKLEARN_AVAILABLE:
-            return {
-                "method": "Latent Semantic Analysis",
-                "error": "scikit-learn is required for LSA analysis",
-                "themes": []
-            }
-
         # Extract document texts and sources
         doc_texts = [doc["processed_content"] for doc in doc_contents]
         doc_sources = [doc["source"] for doc in doc_contents]
@@ -1268,6 +597,64 @@ class ThemeAnalyzer:
                 len(doc_texts),
                 primary_language,
                 self.stopwords[primary_language] if primary_language in self.stopwords else None
+            )
+
+            # Create document-term matrix
+            doc_term_matrix = vectorizer.fit_transform(doc_texts)
+
+            # Determine number of topics dynamically
+            n_topics = min(max(5, len(doc_contents) // 3), 10)
+
+            # Initialize NMF model
+            nmf_model = NMF(
+                n_components=n_topics,
+                random_state=42,
+                max_iter=200
+            )
+
+            # Fit the model
+            nmf_output = nmf_model.fit_transform(doc_term_matrix)
+
+            # Extract feature names
+            feature_names = vectorizer.get_feature_names_out()
+            topics = []
+
+            for topic_idx, topic in enumerate(nmf_model.components_):
+                # Get top words for this topic
+                top_words_idx = topic.argsort()[:-10 - 1:-1]
+                top_words = [feature_names[i] for i in top_words_idx]
+
+                # Calculate topic contribution to documents
+                topic_contribution = nmf_output[:, topic_idx]
+                top_docs_idx = topic_contribution.argsort()[::-1][:5]
+                top_docs = [doc_sources[i] for i in top_docs_idx]
+
+                # Generate topic summary using LLM if available
+                description = None
+                if self.llm_connector:
+                    description = self._generate_topic_description(top_words)
+
+                # Create topic representation
+                topics.append({
+                    "name": f"Topic {topic_idx + 1}: {', '.join(top_words[:3])}",
+                    "keywords": top_words,
+                    "documents": top_docs,
+                    "document_count": len([i for i, score in enumerate(topic_contribution) if score > 0.1]),
+                    "score": round(float(topic.max() / topic.sum()), 2),
+                    "description": description
+                })
+
+            return {
+                "method": "Non-Negative Matrix Factorization",
+                "language": primary_language,
+                "topics": topics
+            }
+
+        except Exception as e:
+            debug(self.config, f"NMF Topic Modeling Error: {str(e)}")
+            import traceback
+            debug(self.config, traceback.format_exc())
+            return {"method": "Non-Negative Matrix Factorization", "error": str(e), "themes": []}.stopwords else None
             )
 
             # Transform documents to TF-IDF space
@@ -1340,13 +727,6 @@ class ThemeAnalyzer:
             Dict: Document clustering results
         """
         debug(self.config, "Clustering documents")
-
-        if not SKLEARN_AVAILABLE:
-            return {
-                "method": "Document Clustering",
-                "error": "scikit-learn is required for document clustering",
-                "themes": []
-            }
 
         # Extract document texts and sources
         doc_texts = [doc["processed_content"] for doc in doc_contents]
@@ -1448,9 +828,6 @@ class ThemeAnalyzer:
         Returns:
             Dict: LDA topic analysis results
         """
-        if not SKLEARN_AVAILABLE:
-            return {"method": "Latent Dirichlet Allocation", "error": "scikit-learn not available", "themes": []}
-
         try:
             # Prepare documents
             doc_texts = [doc["processed_content"] for doc in doc_contents]
@@ -1532,9 +909,6 @@ class ThemeAnalyzer:
         Returns:
             Dict: NMF topic analysis results
         """
-        if not SKLEARN_AVAILABLE:
-            return {"method": "Non-Negative Matrix Factorization", "error": "scikit-learn not available", "themes": []}
-
         try:
             # Prepare documents
             doc_texts = [doc["processed_content"] for doc in doc_contents]
@@ -1549,181 +923,4 @@ class ThemeAnalyzer:
                 self.config,
                 len(doc_texts),
                 primary_language,
-                self.stopwords[primary_language] if primary_language in self.stopwords else None
-            )
-
-            # Create document-term matrix
-            doc_term_matrix = vectorizer.fit_transform(doc_texts)
-
-            # Determine number of topics dynamically
-            n_topics = min(max(5, len(doc_contents) // 3), 10)
-
-            # Import NMF here to avoid confusion with the optional imports
-            from sklearn.decomposition import NMF
-
-            # Initialize NMF model
-            nmf_model = NMF(
-                n_components=n_topics,
-                random_state=42,
-                max_iter=200
-            )
-
-            # Fit the model
-            nmf_output = nmf_model.fit_transform(doc_term_matrix)
-
-            # Extract feature names
-            feature_names = vectorizer.get_feature_names_out()
-            topics = []
-
-            for topic_idx, topic in enumerate(nmf_model.components_):
-                # Get top words for this topic
-                top_words_idx = topic.argsort()[:-10 - 1:-1]
-                top_words = [feature_names[i] for i in top_words_idx]
-
-                # Calculate topic contribution to documents
-                topic_contribution = nmf_output[:, topic_idx]
-                top_docs_idx = topic_contribution.argsort()[::-1][:5]
-                top_docs = [doc_sources[i] for i in top_docs_idx]
-
-                # Generate topic summary using LLM if available
-                description = None
-                if self.llm_connector:
-                    description = self._generate_topic_description(top_words)
-
-                # Create topic representation
-                topics.append({
-                    "name": f"Topic {topic_idx + 1}: {', '.join(top_words[:3])}",
-                    "keywords": top_words,
-                    "documents": top_docs,
-                    "document_count": len([i for i, score in enumerate(topic_contribution) if score > 0.1]),
-                    "score": round(float(topic.max() / topic.sum()), 2),
-                    "description": description
-                })
-
-            return {
-                "method": "Non-Negative Matrix Factorization",
-                "language": primary_language,
-                "topics": topics
-            }
-
-        except Exception as e:
-            debug(self.config, f"NMF Topic Modeling Error: {str(e)}")
-            import traceback
-            debug(self.config, traceback.format_exc())
-            return {"method": "Non-Negative Matrix Factorization", "error": str(e), "themes": []}
-
-    def _generate_topic_description(self, keywords):
-        """Generate a description for a topic using LLM"""
-        if not self.llm_connector:
-            return None
-
-        try:
-            prompt = f"""Analyze these keywords and provide a concise topic description (1-2 sentences):
-            Keywords: {', '.join(keywords[:10])}
-
-            What conceptual area do these words represent? Please be specific but concise."""
-
-            model = self.config.get('llm.default_model', 'mistral')
-            description = self.llm_connector.generate(
-                prompt,
-                model=model,
-                max_tokens=100,
-                temperature=0.3  # Lower temperature for more precision
-            )
-            return description.strip()
-        except Exception as e:
-            debug(self.config, f"Error generating topic description: {str(e)}")
-            return None
-
-    def _output_results(self, workspace: str, results: Dict, method: str):
-        """
-        Output theme analysis results using output manager with improved keyword handling
-
-        Args:
-            workspace (str): Workspace name
-            results (Dict): Analysis results
-            method (str): Analysis method
-        """
-        # Use output_manager for formatted display
-        self.output_manager.print_formatted('header', "THEME ANALYSIS RESULTS")
-
-        # Display results for each method
-        for m, result in results.items():
-            self.output_manager.print_formatted('subheader', result.get('method', m))
-
-            # Display method-specific statistics
-            if 'entity_count' in result:
-                self.output_manager.print_formatted('kv', result['entity_count'], key="Total entities")
-            if 'variance_explained' in result:
-                self.output_manager.print_formatted('kv', f"{result['variance_explained']}%", key="Variance explained")
-            if 'clusters' in result:
-                self.output_manager.print_formatted('kv', result['clusters'], key="Number of clusters")
-            if 'error' in result:
-                self.output_manager.print_formatted('feedback', f"Error: {result['error']}", success=False)
-
-            # Display themes
-            themes = result.get('themes', [])
-            if not themes:
-                self.output_manager.print_formatted('feedback', "No themes identified", success=False)
-                continue
-
-            print(f"\nFound {len(themes)} themes/keywords")
-
-            for theme in themes:
-                # Different handling based on theme type
-                if 'keyword' in theme:
-                    # This is a keyword theme from content keyword analysis
-                    self.output_manager.print_formatted('mini_header', f"Keyword: {theme['keyword']}")
-
-                    if 'score' in theme:
-                        self.output_manager.print_formatted('kv', f"{theme['score']:.4f}", key="Score")
-
-                    if 'documents' in theme:
-                        self.output_manager.print_formatted('kv', theme['documents'], key="Documents")
-
-                    # Show documents list if available
-                    if 'documents_list' in theme and isinstance(theme['documents_list'], list):
-                        print("\n  Document sources:")
-                        for doc in theme['documents_list'][:5]:
-                            self.output_manager.print_formatted('list', str(doc), indent=4)
-                        if len(theme['documents_list']) > 5:
-                            print(f"  ... and {len(theme['documents_list']) - 5} more")
-
-                elif 'name' in theme:
-                    # This is a standard theme
-                    self.output_manager.print_formatted('mini_header', theme['name'])
-
-                    # Keywords
-                    if 'keywords' in theme:
-                        self.output_manager.print_formatted('kv', ', '.join(theme['keywords']), key="Keywords")
-
-                    # Various metrics
-                    metrics = [
-                        ('score', 'Score'),
-                        ('frequency', 'Frequency'),
-                        ('centrality', 'Centrality'),
-                        ('document_count', 'Documents')
-                    ]
-                    for key, label in metrics:
-                        if key in theme:
-                            self.output_manager.print_formatted('kv', theme[key], key=label)
-
-                    # Documents
-                    if 'documents' in theme and isinstance(theme['documents'], list):
-                        print("\n  Document files:")
-                        for doc in theme['documents'][:5]:
-                            self.output_manager.print_formatted('list', str(doc), indent=4)
-                        if len(theme['documents']) > 5:
-                            print(f"  ... and {len(theme['documents']) - 5} more")
-
-                    # Descriptions
-                    if 'description' in theme and theme['description']:
-                        print("\n  Description:")
-                        print(f"  {theme['description']}")
-
-        # Save results to file
-        output_format = self.config.get('system.output_format', 'txt')
-        filepath = self.output_manager.save_theme_analysis(workspace, results, method, output_format)
-
-        # Show success message
-        self.output_manager.print_formatted('feedback', f"Results saved to: {filepath}")
+                self.stopwords[primary_language] if primary_language in self
