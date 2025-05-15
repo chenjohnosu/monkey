@@ -121,7 +121,7 @@ class ThemeAnalyzer:
 
         Args:
             workspace (str): The workspace to analyze
-            method (str): Analysis method ('all', 'nfm', 'net', 'key', 'lsa', 'cluster', 'lda', 'nmf')
+            method (str): Analysis method ('all', 'nfm', 'net', 'key', 'lsa', 'cluster', 'lda', 'nmf', 'topic', 'themes')
 
         Returns:
             Dict: Analyzed themes/topics
@@ -134,10 +134,24 @@ class ThemeAnalyzer:
         print(f"\nKeyword extraction: {keyword_method.upper()}, n-gram size: {max_ngram_size}")
 
         # Validate method (combined theme and topic methods)
-        valid_methods = ['all', 'nfm', 'net', 'key', 'lsa', 'cluster', 'lda', 'nmf']
+        valid_methods = ['all', 'nfm', 'net', 'key', 'lsa', 'cluster', 'lda', 'nmf', 'topic', 'themes']
         if method not in valid_methods:
             print(f"Invalid method: {method}. Must be one of: {', '.join(valid_methods)}")
             return {}
+
+        # Special handling for 'topic' method - run only topic modeling methods
+        if method == 'topic':
+            method = 'all'
+            run_only_topics = True
+        else:
+            run_only_topics = False
+
+        # Special handling for 'themes' method - run only theme analysis methods
+        if method == 'themes':
+            method = 'all'
+            run_only_themes = True
+        else:
+            run_only_themes = False
 
         # Check if scikit-learn is available for methods that need it
         sklearn_methods = ['lsa', 'cluster', 'lda', 'nmf']
@@ -182,8 +196,18 @@ class ThemeAnalyzer:
             'nmf': self._analyze_nmf_topics
         }
 
-        # Combine all methods
-        all_methods = {**theme_methods, **topic_methods}
+        # Determine which methods to run
+        if run_only_topics:
+            # Only run topic methods
+            all_methods = topic_methods
+            print("\nRunning only topic modeling methods (LDA, NMF)")
+        elif run_only_themes:
+            # Only run theme methods
+            all_methods = theme_methods
+            print("\nRunning only theme analysis methods (NFM, NET, KEY, LSA, CLUSTER)")
+        else:
+            # Combine all methods
+            all_methods = {**theme_methods, **topic_methods}
 
         # Run selected methods
         for analysis_method, handler in all_methods.items():
@@ -1525,4 +1549,3 @@ class ThemeAnalyzer:
                 "themes": []
             }
 
-    

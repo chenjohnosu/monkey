@@ -38,7 +38,6 @@ class CommandProcessor:
         from core.modes.grind import FileProcessor
         from core.modes.merge import VectorStoreMerger
         from core.modes.sentiment import SentimentAnalyzer
-        from core.modes.XXtopic import TopicModeler
 
         self.theme_analyzer = ThemeAnalyzer(config, self.storage_manager, self.output_manager, self.text_processor)
         self.query_engine = QueryEngine(config, self.storage_manager, self.output_manager, self.text_processor)
@@ -46,7 +45,6 @@ class CommandProcessor:
         self.vector_store_merger = VectorStoreMerger(config, self.storage_manager)
         self.sentiment_analyzer = SentimentAnalyzer(config, self.storage_manager, self.output_manager,
                                                     self.text_processor)
-        self.topic_modeler = TopicModeler(config, self.storage_manager, self.output_manager, self.text_processor)
 
         # Initialize the vector store inspector
         self.vector_store_inspector = VectorStoreInspector(config, self.storage_manager)
@@ -168,44 +166,73 @@ class CommandProcessor:
 
         if not args:
             print("""
-        Available Commands:
+            Available Commands:
 
-          Run Modes:
-            /run grind          - Process files in workspace to create initial database
-            /run update         - Update workspace with new or modified files
-            /run scan           - Scan workspace for new or updated files
-            /run merge          - Merge workspaces
-            /run sentiment      - Run sentiment analysis
-            /run topics         - Run topic modeling
-            /run themes         - Run theme analysis
-            /run query          - Enter interactive query mode
+              Run Modes:
+                /run grind          - Process files in workspace to create initial database
+                /run update         - Update workspace with new or modified files
+                /run scan           - Scan workspace for new or updated files
+                /run merge          - Merge workspaces
+                /run sentiment      - Run sentiment analysis
+                /run themes         - Run theme analysis (NFM, NET, KEY, LSA, CLUSTER)
+                /run topics         - Run topic modeling (LDA, NMF)
+                /run query          - Enter interactive query mode
 
-          Interpretation:
-            /explain            - Get LLM interpretation of analysis
+              Interpretation:
+                /explain            - Get LLM interpretation of analysis
 
-          Operations:
-            /load               - Load workspace
-            /save               - Start/stop saving session or buffer
-            /config             - Set runtime configuration
-            /show               - Show active information and data sources
-            /clear              - Clear logs, vector database, or cache files
-            /inspect            - Check/verify status of data stores 
-            /quit, /exit        - Exit the application
-            /help [command]     - Display help information
+              Operations:
+                /load               - Load workspace
+                /save               - Start/stop saving session or buffer
+                /config             - Set runtime configuration
+                /show               - Show active information and data sources
+                /clear              - Clear logs, vector database, or cache files
+                /inspect            - Check/verify status of data stores 
+                /quit, /exit        - Exit the application
+                /help [command]     - Display help information
 
-          Aliases:
-            /q - /quit, /c - /config, /l - /load, /r - /run
-            /s - /save, /h - /help, /i - /inspect, /e - /explain
-            /cl - /clear
-        """)
+              Aliases:
+                /q - /quit, /c - /config, /l - /load, /r - /run
+                /s - /save, /h - /help, /i - /inspect, /e - /explain
+                /cl - /clear
+            """)
         elif args[0] in ['run', 'load', 'config', 'save', 'show', 'inspect', 'explain', 'clear']:
             self._show_specific_help(args[0])
         else:
             print(f"No specific help available for '{args[0]}'")
 
     def _show_specific_help(self, topic):
-        """Show help for a specific topic"""
-        if topic == 'config':
+        if topic == 'run':
+            print("""
+            Run Commands:
+              /run grind                    - Process files in workspace to create database
+              /run update                   - Update workspace with new or modified files
+              /run scan [detailed]          - Scan workspace for new/updated files
+              /run themes [method]          - Run theme analysis with specific method
+              /run topics [method]          - Run topic modeling with specific method 
+              /run query [query text]       - Run query (or enter interactive mode)
+              /run sentiment [method]       - Run sentiment analysis
+              /run merge <src_workspace>    - Merge workspaces
+              
+            Theme Analysis Methods:
+              all       - Run all theme analysis methods
+              nfm       - Named entity analysis
+              net       - Content network analysis  
+              key       - Keyword extraction
+              lsa       - Latent semantic analysis
+              cluster   - Document clustering
+              
+            Topic Modeling Methods:
+              lda       - Latent Dirichlet Allocation
+              nmf       - Non-negative Matrix Factorization
+              
+            Examples:
+              /run themes all                - Run all theme analysis methods
+              /run themes lsa                - Run latent semantic analysis only
+              /run topics lda                - Run LDA topic modeling only
+              /run query who is the CEO      - Run a one-time query
+            """)
+        elif topic == 'config':
             print("""
             Config Commands:
               /config llm <model>                - Set LLM model (e.g., mistral, llama2)
@@ -867,13 +894,17 @@ class CommandProcessor:
         debug(self.config, f"Run command with args: {args}")
 
         if not args:
-            print("Usage: /run [themes|query|grind|update|scan|merge|sentiment|topic] [options]")
+            print("Usage: /run [themes|query|grind|update|scan|merge|sentiment|topics] [options]")
             return
 
         subcommand = args[0].lower()
 
         if subcommand == 'themes':
-            method = args[1] if len(args) > 1 else 'all'
+            method = args[1] if len(args) > 1 else 'themes'
+            self.theme_analyzer.analyze(self.current_workspace, method)
+
+        elif subcommand == 'topics':
+            method = args[1] if len(args) > 1 else 'topic'
             self.theme_analyzer.analyze(self.current_workspace, method)
 
         elif subcommand == 'query':
@@ -920,10 +951,6 @@ class CommandProcessor:
         elif subcommand == 'sentiment':
             method = args[1] if len(args) > 1 else 'all'
             self.sentiment_analyzer.analyze(self.current_workspace, method)
-
-        elif subcommand == 'topics':
-            method = args[1] if len(args) > 1 else 'all'
-            self.topic_modeler.analyze(self.current_workspace, method)
 
         else:
             print(f"Unknown run subcommand: {subcommand}")
